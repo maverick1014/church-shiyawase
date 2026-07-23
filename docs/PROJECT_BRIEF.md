@@ -141,7 +141,11 @@ tog/
 - The 身份 shown is **derived** (see §3); it is not edited here.
 
 ### 5.2 Groups (小组管理) — listing + detail
-- `/groups` lists every group (leader name, group name, member count, blurb); click a row → `/groups/[id]`.
+- `/groups` lists every group (leader name, group name, member count, **新成员人数**, **小组状态**, meeting day/time/location); click a row → `/groups/[id]`.
+- **Filters:** search (name/leader), 标签 (custom tag), 星期几 (meeting day).
+- **Custom tags:** each group can carry free-form admin-defined tags (e.g. 年轻人/职青/老年人/晚上/早上) — set on the create/edit form, shown as chips under the group name, filterable from the listing page.
+- **小组状态 (derived, never stored):** computed from member counts —
+  **可分植** when total > 10 and new-member count ≤ 2; **可加人** when total < 10 and new-member count ≤ old-member count; otherwise **刚好**.
 - Detail page: **create / delete** the group, **allocate members** into / out of it.
 - **铁三角 (leadership team)**: pick who holds 小组长/副组长/实习组长 directly here (rules 2 & 3 enforced — one holder per slot, auto-demote the incumbent). This is the only identity assignment on this page.
 - The member list itself is a simple name + remove list — no per-member position dropdown; 核心成员/普通成员/新成员 are set on the member's own profile page instead.
@@ -183,7 +187,7 @@ tog/
 Enums: `church_role(pastor,member)`, `group_position(leader,assistant_leader,intern_leader,core_member,regular_member,new_member)`, `member_status(active,inactive)`, `gender_type`, `event_type`, `attendance_status(present,absent,excused)`, `donation_method`, `enrollment_status(pending,approved,in_progress,completed,dropped)`, `pair_status(active,completed,paused)`.
 
 Tables:
-- `groups(id, name, description, created_at)` — **no leader columns** (derived).
+- `groups(id, name, description, meeting_day weekday, meeting_time, location, tags text[], created_at)` — **no leader columns** (derived); 小组状态 (可分植/可加人/刚好) is also derived, not stored.
 - `households(id, name, address, phone, created_at)` — optional family grouping.
 - `members(id, full_name, chinese_name, email, phone, gender, date_of_birth, church_role, status, group_id→groups, group_position, household_id→households, joined_at, notes, timestamps)`
   - `check (group_position is null or group_id is not null)`
@@ -209,7 +213,7 @@ Tables:
 | `/` | 仪表盘 Dashboard | KPIs (成员总数/在册/即将聚会/本月奉献/门训进行中), 身份分布图, 奉献趋势, upcoming events, discipleship progress |
 | `/members` | 成员目录 | filter chips by 身份(derived) + 小组, search, table, create |
 | `/members/[id]` | 成员详情 | profile + **个人培训档案** + 门训对子 |
-| `/groups` | 小组管理 · 列表 | table of all groups (组长, 小组名称, 组员人数, 简介), sortable, click a row → detail |
+| `/groups` | 小组管理 · 列表 | table of all groups (小组名称+标签, 组长, 组员人数, 新成员人数, 小组状态, 聚会时间地点), sortable, filter by 标签/星期几, click a row → detail |
 | `/groups/[id]` | 小组详情 | create/delete, member allocation (simple list), **铁三角** leader picker (the only identity assignment here) |
 | `/events` | 聚会与出席 | event cards + **点名** (出席/请假/缺席) |
 | `/donations` | 奉献管理 | fund summary tiles + records table + create |

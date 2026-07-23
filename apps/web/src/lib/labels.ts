@@ -117,6 +117,39 @@ export function meetingScheduleZh(g: { meeting_day: Weekday | string | null; mee
 }
 
 /**
+ * Group health — derived purely from member counts (never stored): whether a
+ * group is ready to split into two, could use more people, or is balanced.
+ *   可分植 (splittable):    total > 10 and new-member count <= 2
+ *   可加人 (needs members): total < 10 and new-member count <= old-member count
+ *   刚好 (balanced):        everything else (incl. total === 10 exactly)
+ */
+export type GroupHealthStatus = 'splittable' | 'need_members' | 'balanced';
+
+export function groupHealthStatus(totalMembers: number, newMembers: number): GroupHealthStatus {
+  const oldMembers = totalMembers - newMembers;
+  if (totalMembers > 10 && newMembers <= 2) return 'splittable';
+  if (totalMembers < 10 && newMembers <= oldMembers) return 'need_members';
+  return 'balanced';
+}
+
+export const GROUP_HEALTH_LABELS: Record<GroupHealthStatus, string> = {
+  splittable: '可分植',
+  need_members: '可加人',
+  balanced: '刚好',
+};
+
+export function groupHealthClass(status: GroupHealthStatus): string {
+  switch (status) {
+    case 'splittable':
+      return 'b-good';
+    case 'need_members':
+      return 'b-warn';
+    default:
+      return 'b-gray';
+  }
+}
+
+/**
  * Per-role tag palette — matches the Claude Design `roleTags` exactly. Each
  * derived role gets its own colour family (bg / fg / dot), not a shared tone.
  */

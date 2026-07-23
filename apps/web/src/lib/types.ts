@@ -40,6 +40,7 @@ export interface GroupRow {
   meeting_day: Weekday | null;
   meeting_time: string | null;
   location: string | null;
+  tags: string[];
 }
 
 export interface GroupDetail extends GroupRow {

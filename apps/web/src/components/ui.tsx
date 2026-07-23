@@ -194,6 +194,84 @@ export function Field({
   );
 }
 
+/**
+ * Free-form tag entry: type a tag + Enter/comma to add it as a removable
+ * chip. Reuses the existing `.chip` filter-chip look (no new CSS). Optional
+ * `suggestions` (e.g. every tag already used elsewhere) power a native
+ * `<datalist>` autocomplete so admins don't fragment spellings.
+ */
+let tagsInputId = 0;
+export function TagsInput({
+  value,
+  onChange,
+  suggestions,
+  placeholder,
+}: {
+  value: string[];
+  onChange: (tags: string[]) => void;
+  suggestions?: string[];
+  placeholder?: string;
+}) {
+  const [draft, setDraft] = useState('');
+  const [listId] = useState(() => `tags-suggest-${tagsInputId++}`);
+
+  const commit = (raw: string) => {
+    const t = raw.trim();
+    if (t && !value.includes(t)) onChange([...value, t]);
+    setDraft('');
+  };
+
+  return (
+    <div>
+      {value.length > 0 && (
+        <div className="flex gap-6 flex-wrap" style={{ marginBottom: 8 }}>
+          {value.map((t) => (
+            <span key={t} className="chip on">
+              {t}
+              <button
+                type="button"
+                onClick={() => onChange(value.filter((x) => x !== t))}
+                aria-label={`移除标签 ${t}`}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: 'inherit',
+                  cursor: 'pointer',
+                  padding: 0,
+                  marginLeft: 2,
+                  fontSize: 14,
+                  lineHeight: 1,
+                }}
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      <input
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ',') {
+            e.preventDefault();
+            commit(draft);
+          }
+        }}
+        list={suggestions?.length ? listId : undefined}
+        placeholder={placeholder ?? '输入标签后按 Enter…'}
+      />
+      {suggestions && suggestions.length > 0 && (
+        <datalist id={listId}>
+          {suggestions.filter((s) => !value.includes(s)).map((s) => (
+            <option key={s} value={s} />
+          ))}
+        </datalist>
+      )}
+    </div>
+  );
+}
+
 /* -------------------------------------------------------------------------
  * Sortable table header cell
  * ---------------------------------------------------------------------- */
