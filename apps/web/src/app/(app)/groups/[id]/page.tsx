@@ -6,10 +6,10 @@ import { useFetch } from '@/lib/hooks';
 import { useSortableRows } from '@/lib/sort';
 import { api } from '@/lib/api';
 import { usePageChrome, useMe } from '@/components/AppShell';
-import { ErrorBanner, Field, Loading, RoleBadge, SortTh, useConfirm, useToast } from '@/components/ui';
+import { ErrorBanner, Field, Loading, RoleBadge, SortTh, TagsInput, useConfirm, useToast } from '@/components/ui';
 import { can } from '@/lib/perms';
 import { exportMatrix } from '@/lib/export';
-import { GroupAttendanceResponse, GroupDetail, MemberRow } from '@/lib/types';
+import { GroupAttendanceResponse, GroupDetail, GroupRow, MemberRow } from '@/lib/types';
 import {
   ATTENDANCE_LABELS,
   GROUP_POSITION_OPTIONS,
@@ -29,6 +29,7 @@ export default function GroupDetailPage() {
 
   const detail = useFetch<GroupDetail>(`/groups/${id}`);
   const members = useFetch<MemberRow[]>('/members');
+  const allGroups = useFetch<GroupRow[]>('/groups');
 
   usePageChrome({ title: '小组详情', subtitle: '小组资料 · 带领团队 · 组员名单 · 每周出席' }, [id]);
 
@@ -36,6 +37,13 @@ export default function GroupDetailPage() {
     detail.reload();
     members.reload();
   };
+
+  // Distinct tags across every group, for the tag-input autocomplete.
+  const allTags = useMemo(() => {
+    const set = new Set<string>();
+    (allGroups.data ?? []).forEach((g) => (g.tags ?? []).forEach((t) => set.add(t)));
+    return [...set].sort((a, b) => a.localeCompare(b, 'zh'));
+  }, [allGroups.data]);
 
   if (detail.initialLoading) return <Loading />;
   if (detail.error || !detail.data) return <ErrorBanner message={detail.error ?? '找不到小组'} />;
@@ -49,6 +57,7 @@ export default function GroupDetailPage() {
       <GroupPanel
         group={detail.data}
         allMembers={members.data ?? []}
+        allTags={allTags}
         onChanged={refreshAll}
         onDeleted={() => {
           toast('已删除小组');
@@ -62,11 +71,13 @@ export default function GroupDetailPage() {
 function GroupPanel({
   group,
   allMembers,
+  allTags,
   onChanged,
   onDeleted,
 }: {
   group: GroupDetail;
   allMembers: MemberRow[];
+  allTags: string[];
   onChanged: () => void;
   onDeleted: () => void;
 }) {
@@ -78,6 +89,7 @@ function GroupPanel({
   const [meetingDay, setMeetingDay] = useState<Weekday | ''>(group.meeting_day ?? '');
   const [meetingTime, setMeetingTime] = useState(group.meeting_time?.slice(0, 5) ?? '');
   const [location, setLocation] = useState(group.location ?? '');
+  const [tags, setTags] = useState<string[]>(group.tags ?? []);
   const [addSel, setAddSel] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -115,6 +127,7 @@ function GroupPanel({
         meeting_day: meetingDay || null,
         meeting_time: meetingTime || null,
         location: location || null,
+        tags,
       });
       toast('已保存设定');
       onChanged();
@@ -262,6 +275,9 @@ function GroupPanel({
           </div>
           <Field label="地点">
             <input value={location} onChange={(e) => setLocation(e.target.value)} />
+          </Field>
+          <Field label="标签">
+            <TagsInput value={tags} onChange={setTags} suggestions={allTags} placeholder="例如：职青、晚上…" />
           </Field>
 
           <div className="flex-between" style={{ margin: '16px 0 4px' }}>

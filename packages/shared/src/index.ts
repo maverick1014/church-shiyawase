@@ -130,6 +130,7 @@ export interface Group {
   meeting_day: Weekday | null;
   meeting_time: string | null; // "HH:MM:SS" (Postgres `time`)
   location: string | null;
+  tags: string[]; // free-form, admin-defined (e.g. 年轻人/职青/晚上)
   created_at: string;
   // Leadership is derived from members.group_position, not stored here.
 }
