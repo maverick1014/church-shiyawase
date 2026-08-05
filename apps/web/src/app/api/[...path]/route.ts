@@ -106,6 +106,15 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
     if (row.hall_id !== hallScope) throw new HttpError(403, '无权修改其他堂会的资料');
   };
 
+  // ---- Deployed build id -----------------------------------------------------
+  // Lets the post-deploy suite tell the version it just shipped apart from the
+  // one still being served (Cloudflare takes a few seconds to switch). Probing
+  // "does endpoint X exist" instead is useless the moment X ships, which is
+  // exactly how a stale Worker silently failed a whole api-e2e run once.
+  if (r0 === 'version' && !r1 && method === 'GET') {
+    return json({ build: process.env.NEXT_PUBLIC_BUILD_ID ?? 'dev' });
+  }
+
   // ---- Halls (堂会) ----------------------------------------------------------
   // Read-only for now: the three halls are seeded by migration 0008. Every
   // logged-in user may list them (needed to render hall labels); a single-hall

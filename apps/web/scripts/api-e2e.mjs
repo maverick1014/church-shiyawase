@@ -48,23 +48,29 @@ async function login(email, password) {
  * `wrangler deploy` returns as soon as Cloudflare accepts the upload, but the
  * new Worker version takes a few seconds to actually start serving traffic.
  * This suite runs immediately after, so without this wait the first requests
- * can hit the PREVIOUS version — which shows up as bogus "No route for ..."
- * 404s (and cascading 500s) for endpoints the new version just added.
+ * hit the PREVIOUS version and the whole run tests stale code.
  *
- * Poll a probe request until the freshly deployed code answers it. `/api/halls`
- * is the newest route; swap the probe when a newer one lands.
+ * Wait on the deployed build id, not on "does endpoint X answer": an existence
+ * probe stops being a rollout signal the moment X ships, and a stale Worker
+ * then sails straight through it (which is precisely how a fixed bug kept
+ * "failing" here). EXPECT_BUILD is the commit deploy.yml just built; without
+ * it (local runs) there's nothing to wait for.
  */
-async function waitForRollout(cookie, { timeoutMs = 90_000, everyMs = 3_000 } = {}) {
+async function waitForRollout({ timeoutMs = 90_000, everyMs = 3_000 } = {}) {
+  const expected = process.env.EXPECT_BUILD;
+  if (!expected) return true;
   const started = Date.now();
   for (;;) {
-    const r = await req('GET', '/api/halls', { cookie });
-    if (r.status === 200) {
+    const r = await req('GET', '/api/version');
+    if (r.status === 200 && r.json?.build === expected) {
       const waited = Date.now() - started;
-      if (waited > everyMs) console.log(`  (waited ${Math.round(waited / 1000)}s for the new Worker version)`);
+      if (waited > everyMs) console.log(`  (waited ${Math.round(waited / 1000)}s for build ${expected.slice(0, 7)})`);
       return true;
     }
     if (Date.now() - started > timeoutMs) {
-      console.error(`  rollout probe still failing after ${Math.round(timeoutMs / 1000)}s: ${r.status} ${JSON.stringify(r.json)}`);
+      console.error(
+        `  still serving build ${r.json?.build ?? `? (${r.status})`} after ${Math.round(timeoutMs / 1000)}s, expected ${expected}`,
+      );
       return false;
     }
     await new Promise((r2) => setTimeout(r2, everyMs));
@@ -73,6 +79,10 @@ async function waitForRollout(cookie, { timeoutMs = 90_000, everyMs = 3_000 } = 
 
 async function main() {
   console.log(`API E2E → ${BASE}`);
+
+  // Before anything is asserted, make sure we're testing the build we just
+  // deployed rather than the one still being served.
+  ok('deployed build is live', await waitForRollout());
 
   // ---- Auth ---------------------------------------------------------------
   ok('unauth GET /members → 401', (await req('GET', '/api/members')).status === 401);
