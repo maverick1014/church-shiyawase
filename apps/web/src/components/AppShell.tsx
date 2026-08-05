@@ -7,19 +7,25 @@ import { ConfirmProvider, ToastProvider, useConfirm, useToast } from './ui';
 import { ChangePasswordModal } from './ChangePasswordModal';
 import { BrandLogo } from './BrandLogo';
 import { initialOf } from '@/lib/labels';
+import { HallContext } from '@/lib/hall';
+import { HallRow } from '@/lib/types';
 import { ACCOUNT_ROLE_LABELS, AccountRole } from '@tog/shared';
 
-type Me = { name: string; role: string; member: string | null };
+type Me = { name: string; role: string; member: string | null; hall: string | null };
 
 /* -------------------------------------------------------------------------
  * Current-user context — pages read the session role to gate UI (rule G2).
  * ---------------------------------------------------------------------- */
 const MeContext = createContext<Me | null>(null);
 
-/** The logged-in account (name, role, member). Only valid inside AppShell. */
+/** The logged-in account (name, role, member, hall). Only valid inside AppShell. */
 export function useMe(): Me {
-  return useContext(MeContext) ?? { name: '', role: '', member: null };
+  return useContext(MeContext) ?? { name: '', role: '', member: null, hall: null };
 }
+
+// Hall scope lives in lib/hall.tsx so useFetch can read it without importing
+// the shell. Re-exported here since pages already import from AppShell.
+export { useHallScope } from '@/lib/hall';
 
 /* -------------------------------------------------------------------------
  * Page chrome context — pages set the topbar title / subtitle / action.
@@ -71,6 +77,9 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [navOpen, setNavOpen] = useState(false);
   const [chrome, setChrome] = useState<Chrome>({ title: '仪表盘' });
   const [me, setMe] = useState<Me | null | undefined>(undefined);
+  const [halls, setHalls] = useState<HallRow[]>([]);
+  // '' = 全部堂会. A single-hall account is pinned to its own hall below.
+  const [hallId, setHallId] = useState('');
 
   // Close the mobile drawer on navigation.
   useEffect(() => {
@@ -82,8 +91,18 @@ export function AppShell({ children }: { children: ReactNode }) {
     let alive = true;
     fetch('/api/auth/me')
       .then((r) => (r.ok ? r.json() : Promise.reject()))
-      .then((u) => {
-        if (alive) setMe(u);
+      .then((u: Me) => {
+        if (!alive) return;
+        setMe(u);
+        // A hall-scoped account always views its own hall; the switcher is
+        // hidden for them (the server enforces the same scope regardless).
+        if (u.hall) setHallId(u.hall);
+        return fetch('/api/halls')
+          .then((r) => (r.ok ? r.json() : []))
+          .then((hs: HallRow[]) => {
+            if (alive) setHalls(hs);
+          })
+          .catch(() => {});
       })
       .catch(() => {
         window.location.href = '/login';
@@ -96,6 +115,26 @@ export function AppShell({ children }: { children: ReactNode }) {
   const isActive = (href: string) =>
     href === '/' ? pathname === '/' : pathname.startsWith(href);
 
+  // Hall switcher — only for accounts that span more than one hall; a
+  // hall-scoped account has nothing to switch to. Rendered in the topbar on
+  // desktop and again in the content actions on mobile (where .topbar-actions
+  // is hidden), so it never disappears on a phone.
+  const hallSwitcher =
+    me && !me.hall && halls.length > 1 ? (
+      <select
+        className="sm"
+        value={hallId}
+        onChange={(e) => setHallId(e.target.value)}
+        title="切换查看的堂会"
+        style={{ width: 'auto' }}
+      >
+        <option value="">全部堂会</option>
+        {halls.map((h) => (
+          <option key={h.id} value={h.id}>{h.name}</option>
+        ))}
+      </select>
+    ) : null;
+
   if (!me) {
     return (
       <div className="loading" style={{ minHeight: '100vh', display: 'grid', placeItems: 'center' }}>
@@ -106,6 +145,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <MeContext.Provider value={me}>
+    <HallContext.Provider value={{ halls, hallId, setHallId, locked: !!me.hall }}>
     <ConfirmProvider>
     <ToastProvider>
       <ChromeContext.Provider value={setChrome}>
@@ -163,15 +203,21 @@ export function AppShell({ children }: { children: ReactNode }) {
                   {chrome.subtitle && <div className="sub">{chrome.subtitle}</div>}
                 </div>
               </div>
-              {chrome.action && (
+              {(hallSwitcher || chrome.action) && (
                 <div className="flex items-center gap-10 topbar-actions">
+                  {hallSwitcher}
                   {chrome.action}
                 </div>
               )}
             </div>
 
             <div className="content view-anim" key={pathname}>
-              {chrome.action && <div className="content-actions">{chrome.action}</div>}
+              {(hallSwitcher || chrome.action) && (
+                <div className="content-actions">
+                  {hallSwitcher}
+                  {chrome.action}
+                </div>
+              )}
               {children}
             </div>
           </div>
@@ -179,6 +225,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       </ChromeContext.Provider>
     </ToastProvider>
     </ConfirmProvider>
+    </HallContext.Provider>
     </MeContext.Provider>
   );
 }

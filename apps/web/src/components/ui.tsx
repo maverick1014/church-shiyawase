@@ -9,6 +9,7 @@ import {
   useState,
 } from 'react';
 import { initialOf, roleDot, roleTagStyle } from '@/lib/labels';
+import { useHallScope } from '@/lib/hall';
 
 /* -------------------------------------------------------------------------
  * State helpers
@@ -191,6 +192,38 @@ export function Field({
       <label className="field-label">{label}</label>
       {children}
     </div>
+  );
+}
+
+/**
+ * 堂会 picker, shared by every entity form so the options and the
+ * 全堂开放 rule live in one place (rule G4).
+ *
+ * `allowAll` is for the nullable-hall entities (培训 / 聚会) where null means
+ * 全堂开放. It is deliberately hidden from a hall-scoped account: those staff
+ * may only create things inside their own hall, and the server enforces the
+ * same (their /halls list contains just their hall).
+ */
+export function HallSelect({
+  value,
+  onChange,
+  allowAll,
+  allLabel,
+}: {
+  value: string | null;
+  onChange: (hallId: string | null) => void;
+  allowAll?: boolean;
+  allLabel?: string;
+}) {
+  const { halls, locked } = useHallScope();
+  return (
+    <select value={value ?? ''} onChange={(e) => onChange(e.target.value || null)}>
+      {allowAll && !locked && <option value="">{allLabel ?? '全堂开放'}</option>}
+      {!allowAll && !value && <option value="">请选择堂会…</option>}
+      {halls.map((h) => (
+        <option key={h.id} value={h.id}>{h.name}</option>
+      ))}
+    </select>
   );
 }
 

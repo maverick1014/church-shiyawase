@@ -22,12 +22,15 @@ export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 export const fetchCache = 'force-no-store';
 
-const MEMBER_SELECT = '*, group:groups(id,name), household:households(id,name)';
+const MEMBER_SELECT = '*, group:groups(id,name), household:households(id,name), hall:halls(id,name)';
 const MEMBER_BRIEF = 'id,full_name,church_role,group_position';
 const ACCOUNT_MEMBER_BRIEF = 'id,full_name,email,church_role,group_position';
 const PAIR_SELECT =
   '*, mentor:members!discipleship_pairs_mentor_id_fkey(id,full_name,church_role,group_position), trainee:members!discipleship_pairs_trainee_id_fkey(id,full_name,church_role,group_position)';
-const ACCOUNT_SELECT = `*, member:members(${ACCOUNT_MEMBER_BRIEF})`;
+/** Same shape, but an !inner mentor join so a hall filter can be pushed down. */
+const PAIR_SELECT_SCOPED =
+  '*, mentor:members!discipleship_pairs_mentor_id_fkey!inner(id,full_name,church_role,group_position), trainee:members!discipleship_pairs_trainee_id_fkey(id,full_name,church_role,group_position)';
+const ACCOUNT_SELECT = `*, member:members(${ACCOUNT_MEMBER_BRIEF}), hall:halls(id,name)`;
 
 async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Response> {
   const { path } = await ctx.params;
@@ -53,9 +56,16 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
   // handlers below — nothing else under these prefixes is reachable unauthed.
   const isPublicForm =
     (r0 === 'discipleship' && r1 === 'form') || (r0 === 'trainings' && r1 === 'enroll');
+
+  // Hall scope for this request. `null` = 全堂权限 (sees and may write every
+  // hall). A non-null value pins the account to one hall: reads are filtered
+  // to it and writes are forced onto it, server-side — the client never gets
+  // to choose (rule G2: the server is authoritative).
+  let hallScope: string | null = null;
   if (!isPublicForm) {
     const session = await getSession(req);
     if (!session) throw new HttpError(401, '未登录');
+    hallScope = session.hall ?? null;
     // Login accounts (emails, roles, sign-in history) are super_admin-only —
     // for reads as well as writes (rule G2), so the account list never leaks.
     if (r0 === 'accounts' && session.role !== 'super_admin')
@@ -68,6 +78,44 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
     }
   }
 
+  /**
+   * Body for a hall-scoped INSERT. A single-hall account always writes into
+   * its own hall (any hall_id the client sent is discarded); a full-access
+   * account may pass one explicitly, and for trainings/events may leave it
+   * null to mean 全堂开放.
+   */
+  const withHall = (dto: Record<string, unknown>): Record<string, unknown> =>
+    hallScope ? { ...dto, hall_id: hallScope } : dto;
+
+  /** Reject an update that would move a record out of the caller's hall. */
+  const assertHallWritable = (dto: Record<string, unknown>) => {
+    if (hallScope && 'hall_id' in dto && dto.hall_id !== hallScope)
+      throw new HttpError(403, '无法将资料移至其他堂会');
+  };
+
+  /**
+   * Guard an existing row before update/delete: a single-hall account may only
+   * touch its own hall's records (and, for trainings/events, the all-hall ones
+   * are read-only to it — those belong to whoever has full access).
+   */
+  const assertOwnsRow = async (table: string, id: string) => {
+    if (!hallScope) return;
+    const row = unwrap<{ hall_id: string | null }>(
+      await db.from(table).select('hall_id').eq('id', id).single(),
+    );
+    if (row.hall_id !== hallScope) throw new HttpError(403, '无权修改其他堂会的资料');
+  };
+
+  // ---- Halls (堂会) ----------------------------------------------------------
+  // Read-only for now: the three halls are seeded by migration 0008. Every
+  // logged-in user may list them (needed to render hall labels); a single-hall
+  // account only ever sees its own.
+  if (r0 === 'halls' && !r1 && method === 'GET') {
+    let query = db.from('halls').select('id,name,sort_order').order('sort_order');
+    if (hallScope) query = query.eq('id', hallScope);
+    return json(unwrap(await query));
+  }
+
   // ---- Members --------------------------------------------------------------
   if (r0 === 'members') {
     if (!r1) {
@@ -76,6 +124,8 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
           .from('members')
           .select(MEMBER_SELECT)
           .order('full_name', { ascending: true });
+        if (hallScope) query = query.eq('hall_id', hallScope);
+        else if (q.get('hall_id')) query = query.eq('hall_id', q.get('hall_id'));
         if (q.get('church_role')) query = query.eq('church_role', q.get('church_role'));
         if (q.get('group_position')) query = query.eq('group_position', q.get('group_position'));
         if (q.get('group_id')) query = query.eq('group_id', q.get('group_id'));
@@ -83,7 +133,7 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
         return json(unwrap(await query));
       }
       if (method === 'POST') {
-        return json(unwrap(await db.from('members').insert(await body()).select().single()));
+        return json(unwrap(await db.from('members').insert(withHall(await body())).select().single()));
       }
     } else if (r2 === 'trainings' && method === 'GET') {
       return json(
@@ -122,9 +172,14 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
     } else if (!r2) {
       if (method === 'GET')
         return json(unwrap(await db.from('members').select(MEMBER_SELECT).eq('id', r1).single()));
-      if (method === 'PATCH')
-        return json(unwrap(await db.from('members').update(await body()).eq('id', r1).select().single()));
+      if (method === 'PATCH') {
+        const dto = await body();
+        assertHallWritable(dto);
+        await assertOwnsRow('members', r1);
+        return json(unwrap(await db.from('members').update(dto).eq('id', r1).select().single()));
+      }
       if (method === 'DELETE') {
+        await assertOwnsRow('members', r1);
         unwrap(await db.from('members').delete().eq('id', r1).select().single());
         return json({ id: r1 });
       }
@@ -156,9 +211,14 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
         return json({ id: r2 });
       }
     } else if (!r1) {
-      if (method === 'GET') return json(unwrap(await db.from('groups').select('*').order('name')));
+      if (method === 'GET') {
+        let query = db.from('groups').select('*, hall:halls(id,name)').order('name');
+        if (hallScope) query = query.eq('hall_id', hallScope);
+        else if (q.get('hall_id')) query = query.eq('hall_id', q.get('hall_id'));
+        return json(unwrap(await query));
+      }
       if (method === 'POST')
-        return json(unwrap(await db.from('groups').insert(await body()).select().single()));
+        return json(unwrap(await db.from('groups').insert(withHall(await body())).select().single()));
     } else if (r2 === 'attendance' && method === 'GET') {
       return json(await groupAttendance(db, r1));
     } else if (r2 === 'meetings' && method === 'POST') {
@@ -174,7 +234,9 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
       );
     } else if (!r2) {
       if (method === 'GET') {
-        const group = unwrap<Record<string, unknown>>(await db.from('groups').select('*').eq('id', r1).single());
+        const group = unwrap<Record<string, unknown>>(
+          await db.from('groups').select('*, hall:halls(id,name)').eq('id', r1).single(),
+        );
         const members = unwrap(
           await db
             .from('members')
@@ -184,9 +246,14 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
         );
         return json({ ...group, members });
       }
-      if (method === 'PATCH')
-        return json(unwrap(await db.from('groups').update(await body()).eq('id', r1).select().single()));
+      if (method === 'PATCH') {
+        const dto = await body();
+        assertHallWritable(dto);
+        await assertOwnsRow('groups', r1);
+        return json(unwrap(await db.from('groups').update(dto).eq('id', r1).select().single()));
+      }
       if (method === 'DELETE') {
+        await assertOwnsRow('groups', r1);
         unwrap(await db.from('groups').delete().eq('id', r1).select().single());
         return json({ id: r1 });
       }
@@ -198,10 +265,17 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
     if (!r1) {
       if (method === 'GET') {
         await ensureSundayServices(db);
-        return json(unwrap(await db.from('events').select('*').order('starts_at', { ascending: false })));
+        let query = db
+          .from('events')
+          .select('*, hall:halls(id,name)')
+          .order('starts_at', { ascending: false });
+        // A single-hall account sees its own hall plus every 全堂/联合 event.
+        if (hallScope) query = query.or(`hall_id.eq.${hallScope},hall_id.is.null`);
+        else if (q.get('hall_id')) query = query.eq('hall_id', q.get('hall_id'));
+        return json(unwrap(await query));
       }
       if (method === 'POST')
-        return json(unwrap(await db.from('events').insert(await body()).select().single()));
+        return json(unwrap(await db.from('events').insert(withHall(await body())).select().single()));
     } else if (r2 === 'attendance' && method === 'POST') {
       const dto = await body();
       const records = (dto.records as Array<Record<string, unknown>>).map((r) => ({
@@ -217,7 +291,9 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
       );
     } else if (!r2) {
       if (method === 'GET') {
-        const event = unwrap<Record<string, unknown>>(await db.from('events').select('*').eq('id', r1).single());
+        const event = unwrap<Record<string, unknown>>(
+          await db.from('events').select('*, hall:halls(id,name)').eq('id', r1).single(),
+        );
         const attendance = unwrap(
           await db
             .from('event_attendance')
@@ -226,9 +302,14 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
         );
         return json({ ...event, attendance });
       }
-      if (method === 'PATCH')
-        return json(unwrap(await db.from('events').update(await body()).eq('id', r1).select().single()));
+      if (method === 'PATCH') {
+        const dto = await body();
+        assertHallWritable(dto);
+        await assertOwnsRow('events', r1);
+        return json(unwrap(await db.from('events').update(dto).eq('id', r1).select().single()));
+      }
       if (method === 'DELETE') {
+        await assertOwnsRow('events', r1);
         unwrap(await db.from('events').delete().eq('id', r1).select().single());
         return json({ id: r1 });
       }
@@ -350,23 +431,28 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
     }
     // /trainings ...
     else if (!r1) {
-      if (method === 'GET')
-        return json(
-          unwrap(
-            await db
-              .from('trainings')
-              .select('*, trainer:members(id,full_name)')
-              .order('created_at', { ascending: false }),
-          ),
-        );
+      if (method === 'GET') {
+        let query = db
+          .from('trainings')
+          .select('*, trainer:members(id,full_name), hall:halls(id,name)')
+          .order('created_at', { ascending: false });
+        // A single-hall account sees its own hall plus every 全堂开放 course.
+        if (hallScope) query = query.or(`hall_id.eq.${hallScope},hall_id.is.null`);
+        else if (q.get('hall_id')) query = query.eq('hall_id', q.get('hall_id'));
+        return json(unwrap(await query));
+      }
       if (method === 'POST')
-        return json(unwrap(await db.from('trainings').insert(await body()).select().single()));
+        return json(unwrap(await db.from('trainings').insert(withHall(await body())).select().single()));
     }
     // /trainings/:id ...
     else if (r1 && !r2) {
       if (method === 'GET') {
         const training = unwrap<Record<string, unknown>>(
-          await db.from('trainings').select('*, trainer:members(id,full_name)').eq('id', r1).single(),
+          await db
+            .from('trainings')
+            .select('*, trainer:members(id,full_name), hall:halls(id,name)')
+            .eq('id', r1)
+            .single(),
         );
         const sessions = unwrap(
           await db.from('training_sessions').select('*').eq('training_id', r1).order('session_number'),
@@ -380,9 +466,14 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
         );
         return json({ ...training, sessions, enrollments });
       }
-      if (method === 'PATCH')
-        return json(unwrap(await db.from('trainings').update(await body()).eq('id', r1).select().single()));
+      if (method === 'PATCH') {
+        const dto = await body();
+        assertHallWritable(dto);
+        await assertOwnsRow('trainings', r1);
+        return json(unwrap(await db.from('trainings').update(dto).eq('id', r1).select().single()));
+      }
       if (method === 'DELETE') {
+        await assertOwnsRow('trainings', r1);
         unwrap(await db.from('trainings').delete().eq('id', r1).select().single());
         return json({ id: r1 });
       }
@@ -426,22 +517,27 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
         if (method === 'POST')
           return json(unwrap(await db.from('discipleship_programs').insert(await body()).select().single()));
       } else if (r3 === 'overview' && method === 'GET') {
-        return json(
-          unwrap(
-            await db
-              .from('discipleship_pair_summary')
-              .select('*')
-              .eq('program_id', r2)
-              .order('percent_complete', { ascending: false }),
-          ),
-        );
+        // A pair's hall is its mentor's hall, exposed on the view by 0008.
+        let query = db
+          .from('discipleship_pair_summary')
+          .select('*')
+          .eq('program_id', r2)
+          .order('percent_complete', { ascending: false });
+        if (hallScope) query = query.eq('hall_id', hallScope);
+        return json(unwrap(await query));
       } else if (!r3 && method === 'GET') {
         return json(unwrap(await db.from('discipleship_programs').select('*').eq('id', r2).single()));
       }
     } else if (r1 === 'pairs') {
       if (!r2) {
         if (method === 'GET') {
-          let query = db.from('discipleship_pairs').select(PAIR_SELECT).order('created_at');
+          // A pair belongs to its mentor's hall — an !inner join lets the
+          // filter run in the database rather than post-filtering here.
+          let query = db
+            .from('discipleship_pairs')
+            .select(hallScope ? PAIR_SELECT_SCOPED : PAIR_SELECT)
+            .order('created_at');
+          if (hallScope) query = query.eq('mentor.hall_id', hallScope);
           if (q.get('program_id')) query = query.eq('program_id', q.get('program_id'));
           return json(unwrap(await query));
         }
@@ -629,33 +725,51 @@ async function ensureSundayServices(db: ReturnType<typeof getDb>) {
     sundays.push(d.toISOString().slice(0, 10));
   }
 
+  // Each hall runs its own Sunday service (中文堂 10:00 in one room, 英文堂
+  // 10:00 in another), so the auto-created event is per hall. Only halls
+  // flagged `auto_sunday_service` take part — a hall that hasn't started
+  // meeting yet shouldn't have services invented for it.
+  const halls = unwrap(
+    await db.from('halls').select('id').eq('auto_sunday_service', true),
+  ) as Array<{ id: string }>;
+  if (halls.length === 0) return;
+
   const existing = unwrap(
     await db
       .from('events')
-      .select('starts_at')
+      .select('starts_at,hall_id')
       .eq('event_type', 'service')
       .gte('starts_at', `${sundays[0]}T00:00:00${CHURCH_TZ_OFFSET}`)
       .lte('starts_at', `${sundays[sundays.length - 1]}T23:59:59${CHURCH_TZ_OFFSET}`),
-  ) as Array<{ starts_at: string }>;
-  const existingDates = new Set(
-    existing.map((e) => new Date(new Date(e.starts_at).getTime() + 8 * 3600 * 1000).toISOString().slice(0, 10)),
+  ) as Array<{ starts_at: string; hall_id: string | null }>;
+  const existingKeys = new Set(
+    existing.map((e) => {
+      const date = new Date(new Date(e.starts_at).getTime() + 8 * 3600 * 1000)
+        .toISOString()
+        .slice(0, 10);
+      return `${date}|${e.hall_id ?? ''}`;
+    }),
   );
 
-  const missing = sundays.filter((iso) => !existingDates.has(iso));
-  if (missing.length === 0) return;
+  const rows = halls.flatMap((h) =>
+    sundays
+      // An all-hall (null) service already covers every hall that Sunday.
+      .filter((iso) => !existingKeys.has(`${iso}|${h.id}`) && !existingKeys.has(`${iso}|`))
+      .map((iso) => ({
+        title: '主日崇拜',
+        event_type: 'service',
+        location: SUNDAY_SERVICE_LOCATION,
+        starts_at: `${iso}T${SUNDAY_SERVICE_TIME}${CHURCH_TZ_OFFSET}`,
+        hall_id: h.id,
+      })),
+  );
+  if (rows.length === 0) return;
 
   // Best-effort: two concurrent requests could both see the same Sunday
-  // missing. The unique index in 0005_events_unique_sunday_service.sql turns
+  // missing. The unique index in 0008_halls.sql (starts_at, hall_id) turns
   // that race into a rejected insert rather than a duplicate event — either
   // way, this must never fail the surrounding GET /events request over it.
-  await db.from('events').insert(
-    missing.map((iso) => ({
-      title: '主日崇拜',
-      event_type: 'service',
-      location: SUNDAY_SERVICE_LOCATION,
-      starts_at: `${iso}T${SUNDAY_SERVICE_TIME}${CHURCH_TZ_OFFSET}`,
-    })),
-  );
+  await db.from('events').insert(rows);
 }
 
 async function groupAttendance(db: ReturnType<typeof getDb>, groupId: string) {
@@ -753,7 +867,7 @@ async function authRoute(
     const dto = (await req.json().catch(() => ({}))) as { email?: string; password?: string };
     const res = await db
       .from('app_users')
-      .select('id, email, account_role, status, password_hash, member:members(id,full_name)')
+      .select('id, email, account_role, status, hall_id, password_hash, member:members(id,full_name)')
       .eq('email', (dto.email ?? '').toLowerCase().trim())
       .maybeSingle();
     if (res.error) throw new HttpError(500, res.error.message);
@@ -762,6 +876,7 @@ async function authRoute(
       email: string;
       account_role: string;
       status: string;
+      hall_id: string | null;
       password_hash: string | null;
       member: { id: string; full_name: string } | null;
     } | null;
@@ -777,6 +892,7 @@ async function authRoute(
       sub: user.id,
       role: user.account_role,
       member: user.member?.id ?? null,
+      hall: user.hall_id ?? null,
       name,
     });
     return new Response(
@@ -790,7 +906,7 @@ async function authRoute(
   if (p[1] === 'me' && method === 'GET') {
     const s = await getSession(req);
     if (!s) throw new HttpError(401, '未登录');
-    return json({ id: s.sub, role: s.role, member: s.member, name: s.name });
+    return json({ id: s.sub, role: s.role, member: s.member, hall: s.hall ?? null, name: s.name });
   }
   // Self-service password change — any logged-in user, verifies the old password.
   if (p[1] === 'password' && method === 'POST') {

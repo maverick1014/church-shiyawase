@@ -66,8 +66,15 @@ async function main() {
   const taken = new Set((accounts || []).map((a) => a.member_id));
   const freeMembers = (members || []).filter((m) => !taken.has(m.id));
 
+  // ---- Halls (堂会) --------------------------------------------------------
+  // Members and groups carry a required hall_id, so every create below needs
+  // one. The smoke account has full access, so it sees all three halls.
+  const halls = (await req('GET', '/api/halls', H)).json;
+  ok('halls is non-empty array', Array.isArray(halls) && halls.length > 0, JSON.stringify(halls).slice(0, 120));
+  const hallId = halls?.[0]?.id;
+
   // ---- Members CRUD -------------------------------------------------------
-  const mkMember = await req('POST', '/api/members', { ...H, body: { full_name: `E2E成员-${Date.now()}`, church_role: 'member', status: 'active' } });
+  const mkMember = await req('POST', '/api/members', { ...H, body: { full_name: `E2E成员-${Date.now()}`, church_role: 'member', status: 'active', hall_id: hallId } });
   ok('create member → 200 + id', mkMember.status === 200 && mkMember.json?.id, `status ${mkMember.status}`);
   const memberId = mkMember.json?.id;
   if (memberId) {
@@ -91,7 +98,7 @@ async function main() {
   }
 
   // ---- Groups CRUD (+ weekly attendance) ----------------------------------
-  const mkGrp = await req('POST', '/api/groups', { ...H, body: { name: `E2E小组-${Date.now()}` } });
+  const mkGrp = await req('POST', '/api/groups', { ...H, body: { name: `E2E小组-${Date.now()}`, hall_id: hallId } });
   ok('create group → 200 + id', mkGrp.status === 200 && mkGrp.json?.id, `status ${mkGrp.status}`);
   const grpId = mkGrp.json?.id;
   if (grpId) {

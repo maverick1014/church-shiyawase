@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { useFetch } from '@/lib/hooks';
 import { api } from '@/lib/api';
 import { usePageChrome, useMe } from '@/components/AppShell';
-import { ErrorBanner, Field, Loading, Modal, useConfirm, useToast } from '@/components/ui';
+import { ErrorBanner, Field, HallSelect, Loading, Modal, useConfirm, useToast } from '@/components/ui';
 import { can } from '@/lib/perms';
 import { EventDetail, EventRow, MemberRow } from '@/lib/types';
 import {
@@ -266,6 +266,8 @@ function EventModal({
     event_type: (event?.event_type ?? EventType.Service) as EventType,
     location: event?.location ?? '',
     starts_at: toLocalInput(event?.starts_at ?? null),
+    // null = 全堂 / 联合聚会.
+    hall_id: event ? event.hall_id : null,
   });
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -283,6 +285,7 @@ function EventModal({
         event_type: form.event_type,
         location: form.location || null,
         starts_at: new Date(form.starts_at).toISOString(),
+        hall_id: form.hall_id,
       };
       if (event) await api.patch(`/events/${event.id}`, payload);
       else await api.post('/events', payload);
@@ -313,9 +316,19 @@ function EventModal({
           <input value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} placeholder="大堂 / 副堂" />
         </Field>
       </div>
-      <Field label="开始时间">
-        <input type="datetime-local" className={form.starts_at ? undefined : 'date-empty'} value={form.starts_at} onChange={(e) => setForm({ ...form, starts_at: e.target.value })} />
-      </Field>
+      <div className="form-row">
+        <Field label="开始时间">
+          <input type="datetime-local" className={form.starts_at ? undefined : 'date-empty'} value={form.starts_at} onChange={(e) => setForm({ ...form, starts_at: e.target.value })} />
+        </Field>
+        <Field label="堂会">
+          <HallSelect
+            value={form.hall_id}
+            onChange={(id) => setForm({ ...form, hall_id: id })}
+            allowAll
+            allLabel="全堂 / 联合聚会"
+          />
+        </Field>
+      </div>
       <div className="modal-actions">
         {onDelete && (
           <button

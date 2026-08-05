@@ -7,6 +7,24 @@
 // Members & roles
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Halls (堂会) — 中文堂 / 英文堂 / 马来文堂
+// ---------------------------------------------------------------------------
+
+/**
+ * A congregation within the same church, sharing one database. Members and
+ * groups always belong to exactly one hall; trainings and events may leave it
+ * null to mean "open to every hall"; an account with a null hall has
+ * full (all-hall) access.
+ */
+export interface Hall {
+  id: string;
+  name: string;
+  sort_order: number;
+  auto_sunday_service: boolean;
+  created_at: string;
+}
+
 /**
  * Church-level standing, stored on the member. Independent of any group.
  */
@@ -103,6 +121,7 @@ export interface Member {
   group_id: string | null;
   group_position: GroupPosition | null;
   household_id: string | null;
+  hall_id: string;
   joined_at: string | null;
   notes: string | null;
   created_at: string;
@@ -131,6 +150,7 @@ export interface Group {
   meeting_time: string | null; // "HH:MM:SS" (Postgres `time`)
   location: string | null;
   tags: string[]; // free-form, admin-defined (e.g. 年轻人/职青/晚上)
+  hall_id: string;
   created_at: string;
   // Leadership is derived from members.group_position, not stored here.
 }
@@ -163,6 +183,8 @@ export interface ChurchEvent {
   location: string | null;
   starts_at: string;
   ends_at: string | null;
+  /** null = 全堂开放 / 联合聚会. */
+  hall_id: string | null;
   created_at: string;
 }
 
@@ -219,6 +241,8 @@ export interface Training {
   is_enrollable: boolean;
   starts_on: string | null;
   ends_on: string | null;
+  /** null = 全堂开放（任何堂的成员都可报名）. */
+  hall_id: string | null;
   created_at: string;
 }
 
@@ -328,6 +352,8 @@ export interface AppUser {
   member_id: string;
   email: string;
   account_role: AccountRole;
+  /** null = 全堂权限; a value scopes this account to a single hall. */
+  hall_id: string | null;
   status: AccountStatus;
   two_factor: boolean;
   language: string;

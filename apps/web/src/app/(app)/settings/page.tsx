@@ -6,7 +6,7 @@ import { useFetch } from '@/lib/hooks';
 import { useSortableRows } from '@/lib/sort';
 import { api } from '@/lib/api';
 import { usePageChrome, useMe } from '@/components/AppShell';
-import { ErrorBanner, Field, Loading, Modal, PasswordInput, RoleBadge, SortTh, Switch, useConfirm, useToast } from '@/components/ui';
+import { ErrorBanner, Field, HallSelect, Loading, Modal, PasswordInput, RoleBadge, SortTh, Switch, useConfirm, useToast } from '@/components/ui';
 import { ChangePasswordModal } from '@/components/ChangePasswordModal';
 import { AccountRow, MemberRow } from '@/lib/types';
 import {
@@ -243,6 +243,8 @@ function AccountDetail({
   // independently editable — so the two can never drift apart.
   const email = account.member?.email ?? account.email;
   const [role, setRole] = useState<AccountRole>(account.account_role);
+  // null = 全堂权限 (may see and manage every hall).
+  const [hall, setHall] = useState<string | null>(account.hall_id ?? null);
   const [status, setStatus] = useState<AccountStatus>(account.status);
   const [language, setLanguage] = useState(account.language);
   const [nDisc, setNDisc] = useState(account.notify_discipleship);
@@ -298,6 +300,7 @@ function AccountDetail({
     try {
       await api.patch(`/accounts/${account.id}`, {
         account_role: role,
+        hall_id: hall,
         status,
         language,
         notify_discipleship: nDisc,
@@ -346,6 +349,12 @@ function AccountDetail({
               ))}
             </select>
           </Field>
+          <Field label="所属堂会">
+            <HallSelect value={hall} onChange={setHall} allowAll allLabel="全堂会（不限）" />
+          </Field>
+          <div className="hint" style={{ gridColumn: '1 / -1' }}>
+            💡 选定某个堂会后，该账户只能查看与管理该堂的成员、小组、聚会与培训；「全堂会」则不限。
+          </div>
           <div style={{ gridColumn: '1 / -1' }} className="flex-between" >
             <div style={{ background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 10, padding: '11px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
               <div>
@@ -431,6 +440,8 @@ function AddAccountModal({
   const takenMembers = new Set(existing.map((a) => a.member_id));
   const [memberId, setMemberId] = useState('');
   const [role, setRole] = useState<AccountRole>(AccountRole.Coworker);
+  // null = 全堂权限.
+  const [hall, setHall] = useState<string | null>(null);
   const [password, setPassword] = useState('');
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -460,6 +471,7 @@ function AddAccountModal({
         member_id: memberId,
         email,
         account_role: role,
+        hall_id: hall,
         password,
       });
       onSaved();
@@ -499,6 +511,9 @@ function AddAccountModal({
           </select>
         </Field>
       </div>
+      <Field label="所属堂会">
+        <HallSelect value={hall} onChange={setHall} allowAll allLabel="全堂会（不限）" />
+      </Field>
       {memberId && !email && (
         <div className="hint" style={{ marginBottom: 14 }}>
           ⚠️ 该成员尚未填写邮箱，请先到「成员目录」为其补上邮箱，再回来建立登录账户。

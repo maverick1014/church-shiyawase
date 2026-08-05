@@ -187,15 +187,16 @@ tog/
 Enums: `church_role(pastor,member)`, `group_position(leader,assistant_leader,intern_leader,core_member,regular_member,new_member)`, `member_status(active,inactive)`, `gender_type`, `event_type`, `attendance_status(present,absent,excused)`, `donation_method`, `enrollment_status(pending,approved,in_progress,completed,dropped)`, `pair_status(active,completed,paused)`.
 
 Tables:
-- `groups(id, name, description, meeting_day weekday, meeting_time, location, tags text[], created_at)` — **no leader columns** (derived); 小组状态 (可分植/可加人/刚好) is also derived, not stored.
+- `halls(id, name, sort_order, auto_sunday_service, created_at)` — 中文堂 / 英文堂 / 马来文堂. One shared database; a hall is a **scope column**, not a separate deployment.
+- `groups(id, name, description, meeting_day weekday, meeting_time, location, tags text[], hall_id→halls **NOT NULL**, created_at)` — **no leader columns** (derived); 小组状态 (可分植/可加人/刚好) is also derived, not stored.
 - `households(id, name, address, phone, created_at)` — optional family grouping.
-- `members(id, full_name, chinese_name, email, phone, gender, date_of_birth, church_role, status, group_id→groups, group_position, household_id→households, joined_at, notes, timestamps)`
+- `members(id, full_name, chinese_name, email, phone, gender, date_of_birth, church_role, status, group_id→groups, group_position, household_id→households, hall_id→halls **NOT NULL**, joined_at, notes, timestamps)`
   - `check (group_position is null or group_id is not null)`
   - **partial unique indexes**: one `leader` / one `assistant_leader` / one `intern_leader` per `group_id`.
-- `events(id, title, description, event_type, location, starts_at, ends_at, created_at)`
+- `events(id, title, description, event_type, location, starts_at, ends_at, hall_id→halls **nullable**, created_at)` — `hall_id is null` = 全堂 / 联合聚会. Unique index `(starts_at, hall_id) nulls not distinct where event_type='service'` so each hall may hold its own 10:00 主日崇拜.
 - `event_attendance(id, event_id, member_id, status, checked_in_at, notes, unique(event_id,member_id))`
 - `donations(id, member_id?, amount, currency, fund, method, donated_at, notes, created_at)`
-- `trainings(id, name, description, category, trainer_id→members, total_sessions, is_enrollable, starts_on, ends_on, created_at)`
+- `trainings(id, name, description, category, trainer_id→members, total_sessions, is_enrollable, starts_on, ends_on, hall_id→halls **nullable**, created_at)` — `hall_id is null` = 全堂开放.
 - `training_sessions(id, training_id, session_number, title, scheduled_at, location, notes, unique(training_id,session_number))`
 - `training_enrollments(id, training_id, member_id, status, progress, enrolled_at, completed_at, notes, unique(training_id,member_id))`
 - `training_attendance(id, session_id, member_id, attended, checked_at, notes, unique(session_id,member_id))`
@@ -231,6 +232,7 @@ Tables:
 | Area | Endpoints |
 | --- | --- |
 | Members | `GET/POST /members`, `GET/PATCH/DELETE /members/:id`, `GET /members/:id/trainings` (filters: `church_role`, `group_position`, `group_id`, `q`) |
+| Halls | `GET /halls` — 堂会 list (read-only; a hall-scoped account only sees its own) |
 | Groups | `GET/POST /groups`, `GET/PATCH/DELETE /groups/:id` (member positions live on `members`) |
 | Households | `GET/POST /households`, `GET/PATCH/DELETE /households/:id` |
 | Events | `GET/POST /events`, `GET/PATCH/DELETE /events/:id`, `POST /events/:id/attendance` |
