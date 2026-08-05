@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { api } from '@/lib/api';
 import { ErrorBanner, Field, HallSelect, Modal, useToast } from '@/components/ui';
+import { useHallScope } from '@/lib/hall';
 import { MemberRow, TrainingRow } from '@/lib/types';
 import { TRAINING_CATEGORIES } from '@/lib/labels';
 
@@ -19,6 +20,7 @@ export function TrainingModal({
   onSaved: (id: string) => void;
   onDelete?: () => void;
 }) {
+  const { hallId } = useHallScope();
   const [form, setForm] = useState({
     name: initial?.name ?? '',
     category: initial?.category ?? TRAINING_CATEGORIES[0],
@@ -27,8 +29,9 @@ export function TrainingModal({
     starts_on: initial?.starts_on?.slice(0, 10) ?? '',
     ends_on: initial?.ends_on?.slice(0, 10) ?? '',
     is_enrollable: initial?.is_enrollable ?? true,
-    // null = 全堂开放 (any hall's members may enroll).
-    hall_id: initial ? initial.hall_id : null,
+    // Editing keeps the course's own hall; creating defaults to the hall being
+    // viewed (and to 全堂开放 only when viewing 全部堂会).
+    hall_id: initial ? initial.hall_id : hallId || null,
   });
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
