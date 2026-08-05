@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useFetch } from '@/lib/hooks';
 import { api } from '@/lib/api';
 import { usePageChrome, useMe, useHallScope } from '@/components/AppShell';
-import { ErrorBanner, Field, HallSelect, Loading, Modal, useConfirm, useToast } from '@/components/ui';
+import { Empty, ErrorBanner, Field, HallSelect, Loading, Modal, useConfirm, useToast } from '@/components/ui';
 import { can } from '@/lib/perms';
 import { EventDetail, EventRow, MemberRow } from '@/lib/types';
 import {
@@ -102,8 +102,8 @@ export default function EventsPage() {
             </div>
           );
         })}
-        {sorted.length === 0 && <div className="empty">尚无聚会，点右上角「＋ 新增聚会」创建。</div>}
       </div>
+      {sorted.length === 0 && <Empty>尚无聚会，点右上角「＋ 新增聚会」创建。</Empty>}
 
       {activeId && (
         <AttendancePanel
@@ -235,7 +235,7 @@ function AttendancePanel({
               </div>
             );
           })}
-          {members.length === 0 && <div className="faint" style={{ textAlign: 'center', padding: 20 }}>暂无在册成员可点名。</div>}
+          {members.length === 0 && <div className="empty-inline">暂无在册成员可点名。</div>}
         </div>
       )}
 
@@ -341,8 +341,8 @@ function EventModal({
       <div className="modal-actions">
         {onDelete && (
           <button
-            className="btn ghost"
-            style={{ color: 'var(--crit)', borderColor: 'var(--crit-soft)', marginRight: 'auto' }}
+            className="btn danger"
+            style={{ marginRight: 'auto' }}
             onClick={onDelete}
           >
             删除聚会

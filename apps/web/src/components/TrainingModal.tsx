@@ -123,8 +123,8 @@ export function TrainingModal({
       <div className="modal-actions">
         {onDelete && (
           <button
-            className="btn ghost"
-            style={{ color: 'var(--crit)', borderColor: 'var(--crit-soft)', marginRight: 'auto' }}
+            className="btn danger"
+            style={{ marginRight: 'auto' }}
             onClick={onDelete}
           >
             删除课程

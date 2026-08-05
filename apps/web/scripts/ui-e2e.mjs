@@ -146,21 +146,23 @@ async function main() {
     check('搜索框实时过滤列表', total > 0 && (await page.locator('.mtile').count()) < total, `${total} → 过滤`);
     await page.fill('input[placeholder*="搜索"]', '');
     await w(300);
-    // 身份 + 小组 are now <select> filters (previously .chip buttons). The first
-    // select is 身份: pick 牧师 and assert it narrows the list.
-    await page.locator('select').first().selectOption('牧师');
+    // 身份 + 小组 are <select> filters. Scope to .filter-bar — the topbar hall
+    // switcher is also a <select> and comes first in the DOM.
+    const filters = page.locator('.filter-bar select');
+    await filters.first().selectOption('牧师');
     await w(500);
     check('身份筛选生效', (await page.locator('.mtile').count()) < total);
-    check('导出按钮存在', (await page.locator('button:has-text("导出")').count()) > 0);
-    await page.locator('select').first().selectOption('all');
+    // Export is icon-only now, so identify it by its accessible name.
+    check('导出按钮存在', (await page.locator('button[aria-label*="导出"]').count()) > 0);
+    await filters.first().selectOption('all');
     await w(300);
-    // 小组 filter = second select; drive its first real group option (index 1).
-    const groupVal = await page.locator('select').nth(1).locator('option').nth(1).getAttribute('value');
+    // 小组 filter = second filter select; drive its first real option (index 1).
+    const groupVal = await filters.nth(1).locator('option').nth(1).getAttribute('value');
     if (groupVal) {
-      await page.locator('select').nth(1).selectOption(groupVal);
+      await filters.nth(1).selectOption(groupVal);
       await w(400);
       check('小组筛选生效', (await page.locator('.mtile').count()) <= total);
-      await page.locator('select').nth(1).selectOption('all');
+      await filters.nth(1).selectOption('all');
       await w(300);
     }
     await shot('02-members');
@@ -246,12 +248,17 @@ async function main() {
     /* -- 用户管理 -------------------------------------------------------- */
     mod('用户管理');
     await page.goto(`${BASE}/settings`, { waitUntil: 'domcontentloaded' });
-    await page.locator('text=权限说明').waitFor({ timeout: 20000 });
+    await page.locator('button:has-text("新建账户")').first().waitFor({ timeout: 20000 });
     const settingsBody = await page.locator('body').innerText();
-    check('已进入用户管理(非登录页)', settingsBody.includes('权限说明'));
-    check('权限说明已无「奉献」残留文案', !settingsBody.includes('奉献'));
-    // Account rows now expose a › icon-btn (previously the whole tr.row-click).
-    await page.locator('table.stack .icon-btn').first().click();
+    check('已进入用户管理(非登录页)', settingsBody.includes('新建账户'));
+    check('页面已无「奉献」残留文案', !settingsBody.includes('奉献'));
+    // 权限说明 now lives behind an info icon rather than a always-open card.
+    await page.locator('button[aria-label="权限说明"]').first().click();
+    await w(300);
+    check('权限说明可由 info 图标展开', (await page.locator('.info-pop-body').count()) > 0);
+    await page.keyboard.press('Escape');
+    // The account list is .mtile tiles at this (mobile) viewport, like 小组管理.
+    await page.locator('.mtile').first().click();
     await page.locator('button:has-text("保存账户设置")').waitFor({ timeout: 10000 });
     check('账户详情可进入', true);
     await shot('08-settings');

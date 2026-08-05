@@ -139,7 +139,7 @@ export default function DailyFormPage() {
                 <label className="field-label">反馈 / 备注</label>
                 <textarea rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="今日一同读经祷告，为家人代祷…" />
               </div>
-              <button className="btn accent block" onClick={submit} disabled={saving} style={{ padding: 11 }}>
+              <button className="btn accent block" onClick={submit} disabled={saving}>
                 {saving ? '提交中…' : '提交今日进度'}
               </button>
             </>

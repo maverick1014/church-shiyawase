@@ -141,8 +141,7 @@ export default function MemberDetailPage() {
             {perms.write && <button className="btn" onClick={() => setEditOpen(true)}>编辑资料</button>}
             {perms.delete && (
               <button
-                className="btn ghost"
-                style={{ color: 'var(--crit)', border: '1px solid var(--crit-soft)' }}
+                className="btn danger"
                 onClick={async () => {
                   const ok = await confirm({
                     title: '删除成员',
@@ -207,7 +206,7 @@ export default function MemberDetailPage() {
               ))}
               {sortedRecords.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="faint" style={{ textAlign: 'center', padding: 24 }}>
+                  <td colSpan={5} className="empty-inline">
                     尚无培训记录。
                   </td>
                 </tr>

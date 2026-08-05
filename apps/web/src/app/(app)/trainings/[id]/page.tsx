@@ -6,7 +6,7 @@ import { useFetch } from '@/lib/hooks';
 import { useSortableRows } from '@/lib/sort';
 import { api } from '@/lib/api';
 import { usePageChrome, useMe } from '@/components/AppShell';
-import { ErrorBanner, Field, Loading, Modal, SortTh, useConfirm, useToast } from '@/components/ui';
+import { ErrorBanner, ExportButton, Field, Loading, Modal, SortTh, useConfirm, useToast } from '@/components/ui';
 import { can } from '@/lib/perms';
 import { exportMatrix } from '@/lib/export';
 import { EnrollmentRow, MemberRow, NamelistResponse, SessionRow, TrainingDetail } from '@/lib/types';
@@ -226,12 +226,12 @@ export default function TrainingDetailPage() {
                 <button className="btn ghost sm" style={{ flexShrink: 0 }} onClick={() => setEditSession(s)}>编辑</button>
               )}
               {perms.delete && (
-                <button className="btn ghost sm" style={{ flexShrink: 0, color: 'var(--crit)' }} onClick={() => delSession(s)}>删除</button>
+                <button className="btn danger sm" style={{ flexShrink: 0 }} onClick={() => delSession(s)}>删除</button>
               )}
             </div>
           ))}
           {t.sessions.length === 0 && (
-            <div className="faint" style={{ textAlign: 'center', padding: 24, fontSize: 13 }}>尚无场次，点「＋ 加场次」开始安排。</div>
+            <div className="empty-inline">尚无场次，点「＋ 加场次」开始安排。</div>
           )}
         </div>
 
@@ -278,17 +278,17 @@ export default function TrainingDetailPage() {
                     <button className="btn good sm" style={{ flexShrink: 0 }} onClick={() => approve(e.id)}>通过</button>
                   )}
                   {perms.delete && e.status === EnrollmentStatus.Pending && (
-                    <button className="btn ghost sm" style={{ flexShrink: 0, color: 'var(--crit)' }} onClick={() => removeEnrollment(e, true)}>拒绝</button>
+                    <button className="btn danger sm" style={{ flexShrink: 0 }} onClick={() => removeEnrollment(e, true)}>拒绝</button>
                   )}
                   {perms.delete && e.status !== EnrollmentStatus.Pending && (
-                    <button className="btn ghost sm" style={{ flexShrink: 0, color: 'var(--crit)' }} onClick={() => removeEnrollment(e, false)}>移除</button>
+                    <button className="btn danger sm" style={{ flexShrink: 0 }} onClick={() => removeEnrollment(e, false)}>移除</button>
                   )}
                 </div>
               </div>
               );
             })}
             {t.enrollments.length === 0 && (
-              <div className="faint" style={{ textAlign: 'center', padding: 20, fontSize: 13 }}>尚无报名。</div>
+              <div className="empty-inline">尚无报名。</div>
             )}
           </div>
         </div>
@@ -301,9 +301,7 @@ export default function TrainingDetailPage() {
             <h3>核对名单</h3>
             <div className="muted" style={{ fontSize: 12.5, marginTop: 2 }}>逐场次核对出席，点击方格切换 ✓ · 空 缺席</div>
           </div>
-          <button className="btn accent sm" onClick={exportNamelist} disabled={!nl || nl.rows.length === 0}>
-            ⬇ 导出名单
-          </button>
+          <ExportButton onClick={exportNamelist} disabled={!nl || nl.rows.length === 0} title="导出名单" />
         </div>
         <div className="table-wrap">
           <table>
@@ -340,7 +338,7 @@ export default function TrainingDetailPage() {
               ))}
               {sortedNamelist.length === 0 && (
                 <tr>
-                  <td colSpan={2 + (nl?.sessions.length ?? 0)} className="faint" style={{ textAlign: 'center', padding: 24 }}>
+                  <td colSpan={2 + (nl?.sessions.length ?? 0)} className="empty-inline">
                     通过报名后，成员将出现在核对名单中。
                   </td>
                 </tr>

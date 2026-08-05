@@ -143,7 +143,7 @@ export default function EnrollFormPage() {
                   <div className="hint" style={{ marginBottom: 14 }}>
                     💡 我们会用你的<strong>完整中文姓名</strong>核对教会成员资料。若查无此人，请先联系牧师加入成员系统。
                   </div>
-                  <button className="btn accent block" onClick={submit} disabled={saving || !fullName.trim()} style={{ padding: 11 }}>
+                  <button className="btn accent block" onClick={submit} disabled={saving || !fullName.trim()}>
                     {saving ? '提交中…' : '提交报名'}
                   </button>
                 </>

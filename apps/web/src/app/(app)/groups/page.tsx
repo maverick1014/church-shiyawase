@@ -6,7 +6,18 @@ import { useFetch } from '@/lib/hooks';
 import { useSortableRows } from '@/lib/sort';
 import { api } from '@/lib/api';
 import { usePageChrome, useMe, useHallScope } from '@/components/AppShell';
-import { ErrorBanner, Field, HallSelect, Loading, Modal, SortTh, TagsInput, useToast } from '@/components/ui';
+import {
+  ChevronRightIcon,
+  ErrorBanner,
+  Field,
+  HallSelect,
+  Loading,
+  Modal,
+  RowChevron,
+  SortTh,
+  TagsInput,
+  useToast,
+} from '@/components/ui';
 import { can } from '@/lib/perms';
 import { GroupRow, MemberRow } from '@/lib/types';
 import {
@@ -115,14 +126,9 @@ export default function GroupsPage() {
     <>
       <ErrorBanner message={groups.error || members.error} />
 
-      <div className="flex gap-8 flex-wrap mb-16">
-        <input
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="🔍 搜索小组 / 组长…"
-          style={{ maxWidth: 240, flex: 1, minWidth: 140 }}
-        />
-        <select value={tagFilter} onChange={(e) => setTagFilter(e.target.value)} style={{ maxWidth: 160 }}>
+      <div className="filter-bar">
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="🔍 搜索小组 / 组长…" />
+        <select value={tagFilter} onChange={(e) => setTagFilter(e.target.value)}>
           <option value="all">全部标签</option>
           {allTags.map((t) => (
             <option key={t} value={t}>{t}</option>
@@ -131,7 +137,6 @@ export default function GroupsPage() {
         <select
           value={weekdayFilter}
           onChange={(e) => setWeekdayFilter(e.target.value as Weekday | 'all')}
-          style={{ maxWidth: 140 }}
         >
           <option value="all">全部星期</option>
           {WEEKDAY_OPTIONS.map((d) => (
@@ -186,13 +191,13 @@ export default function GroupsPage() {
                   </td>
                   <td className="muted">{g.schedule || '—'}</td>
                   <td style={{ textAlign: 'right' }}>
-                    <button className="icon-btn" title="查看详情" onClick={() => router.push(`/groups/${g.id}`)}>›</button>
+                    <RowChevron title="查看详情" onClick={() => router.push(`/groups/${g.id}`)} />
                   </td>
                 </tr>
               ))}
               {sorted.length === 0 && (
                 <tr>
-                  <td colSpan={hallLocked ? 7 : 8} className="faint" style={{ textAlign: 'center', padding: 28 }}>
+                  <td colSpan={hallLocked ? 7 : 8} className="empty-inline">
                     {q.trim() || tagFilter !== 'all' || weekdayFilter !== 'all'
                       ? '没有符合条件的小组。'
                       : '尚无小组，点右上角「＋ 新增小组」创建。'}
@@ -213,7 +218,7 @@ export default function GroupsPage() {
                 <strong>{g.name}</strong>
                 <span className="muted" style={{ fontSize: 12.5 }}> · 组长 {g.leaderName ?? '空缺'}</span>
               </div>
-              <span className="mtile-cta">详情 →</span>
+              <span className="mtile-cta"><ChevronRightIcon /></span>
             </div>
             <div className="mtile-line flex items-center gap-8 flex-wrap">
               <span>{g.memberCount} 位组员（新成员 {g.newMemberCount}）{g.schedule ? ` · ${g.schedule}` : ''}</span>
@@ -231,7 +236,7 @@ export default function GroupsPage() {
           </div>
         ))}
         {sorted.length === 0 && (
-          <div className="faint" style={{ textAlign: 'center', padding: 28 }}>
+          <div className="empty-inline">
             {q.trim() || tagFilter !== 'all' || weekdayFilter !== 'all'
               ? '没有符合条件的小组。'
               : '尚无小组，点右上角「＋ 新增小组」创建。'}
