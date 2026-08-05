@@ -97,20 +97,22 @@ export default function RecurringEventsPage() {
     { key: 'when', dir: 'asc' },
   );
 
-  const remove = async (r: RecurringEventRow) => {
+  const remove = async (r: RecurringEventRow): Promise<boolean> => {
     const ok = await confirm({
       title: '删除循环聚会',
       message: `删除「${r.title}」的循环设定？已经排入日历的聚会会保留（出席记录不受影响），只是往后不再自动新增。`,
       confirmText: '删除',
       danger: true,
     });
-    if (!ok) return;
+    if (!ok) return false;
     try {
       await api.delete(`/recurring-events/${r.id}`);
       rules.reload();
       toast('已删除循环设定');
+      return true;
     } catch (e) {
       toast((e as Error).message, 'error');
+      return false;
     }
   };
 
@@ -134,7 +136,8 @@ export default function RecurringEventsPage() {
 
       <div className="hint mb-16">
         💡 系统会自动把未来「提前天数」内的聚会排进日历（预设 35 天，约一个月）。
-        手动删掉其中某一次（例如公假停聚）不会被重新加回来。
+        已排进去的那一次若手动删掉（例如公假停聚），不会被重新加回来；
+        修改星期或时间也只影响之后新排的，已排好的不受影响。
       </div>
 
       {/* Desktop — table */}
@@ -239,9 +242,9 @@ export default function RecurringEventsPage() {
           onDelete={
             editing && perms.delete
               ? async () => {
-                  const target = editing;
-                  setEditing(null);
-                  await remove(target);
+                  // Only close the modal once the delete is confirmed — backing
+                  // out of the confirmation must leave the edits on screen.
+                  if (await remove(editing)) setEditing(null);
                 }
               : undefined
           }

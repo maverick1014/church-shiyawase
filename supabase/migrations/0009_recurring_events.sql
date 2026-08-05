@@ -3,7 +3,8 @@
 -- 崇拜" rule with configurable schedules managed from the UI.
 -- ---------------------------------------------------------------------------
 -- Generation stays lazy (GET /events tops up the window) — no cron needed: the
--- schedule is always current for anyone actually looking at it.
+-- schedule is always current for anyone actually looking at it. See 0010 for
+-- the watermark that stops a deleted occurrence from being re-created.
 --
 -- Deleting a rule NEVER deletes the events it already produced (they carry
 -- attendance records) — `on delete set null` just unlinks them, and the rule

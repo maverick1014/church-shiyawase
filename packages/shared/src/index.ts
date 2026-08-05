@@ -208,6 +208,12 @@ export interface RecurringEvent {
   hall_id: string | null;
   lookahead_days: number;
   active: boolean;
+  /**
+   * Last date this rule generated. Generation only looks past it, so a
+   * deleted occurrence stays deleted and editing the weekday/time doesn't
+   * regenerate the window already filled at the old time.
+   */
+  generated_through: string | null;
   created_at: string;
 }
 

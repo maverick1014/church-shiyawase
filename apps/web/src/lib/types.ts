@@ -103,6 +103,7 @@ export interface RecurringEventRow {
   hall_id: string | null;
   lookahead_days: number;
   active: boolean;
+  generated_through: string | null;
   hall?: { id: string; name: string } | null;
 }
 

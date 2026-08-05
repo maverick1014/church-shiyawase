@@ -753,16 +753,22 @@ const WEEKDAY_INDEX: Record<string, number> = {
  * schedule only needs to be correct for someone actually looking at it, which
  * avoids a cron job that can fail silently.
  *
- * Idempotent and forward-only: it fills each rule's `lookahead_days` window
- * and never touches the past, so a service the pastor deliberately deletes
- * (a holiday, say) stays deleted until that date falls outside the window
- * again — it is never retroactively resurrected.
+ * Two things keep it from fighting the user:
+ *  - `generated_through` means a rule only ever looks at dates AFTER the last
+ *    one it produced. Deleting a single occurrence (a public holiday) makes it
+ *    stay deleted, and editing a rule's weekday/time doesn't regenerate the
+ *    window it already filled at the old time.
+ *  - A slot already occupied by an equivalent event — same hall, same type,
+ *    same moment, whoever created it — is skipped. That covers services that
+ *    predate the rules (their `recurring_id` is null) and anything added by
+ *    hand, and stops the insert from colliding with the Sunday-service unique
+ *    index from 0008.
  */
 async function ensureRecurringEvents(db: ReturnType<typeof getDb>) {
   const rules = unwrap(
     await db
       .from('recurring_events')
-      .select('id,title,event_type,weekday,start_time,location,hall_id,lookahead_days')
+      .select('id,title,event_type,weekday,start_time,location,hall_id,lookahead_days,generated_through')
       .eq('active', true),
   ) as Array<{
     id: string;
@@ -773,6 +779,7 @@ async function ensureRecurringEvents(db: ReturnType<typeof getDb>) {
     location: string | null;
     hall_id: string | null;
     lookahead_days: number;
+    generated_through: string | null;
   }>;
   if (rules.length === 0) return;
 
@@ -781,8 +788,8 @@ async function ensureRecurringEvents(db: ReturnType<typeof getDb>) {
     Date.UTC(nowLocal.getUTCFullYear(), nowLocal.getUTCMonth(), nowLocal.getUTCDate()),
   );
 
-  // Every timestamp a rule wants filled, within its own lookahead window.
-  const wanted: Array<{ rule: (typeof rules)[number]; startsAt: string }> = [];
+  // Every date a rule still owes, within its own lookahead window.
+  const wanted: Array<{ rule: (typeof rules)[number]; date: string; startsAt: string }> = [];
   for (const rule of rules) {
     const target = WEEKDAY_INDEX[rule.weekday];
     if (target === undefined) continue;
@@ -791,7 +798,8 @@ async function ensureRecurringEvents(db: ReturnType<typeof getDb>) {
       const d = new Date(todayLocal);
       d.setUTCDate(d.getUTCDate() + offset);
       const iso = d.toISOString().slice(0, 10);
-      wanted.push({ rule, startsAt: `${iso}T${rule.start_time}${CHURCH_TZ_OFFSET}` });
+      if (rule.generated_through && iso <= rule.generated_through) continue;
+      wanted.push({ rule, date: iso, startsAt: `${iso}T${rule.start_time}${CHURCH_TZ_OFFSET}` });
     }
   }
   if (wanted.length === 0) return;
@@ -801,16 +809,21 @@ async function ensureRecurringEvents(db: ReturnType<typeof getDb>) {
   const existing = unwrap(
     await db
       .from('events')
-      .select('starts_at,recurring_id')
+      .select('starts_at,hall_id,event_type,recurring_id')
       .gte('starts_at', times[0])
       .lte('starts_at', times[times.length - 1]),
-  ) as Array<{ starts_at: string; recurring_id: string | null }>;
-  const taken = new Set(
-    existing.map((e) => `${e.recurring_id ?? ''}|${new Date(e.starts_at).toISOString()}`),
-  );
+  ) as Array<{
+    starts_at: string;
+    hall_id: string | null;
+    event_type: string;
+    recurring_id: string | null;
+  }>;
+  const slotKey = (hallId: string | null, type: string, startsAt: string) =>
+    `${hallId ?? ''}|${type}|${new Date(startsAt).toISOString()}`;
+  const taken = new Set(existing.map((e) => slotKey(e.hall_id, e.event_type, e.starts_at)));
 
   const rows = wanted
-    .filter((w) => !taken.has(`${w.rule.id}|${new Date(w.startsAt).toISOString()}`))
+    .filter((w) => !taken.has(slotKey(w.rule.hall_id, w.rule.event_type, w.startsAt)))
     .map((w) => ({
       title: w.rule.title,
       event_type: w.rule.event_type,
@@ -819,13 +832,29 @@ async function ensureRecurringEvents(db: ReturnType<typeof getDb>) {
       hall_id: w.rule.hall_id,
       recurring_id: w.rule.id,
     }));
-  if (rows.length === 0) return;
 
-  // Best-effort: two concurrent requests could both see the same slot missing.
-  // The unique index on (recurring_id, starts_at) turns that race into a
-  // rejected insert rather than a duplicate — either way this must never fail
-  // the surrounding GET /events request.
-  await db.from('events').insert(rows);
+  if (rows.length > 0) {
+    // Best-effort: two concurrent requests could both see the same slot
+    // missing. The unique index on (recurring_id, starts_at) turns that race
+    // into a rejected insert rather than a duplicate — either way this must
+    // never fail the surrounding GET /events request, so the error is logged
+    // rather than thrown (a silent swallow once hid a real bug here).
+    const ins = await db.from('events').insert(rows);
+    if (ins.error) console.error('recurring top-up insert failed:', ins.error.message);
+  }
+
+  // Advance each rule's watermark to the last date it just covered, so those
+  // dates are never reconsidered — even the ones skipped as already-occupied.
+  const lastByRule = new Map<string, string>();
+  for (const w of wanted) {
+    const prev = lastByRule.get(w.rule.id);
+    if (!prev || w.date > prev) lastByRule.set(w.rule.id, w.date);
+  }
+  await Promise.all(
+    [...lastByRule].map(([id, date]) =>
+      db.from('recurring_events').update({ generated_through: date }).eq('id', id),
+    ),
+  );
 }
 
 async function groupAttendance(db: ReturnType<typeof getDb>, groupId: string) {
