@@ -48,23 +48,34 @@ async function login(email, password) {
  * `wrangler deploy` returns as soon as Cloudflare accepts the upload, but the
  * new Worker version takes a few seconds to actually start serving traffic.
  * This suite runs immediately after, so without this wait the first requests
- * can hit the PREVIOUS version — which shows up as bogus "No route for ..."
- * 404s (and cascading 500s) for endpoints the new version just added.
+ * hit the PREVIOUS version and the whole run tests stale code.
  *
- * Poll a probe request until the freshly deployed code answers it. `/api/halls`
- * is the newest route; swap the probe when a newer one lands.
+ * Wait on the deployed build id, not on "does endpoint X answer": an existence
+ * probe stops being a rollout signal the moment X ships, and a stale Worker
+ * then sails straight through it (which is precisely how a fixed bug kept
+ * "failing" here). EXPECT_BUILD is the commit deploy.yml just built; without
+ * it (local runs) there's nothing to wait for.
+ *
+ * The window is generous because propagation is occasionally much slower than
+ * the usual few seconds, and waiting a bit longer is far cheaper than a whole
+ * run that silently tested the previous release. Each poll is cache-busted so
+ * no intermediary can pin us to a stale answer.
  */
-async function waitForRollout(cookie, { timeoutMs = 90_000, everyMs = 3_000 } = {}) {
+async function waitForRollout({ timeoutMs = 240_000, everyMs = 3_000 } = {}) {
+  const expected = process.env.EXPECT_BUILD;
+  if (!expected) return true;
   const started = Date.now();
   for (;;) {
-    const r = await req('GET', '/api/halls', { cookie });
-    if (r.status === 200) {
+    const r = await req('GET', `/api/version?_=${Date.now()}`);
+    if (r.status === 200 && r.json?.build === expected) {
       const waited = Date.now() - started;
-      if (waited > everyMs) console.log(`  (waited ${Math.round(waited / 1000)}s for the new Worker version)`);
+      if (waited > everyMs) console.log(`  (waited ${Math.round(waited / 1000)}s for build ${expected.slice(0, 7)})`);
       return true;
     }
     if (Date.now() - started > timeoutMs) {
-      console.error(`  rollout probe still failing after ${Math.round(timeoutMs / 1000)}s: ${r.status} ${JSON.stringify(r.json)}`);
+      console.error(
+        `  still serving build ${r.json?.build ?? `? (${r.status})`} after ${Math.round(timeoutMs / 1000)}s, expected ${expected}`,
+      );
       return false;
     }
     await new Promise((r2) => setTimeout(r2, everyMs));
@@ -73,6 +84,10 @@ async function waitForRollout(cookie, { timeoutMs = 90_000, everyMs = 3_000 } = 
 
 async function main() {
   console.log(`API E2E → ${BASE}`);
+
+  // Before anything is asserted, make sure we're testing the build we just
+  // deployed rather than the one still being served.
+  ok('deployed build is live', await waitForRollout());
 
   // ---- Auth ---------------------------------------------------------------
   ok('unauth GET /members → 401', (await req('GET', '/api/members')).status === 401);
@@ -84,9 +99,6 @@ async function main() {
   const me = await req('GET', '/api/auth/me', { cookie: admin });
   ok('me returns super_admin', me.json?.role === 'super_admin', me.json?.role);
   const H = { cookie: admin };
-
-  // Don't start asserting until the version we just deployed is live.
-  ok('new Worker version is serving', await waitForRollout(admin));
 
   // ---- Reference data -----------------------------------------------------
   const members = (await req('GET', '/api/members', H)).json;
@@ -125,6 +137,34 @@ async function main() {
       ok('event attendance → 200', att.status === 200, `status ${att.status}`);
     }
     ok('delete event → 200', (await req('DELETE', `/api/events/${evId}`, H)).status === 200);
+  }
+
+  // ---- Recurring events (循环聚会) ------------------------------------------
+  const rules = (await req('GET', '/api/recurring-events', H)).json;
+  ok('recurring-events is an array', Array.isArray(rules), JSON.stringify(rules).slice(0, 120));
+  const mkRule = await req('POST', '/api/recurring-events', {
+    ...H,
+    body: { title: `E2E循环-${Date.now()}`, event_type: 'prayer', weekday: 'wednesday', start_time: '20:00:00', location: '副堂', hall_id: hallId, lookahead_days: 14 },
+  });
+  ok('create recurring rule → 200 + id', mkRule.status === 200 && mkRule.json?.id, `status ${mkRule.status} ${JSON.stringify(mkRule.json).slice(0,120)}`);
+  const ruleId = mkRule.json?.id;
+  if (ruleId) {
+    ok('update recurring rule → 200', (await req('PATCH', `/api/recurring-events/${ruleId}`, { ...H, body: { active: false } })).status === 200);
+    // GET /events tops the calendar up from the active rules; a paused rule
+    // must not generate anything.
+    const afterPause = (await req('GET', '/api/events', H)).json;
+    ok('paused rule generates nothing', Array.isArray(afterPause) && !afterPause.some((e) => e.recurring_id === ruleId));
+    ok('re-activate rule → 200', (await req('PATCH', `/api/recurring-events/${ruleId}`, { ...H, body: { active: true } })).status === 200);
+    const afterResume = (await req('GET', '/api/events', H)).json;
+    const generated = (afterResume || []).filter((e) => e.recurring_id === ruleId);
+    ok('active rule fills the calendar', generated.length > 0, `${generated.length} generated`);
+    ok('generated events land on the rule weekday', generated.every((e) => new Date(e.starts_at).getUTCDay() === 3 || new Date(e.starts_at).getDay() === 3));
+    // Deleting the rule must KEEP the events it produced (they hold attendance).
+    ok('delete recurring rule → 200', (await req('DELETE', `/api/recurring-events/${ruleId}`, H)).status === 200);
+    const afterDelete = (await req('GET', '/api/events', H)).json;
+    const survivors = (afterDelete || []).filter((e) => generated.some((g) => g.id === e.id));
+    ok('generated events survive rule deletion', survivors.length === generated.length, `${survivors.length}/${generated.length} kept`);
+    for (const e of survivors) await req('DELETE', `/api/events/${e.id}`, H); // cleanup
   }
 
   // ---- Groups CRUD (+ weekly attendance) ----------------------------------

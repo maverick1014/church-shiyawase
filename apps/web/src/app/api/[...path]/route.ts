@@ -51,6 +51,16 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
   // ---- Auth + access control ------------------------------------------------
   if (r0 === 'auth') return authRoute(method, req, p, db);
 
+  // Which build is serving. Deliberately public and ahead of the session gate:
+  // the post-deploy suite polls it BEFORE logging in, to be sure it is testing
+  // the version just shipped rather than the one Cloudflare is still serving.
+  // (Probing "does endpoint X exist" instead stops working the moment X ships
+  // — that is exactly how a stale Worker once failed a whole api-e2e run.)
+  // The value is a commit sha of a public repo, so there is nothing to leak.
+  if (r0 === 'version' && !r1 && method === 'GET') {
+    return json({ build: process.env.NEXT_PUBLIC_BUILD_ID ?? 'dev' });
+  }
+
   // Public-by-design, no session: the mentor daily form (/d/<token>) and the
   // training self-enrollment form (/enroll/<id>). Both are narrow, specific
   // handlers below — nothing else under these prefixes is reachable unauthed.
@@ -264,7 +274,7 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
   if (r0 === 'events') {
     if (!r1) {
       if (method === 'GET') {
-        await ensureSundayServices(db);
+        await ensureRecurringEvents(db);
         let query = db
           .from('events')
           .select('*, hall:halls(id,name)')
@@ -311,6 +321,42 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
       if (method === 'DELETE') {
         await assertOwnsRow('events', r1);
         unwrap(await db.from('events').delete().eq('id', r1).select().single());
+        return json({ id: r1 });
+      }
+    }
+  }
+
+  // ---- Recurring events (循环聚会) -------------------------------------------
+  // Schedules that top up the events calendar. Hall-scoped exactly like the
+  // events they generate; deleting a rule keeps its past events (the FK is
+  // `on delete set null`), it only stops future generation.
+  if (r0 === 'recurring-events') {
+    if (!r1) {
+      if (method === 'GET') {
+        let query = db
+          .from('recurring_events')
+          .select('*, hall:halls(id,name)')
+          .order('created_at');
+        if (hallScope) query = query.or(`hall_id.eq.${hallScope},hall_id.is.null`);
+        else if (q.get('hall_id')) query = query.eq('hall_id', q.get('hall_id'));
+        return json(unwrap(await query));
+      }
+      if (method === 'POST')
+        return json(
+          unwrap(await db.from('recurring_events').insert(withHall(await body())).select().single()),
+        );
+    } else if (!r2) {
+      if (method === 'PATCH') {
+        const dto = await body();
+        assertHallWritable(dto);
+        await assertOwnsRow('recurring_events', r1);
+        return json(
+          unwrap(await db.from('recurring_events').update(dto).eq('id', r1).select().single()),
+        );
+      }
+      if (method === 'DELETE') {
+        await assertOwnsRow('recurring_events', r1);
+        unwrap(await db.from('recurring_events').delete().eq('id', r1).select().single());
         return json({ id: r1 });
       }
     }
@@ -700,76 +746,125 @@ async function upsertProgress(
   );
 }
 
-// Services run every Sunday, so the calendar shouldn't require a manual
-// "＋新增聚会" each week — ensure the upcoming Sundays already have a 主日崇拜
-// event before the list is returned. Idempotent (checks before inserting) and
-// only ever looks forward, so a Sunday a pastor deliberately deletes (e.g. a
-// holiday) only comes back once its date is more than SUNDAY_LOOKAHEAD_WEEKS
-// away again — never retroactively resurrected once it's in the past.
-const SUNDAY_LOOKAHEAD_WEEKS = 8;
-const SUNDAY_SERVICE_TIME = '10:00:00';
-const SUNDAY_SERVICE_LOCATION = '大堂';
 const CHURCH_TZ_OFFSET = '+08:00'; // Malaysia/Singapore time
+const WEEKDAY_INDEX: Record<string, number> = {
+  sunday: 0,
+  monday: 1,
+  tuesday: 2,
+  wednesday: 3,
+  thursday: 4,
+  friday: 5,
+  saturday: 6,
+};
 
-async function ensureSundayServices(db: ReturnType<typeof getDb>) {
+/**
+ * Top up the calendar from the 循环聚会 rules so a weekly service never has to
+ * be added by hand. Runs on GET /events — generation is lazy on purpose: the
+ * schedule only needs to be correct for someone actually looking at it, which
+ * avoids a cron job that can fail silently.
+ *
+ * Two things keep it from fighting the user:
+ *  - `generated_through` means a rule only ever looks at dates AFTER the last
+ *    one it produced. Deleting a single occurrence (a public holiday) makes it
+ *    stay deleted, and editing a rule's weekday/time doesn't regenerate the
+ *    window it already filled at the old time.
+ *  - A slot already occupied by an equivalent event — same hall, same type,
+ *    same moment, whoever created it — is skipped. That covers services that
+ *    predate the rules (their `recurring_id` is null) and anything added by
+ *    hand, and stops the insert from colliding with the Sunday-service unique
+ *    index from 0008.
+ */
+async function ensureRecurringEvents(db: ReturnType<typeof getDb>) {
+  const rules = unwrap(
+    await db
+      .from('recurring_events')
+      .select('id,title,event_type,weekday,start_time,location,hall_id,lookahead_days,generated_through')
+      .eq('active', true),
+  ) as Array<{
+    id: string;
+    title: string;
+    event_type: string;
+    weekday: string;
+    start_time: string;
+    location: string | null;
+    hall_id: string | null;
+    lookahead_days: number;
+    generated_through: string | null;
+  }>;
+  if (rules.length === 0) return;
+
   const nowLocal = new Date(Date.now() + 8 * 3600 * 1000);
   const todayLocal = new Date(
     Date.UTC(nowLocal.getUTCFullYear(), nowLocal.getUTCMonth(), nowLocal.getUTCDate()),
   );
-  const daysUntilSunday = (7 - todayLocal.getUTCDay()) % 7; // 0 if today is Sunday
 
-  const sundays: string[] = [];
-  for (let i = 0; i < SUNDAY_LOOKAHEAD_WEEKS; i++) {
-    const d = new Date(todayLocal);
-    d.setUTCDate(d.getUTCDate() + daysUntilSunday + i * 7);
-    sundays.push(d.toISOString().slice(0, 10));
+  // Every date a rule still owes, within its own lookahead window.
+  const wanted: Array<{ rule: (typeof rules)[number]; date: string; startsAt: string }> = [];
+  for (const rule of rules) {
+    const target = WEEKDAY_INDEX[rule.weekday];
+    if (target === undefined) continue;
+    const daysUntil = (target - todayLocal.getUTCDay() + 7) % 7;
+    for (let offset = daysUntil; offset <= rule.lookahead_days; offset += 7) {
+      const d = new Date(todayLocal);
+      d.setUTCDate(d.getUTCDate() + offset);
+      const iso = d.toISOString().slice(0, 10);
+      if (rule.generated_through && iso <= rule.generated_through) continue;
+      wanted.push({ rule, date: iso, startsAt: `${iso}T${rule.start_time}${CHURCH_TZ_OFFSET}` });
+    }
   }
+  if (wanted.length === 0) return;
 
-  // Each hall runs its own Sunday service (中文堂 10:00 in one room, 英文堂
-  // 10:00 in another), so the auto-created event is per hall. Only halls
-  // flagged `auto_sunday_service` take part — a hall that hasn't started
-  // meeting yet shouldn't have services invented for it.
-  const halls = unwrap(
-    await db.from('halls').select('id').eq('auto_sunday_service', true),
-  ) as Array<{ id: string }>;
-  if (halls.length === 0) return;
-
+  // One read covering the whole window, then insert only what's missing.
+  const times = wanted.map((w) => w.startsAt).sort();
   const existing = unwrap(
     await db
       .from('events')
-      .select('starts_at,hall_id')
-      .eq('event_type', 'service')
-      .gte('starts_at', `${sundays[0]}T00:00:00${CHURCH_TZ_OFFSET}`)
-      .lte('starts_at', `${sundays[sundays.length - 1]}T23:59:59${CHURCH_TZ_OFFSET}`),
-  ) as Array<{ starts_at: string; hall_id: string | null }>;
-  const existingKeys = new Set(
-    existing.map((e) => {
-      const date = new Date(new Date(e.starts_at).getTime() + 8 * 3600 * 1000)
-        .toISOString()
-        .slice(0, 10);
-      return `${date}|${e.hall_id ?? ''}`;
-    }),
-  );
+      .select('starts_at,hall_id,event_type,recurring_id')
+      .gte('starts_at', times[0])
+      .lte('starts_at', times[times.length - 1]),
+  ) as Array<{
+    starts_at: string;
+    hall_id: string | null;
+    event_type: string;
+    recurring_id: string | null;
+  }>;
+  const slotKey = (hallId: string | null, type: string, startsAt: string) =>
+    `${hallId ?? ''}|${type}|${new Date(startsAt).toISOString()}`;
+  const taken = new Set(existing.map((e) => slotKey(e.hall_id, e.event_type, e.starts_at)));
 
-  const rows = halls.flatMap((h) =>
-    sundays
-      // An all-hall (null) service already covers every hall that Sunday.
-      .filter((iso) => !existingKeys.has(`${iso}|${h.id}`) && !existingKeys.has(`${iso}|`))
-      .map((iso) => ({
-        title: '主日崇拜',
-        event_type: 'service',
-        location: SUNDAY_SERVICE_LOCATION,
-        starts_at: `${iso}T${SUNDAY_SERVICE_TIME}${CHURCH_TZ_OFFSET}`,
-        hall_id: h.id,
-      })),
-  );
-  if (rows.length === 0) return;
+  const rows = wanted
+    .filter((w) => !taken.has(slotKey(w.rule.hall_id, w.rule.event_type, w.startsAt)))
+    .map((w) => ({
+      title: w.rule.title,
+      event_type: w.rule.event_type,
+      location: w.rule.location,
+      starts_at: w.startsAt,
+      hall_id: w.rule.hall_id,
+      recurring_id: w.rule.id,
+    }));
 
-  // Best-effort: two concurrent requests could both see the same Sunday
-  // missing. The unique index in 0008_halls.sql (starts_at, hall_id) turns
-  // that race into a rejected insert rather than a duplicate event — either
-  // way, this must never fail the surrounding GET /events request over it.
-  await db.from('events').insert(rows);
+  if (rows.length > 0) {
+    // Best-effort: two concurrent requests could both see the same slot
+    // missing. The unique index on (recurring_id, starts_at) turns that race
+    // into a rejected insert rather than a duplicate — either way this must
+    // never fail the surrounding GET /events request, so the error is logged
+    // rather than thrown (a silent swallow once hid a real bug here).
+    const ins = await db.from('events').insert(rows);
+    if (ins.error) console.error('recurring top-up insert failed:', ins.error.message);
+  }
+
+  // Advance each rule's watermark to the last date it just covered, so those
+  // dates are never reconsidered — even the ones skipped as already-occupied.
+  const lastByRule = new Map<string, string>();
+  for (const w of wanted) {
+    const prev = lastByRule.get(w.rule.id);
+    if (!prev || w.date > prev) lastByRule.set(w.rule.id, w.date);
+  }
+  await Promise.all(
+    [...lastByRule].map(([id, date]) =>
+      db.from('recurring_events').update({ generated_through: date }).eq('id', id),
+    ),
+  );
 }
 
 async function groupAttendance(db: ReturnType<typeof getDb>, groupId: string) {

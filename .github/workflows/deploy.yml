@@ -47,8 +47,13 @@ jobs:
       - name: Run unit tests
         run: npm test
 
+      # Stamp the commit into the bundle so the post-deploy suite can tell this
+      # version apart from the one Cloudflare is still serving (rollout takes a
+      # few seconds). NEXT_PUBLIC_* is inlined at build time.
       - name: Build web (OpenNext / Cloudflare)
         run: npm run cf:build -w @tog/web
+        env:
+          NEXT_PUBLIC_BUILD_ID: ${{ github.sha }}
 
       # Deploy with the repo's own wrangler (v4, reads wrangler.jsonc) rather
       # than the version bundled in cloudflare/wrangler-action.
@@ -66,4 +71,6 @@ jobs:
         env:
           SMOKE_EMAIL: ${{ secrets.SMOKE_EMAIL || 'john@grace.org' }}
           SMOKE_PASSWORD: ${{ secrets.SMOKE_PASSWORD || 'grace2026' }}
+          # Wait for THIS build to be the one serving before asserting.
+          EXPECT_BUILD: ${{ github.sha }}
         run: node apps/web/scripts/api-e2e.mjs

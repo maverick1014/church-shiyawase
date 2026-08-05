@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { useFetch } from '@/lib/hooks';
 import { api } from '@/lib/api';
 import { usePageChrome, useMe, useHallScope } from '@/components/AppShell';
@@ -17,6 +18,7 @@ import {
 import { AttendanceStatus, EventType, MemberStatus } from '@tog/shared';
 
 export default function EventsPage() {
+  const router = useRouter();
   const toast = useToast();
   const confirm = useConfirm();
   const perms = can(useMe().role);
@@ -31,9 +33,14 @@ export default function EventsPage() {
       title: '聚会与出席',
       subtitle: '崇拜 · 祷告会 · 团契 · 逐一点名',
       action: perms.write ? (
-        <button className="btn" onClick={() => setAddOpen(true)}>
-          ＋ 新增聚会
-        </button>
+        <>
+          <button className="btn ghost" onClick={() => router.push('/events/recurring')}>
+            🔁 循环聚会
+          </button>
+          <button className="btn" onClick={() => setAddOpen(true)}>
+            ＋ 新增聚会
+          </button>
+        </>
       ) : undefined,
     },
     [perms.write],

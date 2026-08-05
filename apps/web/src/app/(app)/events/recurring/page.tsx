@@ -1,0 +1,381 @@
+'use client';
+
+import { useRouter } from 'next/navigation';
+import { useMemo, useState } from 'react';
+import { useFetch } from '@/lib/hooks';
+import { useSortableRows } from '@/lib/sort';
+import { api } from '@/lib/api';
+import { usePageChrome, useMe, useHallScope } from '@/components/AppShell';
+import {
+  ErrorBanner,
+  Field,
+  HallSelect,
+  Loading,
+  Modal,
+  SortTh,
+  useConfirm,
+  useToast,
+} from '@/components/ui';
+import { can } from '@/lib/perms';
+import { RecurringEventRow } from '@/lib/types';
+import {
+  EVENT_TYPE_LABELS,
+  EVENT_TYPE_OPTIONS,
+  eventBadgeClass,
+  formatDate,
+  formatMeetingTime,
+  WEEKDAY_LABELS,
+  WEEKDAY_OPTIONS,
+  weekdayZh,
+} from '@/lib/labels';
+import { EventType, Weekday } from '@tog/shared';
+
+/** The next date this rule will land on, for the 「下次」 column. */
+function nextOccurrence(weekday: Weekday, time: string): Date {
+  const WEEKDAY_INDEX: Record<string, number> = {
+    sunday: 0, monday: 1, tuesday: 2, wednesday: 3, thursday: 4, friday: 5, saturday: 6,
+  };
+  const now = new Date();
+  const d = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const target = WEEKDAY_INDEX[weekday] ?? 0;
+  d.setDate(d.getDate() + ((target - d.getDay() + 7) % 7));
+  const [h, m] = time.split(':').map(Number);
+  d.setHours(h || 0, m || 0, 0, 0);
+  // Today but already past → next week.
+  if (d.getTime() < now.getTime()) d.setDate(d.getDate() + 7);
+  return d;
+}
+
+export default function RecurringEventsPage() {
+  const router = useRouter();
+  const toast = useToast();
+  const confirm = useConfirm();
+  const perms = can(useMe().role);
+  const { locked: hallLocked } = useHallScope();
+  const rules = useFetch<RecurringEventRow[]>('/recurring-events');
+  const [addOpen, setAddOpen] = useState(false);
+  const [editing, setEditing] = useState<RecurringEventRow | null>(null);
+
+  usePageChrome(
+    {
+      title: '循环聚会',
+      subtitle: '固定时间的聚会自动排入日历 · 无需每周手动新增',
+      action: perms.write ? (
+        <button className="btn" onClick={() => setAddOpen(true)}>＋ 新增循环</button>
+      ) : undefined,
+    },
+    [perms.write],
+  );
+
+  const rows = useMemo(
+    () =>
+      (rules.data ?? []).map((r) => ({
+        ...r,
+        next: nextOccurrence(r.weekday, r.start_time),
+      })),
+    [rules.data],
+  );
+
+  const { sorted, sortKey, sortDir, toggleSort } = useSortableRows(
+    rows,
+    (r, key) => {
+      switch (key) {
+        case 'type':
+          return EVENT_TYPE_LABELS[r.event_type] ?? r.event_type;
+        case 'when':
+          return `${r.weekday}${r.start_time}`;
+        case 'hall':
+          return r.hall?.name ?? undefined;
+        case 'next':
+          return r.next.getTime();
+        case 'active':
+          return r.active ? 0 : 1;
+        default:
+          return r.title;
+      }
+    },
+    { key: 'when', dir: 'asc' },
+  );
+
+  const remove = async (r: RecurringEventRow): Promise<boolean> => {
+    const ok = await confirm({
+      title: '删除循环聚会',
+      message: `删除「${r.title}」的循环设定？已经排入日历的聚会会保留（出席记录不受影响），只是往后不再自动新增。`,
+      confirmText: '删除',
+      danger: true,
+    });
+    if (!ok) return false;
+    try {
+      await api.delete(`/recurring-events/${r.id}`);
+      rules.reload();
+      toast('已删除循环设定');
+      return true;
+    } catch (e) {
+      toast((e as Error).message, 'error');
+      return false;
+    }
+  };
+
+  const toggleActive = async (r: RecurringEventRow) => {
+    try {
+      await api.patch(`/recurring-events/${r.id}`, { active: !r.active });
+      rules.reload();
+      toast(r.active ? '已停用' : '已启用');
+    } catch (e) {
+      toast((e as Error).message, 'error');
+    }
+  };
+
+  if (rules.initialLoading) return <Loading />;
+
+  return (
+    <>
+      <button className="back-btn" onClick={() => router.push('/events')}>‹ 返回聚会与出席</button>
+
+      <ErrorBanner message={rules.error} />
+
+      <div className="hint mb-16">
+        💡 系统会自动把未来「提前天数」内的聚会排进日历（预设 35 天，约一个月）。
+        已排进去的那一次若手动删掉（例如公假停聚），不会被重新加回来；
+        修改星期或时间也只影响之后新排的，已排好的不受影响。
+      </div>
+
+      {/* Desktop — table */}
+      <div className="card only-desktop" style={{ padding: 6 }}>
+        <div className="table-wrap">
+          <table className="table-fixed">
+            <thead>
+              <tr>
+                <SortTh sortKey="title" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>名称</SortTh>
+                <SortTh sortKey="type" activeKey={sortKey} dir={sortDir} onSort={toggleSort} style={{ width: 110 }}>类型</SortTh>
+                <SortTh sortKey="when" activeKey={sortKey} dir={sortDir} onSort={toggleSort} style={{ width: 130 }}>时间</SortTh>
+                {!hallLocked && (
+                  <SortTh sortKey="hall" activeKey={sortKey} dir={sortDir} onSort={toggleSort} style={{ width: 100 }}>堂会</SortTh>
+                )}
+                <th>地点</th>
+                <SortTh sortKey="next" activeKey={sortKey} dir={sortDir} onSort={toggleSort} style={{ width: 116 }}>下次</SortTh>
+                <SortTh sortKey="active" activeKey={sortKey} dir={sortDir} onSort={toggleSort} style={{ width: 84 }}>状态</SortTh>
+                <th style={{ width: 128 }} />
+              </tr>
+            </thead>
+            <tbody>
+              {sorted.map((r) => (
+                <tr key={r.id}>
+                  <td><strong>{r.title}</strong></td>
+                  <td>
+                    <span className={`badge ${eventBadgeClass(r.event_type)}`}>
+                      {EVENT_TYPE_LABELS[r.event_type] ?? r.event_type}
+                    </span>
+                  </td>
+                  <td className="muted">每{weekdayZh(r.weekday)} {formatMeetingTime(r.start_time)}</td>
+                  {!hallLocked && <td className="muted">{r.hall?.name ?? '全堂'}</td>}
+                  <td className="muted">{r.location ?? '—'}</td>
+                  <td className="muted tnum">{r.active ? formatDate(r.next.toISOString()) : '—'}</td>
+                  <td>
+                    <span className={`badge ${r.active ? 'b-good' : 'b-gray'}`}>{r.active ? '启用' : '停用'}</span>
+                  </td>
+                  <td style={{ textAlign: 'right' }}>
+                    {perms.write && (
+                      <button className="btn ghost sm" onClick={() => toggleActive(r)}>
+                        {r.active ? '停用' : '启用'}
+                      </button>
+                    )}
+                    {perms.write && (
+                      <button className="btn ghost sm" style={{ marginLeft: 6 }} onClick={() => setEditing(r)}>编辑</button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+              {sorted.length === 0 && (
+                <tr>
+                  <td colSpan={hallLocked ? 7 : 8} className="faint" style={{ textAlign: 'center', padding: 28 }}>
+                    尚无循环聚会，点右上角「＋ 新增循环」建立。
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Mobile — list tiles */}
+      <div className="only-mobile">
+        {sorted.map((r) => (
+          <div key={r.id} className="mtile" onClick={perms.write ? () => setEditing(r) : undefined}>
+            <div className="mtile-row1">
+              <div style={{ minWidth: 0 }}>
+                <strong>{r.title}</strong>
+                <span className="muted" style={{ fontSize: 12.5 }}>
+                  {' '}· 每{weekdayZh(r.weekday)} {formatMeetingTime(r.start_time)}
+                </span>
+              </div>
+              <span className={`badge ${r.active ? 'b-good' : 'b-gray'}`}>{r.active ? '启用' : '停用'}</span>
+            </div>
+            <div className="mtile-line">
+              {r.hall?.name ?? '全堂'}
+              {r.location ? ` · ${r.location}` : ''}
+              {r.active ? ` · 下次 ${formatDate(r.next.toISOString())}` : ''}
+            </div>
+          </div>
+        ))}
+        {sorted.length === 0 && (
+          <div className="faint" style={{ textAlign: 'center', padding: 28 }}>
+            尚无循环聚会，点右上角「＋ 新增循环」建立。
+          </div>
+        )}
+      </div>
+
+      {(addOpen || editing) && (
+        <RecurringModal
+          rule={editing}
+          onClose={() => {
+            setAddOpen(false);
+            setEditing(null);
+          }}
+          onSaved={() => {
+            const wasEdit = !!editing;
+            setAddOpen(false);
+            setEditing(null);
+            rules.reload();
+            toast(wasEdit ? '已更新循环设定' : '已新增循环聚会');
+          }}
+          onDelete={
+            editing && perms.delete
+              ? async () => {
+                  // Only close the modal once the delete is confirmed — backing
+                  // out of the confirmation must leave the edits on screen.
+                  if (await remove(editing)) setEditing(null);
+                }
+              : undefined
+          }
+        />
+      )}
+    </>
+  );
+}
+
+function RecurringModal({
+  rule,
+  onClose,
+  onSaved,
+  onDelete,
+}: {
+  rule: RecurringEventRow | null;
+  onClose: () => void;
+  onSaved: () => void;
+  onDelete?: () => void;
+}) {
+  const toast = useToast();
+  const { hallId } = useHallScope();
+  const [form, setForm] = useState({
+    title: rule?.title ?? '主日崇拜',
+    event_type: (rule?.event_type ?? EventType.Service) as EventType,
+    weekday: (rule?.weekday ?? Weekday.Sunday) as Weekday,
+    start_time: rule?.start_time?.slice(0, 5) ?? '10:00',
+    location: rule?.location ?? '',
+    hall_id: rule ? rule.hall_id : hallId || null,
+    lookahead_days: rule?.lookahead_days ?? 35,
+  });
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const save = async () => {
+    if (!form.title.trim()) {
+      setErr('请填写名称');
+      return;
+    }
+    if (!form.start_time) {
+      setErr('请填写时间');
+      return;
+    }
+    setSaving(true);
+    setErr(null);
+    try {
+      const payload = {
+        title: form.title.trim(),
+        event_type: form.event_type,
+        weekday: form.weekday,
+        start_time: form.start_time,
+        location: form.location || null,
+        hall_id: form.hall_id,
+        lookahead_days: Number(form.lookahead_days) || 35,
+      };
+      if (rule) await api.patch(`/recurring-events/${rule.id}`, payload);
+      else await api.post('/recurring-events', payload);
+      onSaved();
+    } catch (e) {
+      setErr((e as Error).message);
+      toast((e as Error).message, 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal title={rule ? '编辑循环聚会' : '新增循环聚会'} onClose={onClose}>
+      {err && <ErrorBanner message={err} />}
+      <Field label="名称">
+        <input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="例如：主日崇拜" />
+      </Field>
+      <div className="form-row">
+        <Field label="类型">
+          <select value={form.event_type} onChange={(e) => setForm({ ...form, event_type: e.target.value as EventType })}>
+            {EVENT_TYPE_OPTIONS.map((t) => (
+              <option key={t} value={t}>{EVENT_TYPE_LABELS[t]}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="堂会">
+          <HallSelect
+            value={form.hall_id}
+            onChange={(id) => setForm({ ...form, hall_id: id })}
+            allowAll
+            allLabel="全堂 / 联合聚会"
+          />
+        </Field>
+      </div>
+      <div className="form-row">
+        <Field label="每周">
+          <select value={form.weekday} onChange={(e) => setForm({ ...form, weekday: e.target.value as Weekday })}>
+            {WEEKDAY_OPTIONS.map((d) => (
+              <option key={d} value={d}>{WEEKDAY_LABELS[d]}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="时间">
+          <input type="time" value={form.start_time} onChange={(e) => setForm({ ...form, start_time: e.target.value })} />
+        </Field>
+      </div>
+      <div className="form-row">
+        <Field label="地点">
+          <input value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} placeholder="大堂" />
+        </Field>
+        <Field label="提前生成（天）">
+          <input
+            type="number"
+            min={1}
+            max={365}
+            value={form.lookahead_days}
+            onChange={(e) => setForm({ ...form, lookahead_days: Number(e.target.value) })}
+          />
+        </Field>
+      </div>
+      <div className="hint" style={{ marginBottom: 14 }}>
+        💡 提前 35 天 ≈ 一个月，随时都能看到下个月的排程。
+      </div>
+      <div className="modal-actions">
+        {onDelete && (
+          <button
+            className="btn ghost"
+            style={{ color: 'var(--crit)', borderColor: 'var(--crit-soft)', marginRight: 'auto' }}
+            onClick={onDelete}
+          >
+            删除循环
+          </button>
+        )}
+        <button className="btn ghost" onClick={onClose}>取消</button>
+        <button className="btn" onClick={save} disabled={saving}>{saving ? '保存中…' : '保存'}</button>
+      </div>
+    </Modal>
+  );
+}
