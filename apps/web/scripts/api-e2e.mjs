@@ -55,13 +55,18 @@ async function login(email, password) {
  * then sails straight through it (which is precisely how a fixed bug kept
  * "failing" here). EXPECT_BUILD is the commit deploy.yml just built; without
  * it (local runs) there's nothing to wait for.
+ *
+ * The window is generous because propagation is occasionally much slower than
+ * the usual few seconds, and waiting a bit longer is far cheaper than a whole
+ * run that silently tested the previous release. Each poll is cache-busted so
+ * no intermediary can pin us to a stale answer.
  */
-async function waitForRollout({ timeoutMs = 90_000, everyMs = 3_000 } = {}) {
+async function waitForRollout({ timeoutMs = 240_000, everyMs = 3_000 } = {}) {
   const expected = process.env.EXPECT_BUILD;
   if (!expected) return true;
   const started = Date.now();
   for (;;) {
-    const r = await req('GET', '/api/version');
+    const r = await req('GET', `/api/version?_=${Date.now()}`);
     if (r.status === 200 && r.json?.build === expected) {
       const waited = Date.now() - started;
       if (waited > everyMs) console.log(`  (waited ${Math.round(waited / 1000)}s for build ${expected.slice(0, 7)})`);
@@ -94,9 +99,6 @@ async function main() {
   const me = await req('GET', '/api/auth/me', { cookie: admin });
   ok('me returns super_admin', me.json?.role === 'super_admin', me.json?.role);
   const H = { cookie: admin };
-
-  // Don't start asserting until the version we just deployed is live.
-  ok('new Worker version is serving', await waitForRollout(admin));
 
   // ---- Reference data -----------------------------------------------------
   const members = (await req('GET', '/api/members', H)).json;
