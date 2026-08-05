@@ -248,7 +248,10 @@ async function main() {
     /* -- 用户管理 -------------------------------------------------------- */
     mod('用户管理');
     await page.goto(`${BASE}/settings`, { waitUntil: 'domcontentloaded' });
-    await page.locator('button:has-text("新建账户")').first().waitFor({ timeout: 20000 });
+    // The page action renders twice (topbar + content actions) with CSS deciding
+    // which one shows, so this must target the visible one — .first() is the
+    // topbar copy, which is display:none at this viewport and never "appears".
+    await page.locator('button:visible:has-text("新建账户")').first().waitFor({ timeout: 20000 });
     const settingsBody = await page.locator('body').innerText();
     check('已进入用户管理(非登录页)', settingsBody.includes('新建账户'));
     check('页面已无「奉献」残留文案', !settingsBody.includes('奉献'));
@@ -256,7 +259,11 @@ async function main() {
     await page.locator('button[aria-label="权限说明"]').first().click();
     await w(300);
     check('权限说明可由 info 图标展开', (await page.locator('.info-pop-body').count()) > 0);
+    // Unpin AND move the pointer away — the popover also stays open on hover,
+    // and it overlays the top of the list underneath it.
     await page.keyboard.press('Escape');
+    await page.mouse.move(0, 0);
+    await w(300);
     // The account list is .mtile tiles at this (mobile) viewport, like 小组管理.
     await page.locator('.mtile').first().click();
     await page.locator('button:has-text("保存账户设置")').waitFor({ timeout: 10000 });
