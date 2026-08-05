@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useFetch } from '@/lib/hooks';
 import { api } from '@/lib/api';
-import { usePageChrome, useMe } from '@/components/AppShell';
+import { usePageChrome, useMe, useHallScope } from '@/components/AppShell';
 import { ErrorBanner, Field, HallSelect, Loading, Modal, useConfirm, useToast } from '@/components/ui';
 import { can } from '@/lib/perms';
 import { EventDetail, EventRow, MemberRow } from '@/lib/types';
@@ -261,13 +261,15 @@ function EventModal({
   onDelete?: () => void;
 }) {
   const toast = useToast();
+  const { hallId } = useHallScope();
   const [form, setForm] = useState({
     title: event?.title ?? '',
     event_type: (event?.event_type ?? EventType.Service) as EventType,
     location: event?.location ?? '',
     starts_at: toLocalInput(event?.starts_at ?? null),
-    // null = 全堂 / 联合聚会.
-    hall_id: event ? event.hall_id : null,
+    // Editing keeps the event's own hall; creating defaults to the hall being
+    // viewed (and to 全堂 / 联合聚会 only when viewing 全部堂会).
+    hall_id: event ? event.hall_id : hallId || null,
   });
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
