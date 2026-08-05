@@ -44,6 +44,33 @@ async function login(email, password) {
   return r.status === 200 ? r.cookie : null;
 }
 
+/**
+ * `wrangler deploy` returns as soon as Cloudflare accepts the upload, but the
+ * new Worker version takes a few seconds to actually start serving traffic.
+ * This suite runs immediately after, so without this wait the first requests
+ * can hit the PREVIOUS version — which shows up as bogus "No route for ..."
+ * 404s (and cascading 500s) for endpoints the new version just added.
+ *
+ * Poll a probe request until the freshly deployed code answers it. `/api/halls`
+ * is the newest route; swap the probe when a newer one lands.
+ */
+async function waitForRollout(cookie, { timeoutMs = 90_000, everyMs = 3_000 } = {}) {
+  const started = Date.now();
+  for (;;) {
+    const r = await req('GET', '/api/halls', { cookie });
+    if (r.status === 200) {
+      const waited = Date.now() - started;
+      if (waited > everyMs) console.log(`  (waited ${Math.round(waited / 1000)}s for the new Worker version)`);
+      return true;
+    }
+    if (Date.now() - started > timeoutMs) {
+      console.error(`  rollout probe still failing after ${Math.round(timeoutMs / 1000)}s: ${r.status} ${JSON.stringify(r.json)}`);
+      return false;
+    }
+    await new Promise((r2) => setTimeout(r2, everyMs));
+  }
+}
+
 async function main() {
   console.log(`API E2E → ${BASE}`);
 
@@ -57,6 +84,9 @@ async function main() {
   const me = await req('GET', '/api/auth/me', { cookie: admin });
   ok('me returns super_admin', me.json?.role === 'super_admin', me.json?.role);
   const H = { cookie: admin };
+
+  // Don't start asserting until the version we just deployed is live.
+  ok('new Worker version is serving', await waitForRollout(admin));
 
   // ---- Reference data -----------------------------------------------------
   const members = (await req('GET', '/api/members', H)).json;
@@ -180,7 +210,7 @@ async function main() {
   }
 
   // ---- Access control: provision role accounts, assert the matrix ---------
-  await roleMatrix(freeMembers);
+  await roleMatrix(freeMembers, hallId);
 
   finish();
 }
@@ -189,7 +219,7 @@ function memberOrNull(members) {
   return members && members.length ? members[0] : null;
 }
 
-async function roleMatrix(freeMembers) {
+async function roleMatrix(freeMembers, hallId) {
   if (freeMembers.length < 2) { ok('role-matrix (skipped: need 2 free members)', true); return; }
   const admin = await login(EMAIL, PASSWORD);
   const H = { cookie: admin };
@@ -216,7 +246,7 @@ async function roleMatrix(freeMembers) {
     ok('coworker can login', !!co.cookie);
     if (co.cookie) {
       const CH = { cookie: co.cookie };
-      const mk = await req('POST', '/api/members', { ...CH, body: { full_name: `E2E同工建-${Date.now()}`, church_role: 'member', status: 'active' } });
+      const mk = await req('POST', '/api/members', { ...CH, body: { full_name: `E2E同工建-${Date.now()}`, church_role: 'member', status: 'active', hall_id: hallId } });
       ok('coworker POST members → 200', mk.status === 200, `status ${mk.status}`);
       if (mk.json?.id) {
         ok('coworker DELETE member → 403', (await req('DELETE', `/api/members/${mk.json.id}`, CH)).status === 403);
