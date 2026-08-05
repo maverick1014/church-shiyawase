@@ -6,7 +6,7 @@ import { useFetch } from '@/lib/hooks';
 import { useSortableRows } from '@/lib/sort';
 import { api } from '@/lib/api';
 import { usePageChrome, useMe } from '@/components/AppShell';
-import { ErrorBanner, Field, Loading, RoleBadge, SortTh, TagsInput, useConfirm, useToast } from '@/components/ui';
+import { ErrorBanner, Field, HallSelect, Loading, RoleBadge, SortTh, TagsInput, useConfirm, useToast } from '@/components/ui';
 import { can } from '@/lib/perms';
 import { exportMatrix } from '@/lib/export';
 import { GroupAttendanceResponse, GroupDetail, GroupRow, MemberRow } from '@/lib/types';
@@ -90,6 +90,7 @@ function GroupPanel({
   const [meetingTime, setMeetingTime] = useState(group.meeting_time?.slice(0, 5) ?? '');
   const [location, setLocation] = useState(group.location ?? '');
   const [tags, setTags] = useState<string[]>(group.tags ?? []);
+  const [hall, setHall] = useState<string | null>(group.hall_id ?? null);
   const [addSel, setAddSel] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -128,6 +129,7 @@ function GroupPanel({
         meeting_time: meetingTime || null,
         location: location || null,
         tags,
+        hall_id: hall,
       });
       toast('已保存设定');
       onChanged();
@@ -256,6 +258,9 @@ function GroupPanel({
           </div>
           <Field label="小组名称">
             <input value={name} onChange={(e) => setName(e.target.value)} />
+          </Field>
+          <Field label="堂会">
+            <HallSelect value={hall} onChange={setHall} />
           </Field>
           <Field label="简介">
             <input value={desc} onChange={(e) => setDesc(e.target.value)} />

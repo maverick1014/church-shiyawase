@@ -5,8 +5,8 @@ import { useMemo, useState } from 'react';
 import { useFetch } from '@/lib/hooks';
 import { useSortableRows } from '@/lib/sort';
 import { api } from '@/lib/api';
-import { usePageChrome, useMe } from '@/components/AppShell';
-import { ErrorBanner, Field, Loading, Modal, RoleBadge, SortTh, useToast } from '@/components/ui';
+import { usePageChrome, useMe, useHallScope } from '@/components/AppShell';
+import { ErrorBanner, Field, HallSelect, Loading, Modal, RoleBadge, SortTh, useToast } from '@/components/ui';
 import { can } from '@/lib/perms';
 import { exportRows } from '@/lib/export';
 import { GroupDetail, GroupRow, MemberRow } from '@/lib/types';
@@ -28,6 +28,8 @@ export default function MembersPage() {
   const router = useRouter();
   const toast = useToast();
   const perms = can(useMe().role);
+  // Only worth a column when the account can actually see more than one hall.
+  const { locked: hallLocked } = useHallScope();
   const { data, initialLoading, error, reload } = useFetch<MemberRow[]>('/members');
   const [q, setQ] = useState('');
   const [roleFilter, setRoleFilter] = useState<string>('all');
@@ -102,6 +104,8 @@ export default function MembersPage() {
         return (MEMBER_ROLE_FILTERS as readonly string[]).indexOf(memberRoleZh(m));
       case 'group':
         return m.group?.name ?? undefined;
+      case 'hall':
+        return m.hall?.name ?? undefined;
       case 'phone':
         return m.phone ?? undefined;
       case 'status':
@@ -177,6 +181,9 @@ export default function MembersPage() {
                     utility columns (状态 / 加入日期) + chevron stay narrow. */}
                 <SortTh sortKey="name" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>成员</SortTh>
                 <SortTh sortKey="role" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>身份</SortTh>
+                {!hallLocked && (
+                  <SortTh sortKey="hall" activeKey={sortKey} dir={sortDir} onSort={toggleSort} style={{ width: 96 }}>堂会</SortTh>
+                )}
                 <SortTh sortKey="group" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>所属小组</SortTh>
                 <SortTh sortKey="phone" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>联系方式</SortTh>
                 <SortTh sortKey="status" activeKey={sortKey} dir={sortDir} onSort={toggleSort} style={{ width: 96 }}>状态</SortTh>
@@ -195,6 +202,7 @@ export default function MembersPage() {
                     <td>
                       <RoleBadge role={role} />
                     </td>
+                    {!hallLocked && <td className="muted">{m.hall?.name ?? '—'}</td>}
                     <td className="muted">{m.group?.name ?? '未分组'}</td>
                     <td className="muted tnum">{m.phone ?? '—'}</td>
                     <td>
@@ -211,7 +219,7 @@ export default function MembersPage() {
               })}
               {sorted.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="faint" style={{ textAlign: 'center', padding: 28 }}>
+                  <td colSpan={hallLocked ? 7 : 8} className="faint" style={{ textAlign: 'center', padding: 28 }}>
                     没有符合条件的成员。
                   </td>
                 </tr>
@@ -286,12 +294,16 @@ function AddMemberModal({
 }) {
   const toast = useToast();
   const allGroups = useFetch<GroupRow[]>('/groups');
+  const { halls, hallId } = useHallScope();
   const [form, setForm] = useState({
     full_name: '',
     chinese_name: '',
     phone: '',
     email: '',
     group_id: '',
+    // Default to the hall currently being viewed; a hall-scoped account only
+    // ever has one option anyway (the server pins it regardless).
+    hall_id: (hallId || null) as string | null,
     church_role: ChurchRole.Member as ChurchRole,
     group_position: GroupPosition.NewMember as GroupPosition,
   });
@@ -303,9 +315,17 @@ function AddMemberModal({
   // per group — same rule as 小组管理 and the member-edit modal).
   const groupDetail = useFetch<GroupDetail>(form.group_id ? `/groups/${form.group_id}` : null);
 
+  // A member always belongs to exactly one hall (DB NOT NULL). When there is
+  // only one option, use it without making the user pick.
+  const effectiveHallId = form.hall_id ?? (halls.length === 1 ? halls[0].id : null);
+
   const save = async () => {
     if (!form.full_name.trim()) {
       setErr('请填写姓名');
+      return;
+    }
+    if (!effectiveHallId) {
+      setErr('请选择堂会');
       return;
     }
     setSaving(true);
@@ -324,6 +344,7 @@ function AddMemberModal({
         chinese_name: form.chinese_name || undefined,
         phone: form.phone || undefined,
         email: form.email || undefined,
+        hall_id: effectiveHallId,
         church_role: form.church_role,
         group_id: form.group_id || undefined,
         group_position: form.group_id ? form.group_position : undefined,
@@ -368,14 +389,19 @@ function AddMemberModal({
           />
         </Field>
       </div>
-      <Field label="所属小组">
-        <select value={form.group_id} onChange={(e) => setForm({ ...form, group_id: e.target.value })}>
-          <option value="">未分组</option>
-          {(allGroups.data ?? []).map((g) => (
-            <option key={g.id} value={g.id}>{g.name}</option>
-          ))}
-        </select>
-      </Field>
+      <div className="form-row">
+        <Field label="堂会">
+          <HallSelect value={effectiveHallId} onChange={(id) => setForm({ ...form, hall_id: id })} />
+        </Field>
+        <Field label="所属小组">
+          <select value={form.group_id} onChange={(e) => setForm({ ...form, group_id: e.target.value })}>
+            <option value="">未分组</option>
+            {(allGroups.data ?? []).map((g) => (
+              <option key={g.id} value={g.id}>{g.name}</option>
+            ))}
+          </select>
+        </Field>
+      </div>
       <div className="form-row">
         <Field label="教会身份">
           <select value={form.church_role} onChange={(e) => setForm({ ...form, church_role: e.target.value as ChurchRole })}>

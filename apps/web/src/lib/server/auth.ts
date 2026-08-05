@@ -48,6 +48,8 @@ export interface Session {
   sub: string; // account id
   role: string; // account_role
   member: string | null;
+  /** Hall this account is scoped to; null = 全堂权限 (all halls). */
+  hall: string | null;
   name: string;
   exp: number;
 }

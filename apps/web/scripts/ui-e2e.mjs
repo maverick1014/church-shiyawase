@@ -264,6 +264,11 @@ async function main() {
     await page.locator('button:visible:has-text("新增成员")').first().click();
     await page.locator('.modal').waitFor({ timeout: 8000 });
     await page.locator('.modal input').first().fill(testName);
+    // 堂会 is required and is the modal's first <select>. A full-access account
+    // viewing 全部堂会 starts with no hall chosen, so pick the first real one.
+    const hallSel = page.locator('.modal select').first();
+    const hallOpt = await hallSel.locator('option').nth(1).getAttribute('value');
+    if (hallOpt) await hallSel.selectOption(hallOpt);
     await page.locator('.modal button:has-text("保存")').first().click();
     await w(1800);
     await page.fill('input[placeholder*="搜索"]', testName);

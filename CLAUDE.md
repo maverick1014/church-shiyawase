@@ -39,6 +39,14 @@ operation, the UI must expose it (or the omission must be a deliberate,
 documented decision). A page that can only create + list is incomplete.
 
 ### G2 — Access control is enforced server-side AND reflected in the UI
+- **Hall scope (多堂会):** the session carries `hall` (null = 全堂权限). In
+  `route.ts`, a hall-scoped account's reads are filtered to its own hall and its
+  writes are **forced** onto that hall server-side — never trust a client-sent
+  `hall_id`. Nullable-hall entities (培训 / 聚会) additionally expose their
+  全堂开放 (`hall_id is null`) rows to every hall. `members`/`groups` always
+  carry a hall. New hall-scoped queries must go through the same gate helpers
+  (`withHall` / `assertHallWritable` / `assertOwnsRow`) rather than re-rolling
+  the check.
 - **Server (authoritative):** every non-public API path goes through the gate in
   `route.ts`. Writes are denied for `readonly`; account management
   (`/accounts*`, both **read and write**) is `super_admin` only; `DELETE` is

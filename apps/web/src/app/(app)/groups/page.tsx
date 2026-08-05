@@ -5,8 +5,8 @@ import { useRouter } from 'next/navigation';
 import { useFetch } from '@/lib/hooks';
 import { useSortableRows } from '@/lib/sort';
 import { api } from '@/lib/api';
-import { usePageChrome, useMe } from '@/components/AppShell';
-import { ErrorBanner, Field, Loading, Modal, SortTh, TagsInput, useToast } from '@/components/ui';
+import { usePageChrome, useMe, useHallScope } from '@/components/AppShell';
+import { ErrorBanner, Field, HallSelect, Loading, Modal, SortTh, TagsInput, useToast } from '@/components/ui';
 import { can } from '@/lib/perms';
 import { GroupRow, MemberRow } from '@/lib/types';
 import {
@@ -23,6 +23,8 @@ export default function GroupsPage() {
   const router = useRouter();
   const toast = useToast();
   const perms = can(useMe().role);
+  // Only worth a column when the account can actually see more than one hall.
+  const { locked: hallLocked } = useHallScope();
   const groups = useFetch<GroupRow[]>('/groups');
   const members = useFetch<MemberRow[]>('/members');
   const [addOpen, setAddOpen] = useState(false);
@@ -56,6 +58,7 @@ export default function GroupsPage() {
       return {
         id: g.id,
         name: g.name,
+        hallName: g.hall?.name ?? null,
         tags: g.tags ?? [],
         meetingDay: g.meeting_day,
         schedule: meetingScheduleZh(g),
@@ -95,6 +98,8 @@ export default function GroupsPage() {
           return g.memberCount;
         case 'new':
           return g.newMemberCount;
+        case 'hall':
+          return g.hallName ?? undefined;
         case 'status':
           return (['splittable', 'need_members', 'balanced'] as const).indexOf(g.status);
         default:
@@ -144,6 +149,9 @@ export default function GroupsPage() {
                 {/* 小组名称 / 组长 / 聚会时间地点 share the width equally;
                     组员人数 / 新成员 / 状态 stay narrow utility columns. */}
                 <SortTh sortKey="name" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>小组名称</SortTh>
+                {!hallLocked && (
+                  <SortTh sortKey="hall" activeKey={sortKey} dir={sortDir} onSort={toggleSort} style={{ width: 96 }}>堂会</SortTh>
+                )}
                 <SortTh sortKey="leader" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>组长</SortTh>
                 <SortTh sortKey="count" activeKey={sortKey} dir={sortDir} onSort={toggleSort} style={{ width: 88 }}>组员人数</SortTh>
                 <SortTh sortKey="new" activeKey={sortKey} dir={sortDir} onSort={toggleSort} style={{ width: 82 }}>新成员</SortTh>
@@ -167,6 +175,7 @@ export default function GroupsPage() {
                       </div>
                     )}
                   </td>
+                  {!hallLocked && <td className="muted">{g.hallName ?? '—'}</td>}
                   <td>
                     {g.leaderName ? <strong>{g.leaderName}</strong> : <span className="faint">空缺</span>}
                   </td>
@@ -183,7 +192,7 @@ export default function GroupsPage() {
               ))}
               {sorted.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="faint" style={{ textAlign: 'center', padding: 28 }}>
+                  <td colSpan={hallLocked ? 7 : 8} className="faint" style={{ textAlign: 'center', padding: 28 }}>
                     {q.trim() || tagFilter !== 'all' || weekdayFilter !== 'all'
                       ? '没有符合条件的小组。'
                       : '尚无小组，点右上角「＋ 新增小组」创建。'}
@@ -256,18 +265,27 @@ function AddGroupModal({
   onSaved: (id: string) => void;
 }) {
   const toast = useToast();
+  const { halls, hallId } = useHallScope();
   const [name, setName] = useState('');
   const [desc, setDesc] = useState('');
   const [meetingDay, setMeetingDay] = useState<Weekday | ''>('');
   const [meetingTime, setMeetingTime] = useState('');
   const [location, setLocation] = useState('');
   const [tags, setTags] = useState<string[]>([]);
+  const [hall, setHall] = useState<string | null>(hallId || null);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  // A group always belongs to exactly one hall (DB NOT NULL).
+  const effectiveHallId = hall ?? (halls.length === 1 ? halls[0].id : null);
 
   const save = async () => {
     if (!name.trim()) {
       setErr('请填写小组名称');
+      return;
+    }
+    if (!effectiveHallId) {
+      setErr('请选择堂会');
       return;
     }
     setSaving(true);
@@ -280,6 +298,7 @@ function AddGroupModal({
         meeting_time: meetingTime || undefined,
         location: location || undefined,
         tags,
+        hall_id: effectiveHallId,
       });
       onSaved(g.id);
     } catch (e) {
@@ -293,9 +312,14 @@ function AddGroupModal({
   return (
     <Modal title="新增小组" onClose={onClose}>
       {err && <ErrorBanner message={err} />}
-      <Field label="小组名称">
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="例如：迦南小组" />
-      </Field>
+      <div className="form-row">
+        <Field label="小组名称">
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="例如：迦南小组" />
+        </Field>
+        <Field label="堂会">
+          <HallSelect value={effectiveHallId} onChange={setHall} />
+        </Field>
+      </div>
       <Field label="简介">
         <input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="新家庭小组" />
       </Field>

@@ -12,6 +12,13 @@ import {
   Weekday,
 } from '@tog/shared';
 
+/** A hall (堂会) — 中文堂 / 英文堂 / 马来文堂. */
+export interface HallRow {
+  id: string;
+  name: string;
+  sort_order: number;
+}
+
 /** A member row as returned by the API (joins group + household names). */
 export interface MemberRow {
   id: string;
@@ -26,11 +33,13 @@ export interface MemberRow {
   group_id: string | null;
   group_position: GroupPosition | null;
   household_id: string | null;
+  hall_id: string;
   joined_at: string | null;
   notes: string | null;
   avatar_url: string | null;
   group?: { id: string; name: string } | null;
   household?: { id: string; name: string } | null;
+  hall?: { id: string; name: string } | null;
 }
 
 export interface GroupRow {
@@ -41,6 +50,8 @@ export interface GroupRow {
   meeting_time: string | null;
   location: string | null;
   tags: string[];
+  hall_id: string;
+  hall?: { id: string; name: string } | null;
 }
 
 export interface GroupDetail extends GroupRow {
@@ -74,6 +85,9 @@ export interface EventRow {
   location: string | null;
   starts_at: string;
   ends_at: string | null;
+  /** null = 全堂 / 联合聚会. */
+  hall_id: string | null;
+  hall?: { id: string; name: string } | null;
 }
 
 export interface EventDetail extends EventRow {
@@ -95,7 +109,10 @@ export interface TrainingRow {
   is_enrollable: boolean;
   starts_on: string | null;
   ends_on: string | null;
+  /** null = 全堂开放. */
+  hall_id: string | null;
   trainer?: { id: string; full_name: string } | null;
+  hall?: { id: string; name: string } | null;
 }
 
 export interface SessionRow {
@@ -189,6 +206,8 @@ export interface AccountRow {
   member_id: string;
   email: string;
   account_role: AccountRole;
+  /** null = 全堂权限. */
+  hall_id: string | null;
   status: AccountStatus;
   two_factor: boolean;
   language: string;
@@ -203,6 +222,7 @@ export interface AccountRow {
     church_role: ChurchRole;
     group_position: GroupPosition | null;
   };
+  hall?: { id: string; name: string } | null;
 }
 
 export interface OverviewRow {

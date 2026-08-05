@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { api } from '@/lib/api';
-import { ErrorBanner, Field, Modal, useToast } from '@/components/ui';
+import { ErrorBanner, Field, HallSelect, Modal, useToast } from '@/components/ui';
 import { MemberRow, TrainingRow } from '@/lib/types';
 import { TRAINING_CATEGORIES } from '@/lib/labels';
 
@@ -27,6 +27,8 @@ export function TrainingModal({
     starts_on: initial?.starts_on?.slice(0, 10) ?? '',
     ends_on: initial?.ends_on?.slice(0, 10) ?? '',
     is_enrollable: initial?.is_enrollable ?? true,
+    // null = 全堂开放 (any hall's members may enroll).
+    hall_id: initial ? initial.hall_id : null,
   });
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -47,6 +49,7 @@ export function TrainingModal({
       starts_on: form.starts_on || undefined,
       ends_on: form.ends_on || undefined,
       is_enrollable: form.is_enrollable,
+      hall_id: form.hall_id,
     };
     try {
       const t = initial
@@ -79,14 +82,24 @@ export function TrainingModal({
           <input type="number" value={form.total_sessions} onChange={(e) => setForm({ ...form, total_sessions: Number(e.target.value) })} />
         </Field>
       </div>
-      <Field label="讲师">
-        <select value={form.trainer_id} onChange={(e) => setForm({ ...form, trainer_id: e.target.value })}>
-          <option value="">待定</option>
-          {members.map((m) => (
-            <option key={m.id} value={m.id}>{m.full_name}</option>
-          ))}
-        </select>
-      </Field>
+      <div className="form-row">
+        <Field label="讲师">
+          <select value={form.trainer_id} onChange={(e) => setForm({ ...form, trainer_id: e.target.value })}>
+            <option value="">待定</option>
+            {members.map((m) => (
+              <option key={m.id} value={m.id}>{m.full_name}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="堂会">
+          <HallSelect
+            value={form.hall_id}
+            onChange={(id) => setForm({ ...form, hall_id: id })}
+            allowAll
+            allLabel="全堂开放"
+          />
+        </Field>
+      </div>
       <div className="form-row">
         <Field label="开始日期">
           <input type="date" className={form.starts_on ? undefined : 'date-empty'} value={form.starts_on} onChange={(e) => setForm({ ...form, starts_on: e.target.value })} />

@@ -6,7 +6,7 @@ import { useFetch } from '@/lib/hooks';
 import { useSortableRows } from '@/lib/sort';
 import { api } from '@/lib/api';
 import { usePageChrome, useMe } from '@/components/AppShell';
-import { Avatar, ErrorBanner, Field, Loading, Modal, ProgressBar, RoleBadge, SortTh, useConfirm, useToast } from '@/components/ui';
+import { Avatar, ErrorBanner, Field, HallSelect, Loading, Modal, ProgressBar, RoleBadge, SortTh, useConfirm, useToast } from '@/components/ui';
 import { PairProgressModal } from '@/components/PairProgressModal';
 import { can } from '@/lib/perms';
 import { EnrollmentRow, GroupDetail, GroupRow, MemberRow, PairRow } from '@/lib/types';
@@ -277,6 +277,7 @@ function EditMemberModal({
     status: member.status,
     notes: member.notes ?? '',
     church_role: member.church_role,
+    hall_id: member.hall_id as string | null,
     group_id: member.group_id ?? '',
     group_position: member.group_position ?? GroupPosition.NewMember,
   });
@@ -329,6 +330,7 @@ function EditMemberModal({
         status: form.status,
         notes: form.notes || null,
         church_role: form.church_role,
+        hall_id: form.hall_id,
         group_id: form.group_id || null,
         group_position: form.group_id ? form.group_position : null,
       });
@@ -383,14 +385,19 @@ function EditMemberModal({
           <input type="date" className={form.joined_at ? undefined : 'date-empty'} value={form.joined_at} onChange={(e) => setForm({ ...form, joined_at: e.target.value })} />
         </Field>
       </div>
-      <Field label="所属小组">
-        <select value={form.group_id} onChange={(e) => changeGroup(e.target.value)}>
-          <option value="">未分组</option>
-          {(allGroups.data ?? []).map((g) => (
-            <option key={g.id} value={g.id}>{g.name}</option>
-          ))}
-        </select>
-      </Field>
+      <div className="form-row">
+        <Field label="堂会">
+          <HallSelect value={form.hall_id} onChange={(id) => setForm({ ...form, hall_id: id })} />
+        </Field>
+        <Field label="所属小组">
+          <select value={form.group_id} onChange={(e) => changeGroup(e.target.value)}>
+            <option value="">未分组</option>
+            {(allGroups.data ?? []).map((g) => (
+              <option key={g.id} value={g.id}>{g.name}</option>
+            ))}
+          </select>
+        </Field>
+      </div>
       <div className="form-row">
         <Field label="教会身份">
           <select value={form.church_role} onChange={(e) => setForm({ ...form, church_role: e.target.value as ChurchRole })}>
