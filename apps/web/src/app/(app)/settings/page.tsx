@@ -6,7 +6,23 @@ import { useFetch } from '@/lib/hooks';
 import { useSortableRows } from '@/lib/sort';
 import { api } from '@/lib/api';
 import { usePageChrome, useMe } from '@/components/AppShell';
-import { ErrorBanner, Field, HallSelect, Loading, Modal, PasswordInput, RoleBadge, SortTh, Switch, useConfirm, useToast } from '@/components/ui';
+import {
+  Avatar,
+  ChevronRightIcon,
+  ErrorBanner,
+  Field,
+  HallSelect,
+  InfoPopover,
+  Loading,
+  Modal,
+  PasswordInput,
+  RoleBadge,
+  RowChevron,
+  SortTh,
+  Switch,
+  useConfirm,
+  useToast,
+} from '@/components/ui';
 import { ChangePasswordModal } from '@/components/ChangePasswordModal';
 import { AccountRow, MemberRow } from '@/lib/types';
 import {
@@ -120,35 +136,30 @@ export default function SettingsPage() {
   return (
     <>
       <ErrorBanner message={accounts.error} />
-      <div className="hint mb-14">
-        💡 每个登录账户都<strong>关联一位成员档案</strong>。点右上角「＋ 新建账户」选择成员、设定登录邮箱与初始密码并授予权限；点任一账户可管理其权限、重设密码与偏好。<br />
-        <span className="faint">登录鉴权已启用：会话由签名 Cookie 保护，密码以 PBKDF2 加盐哈希存储。超级管理员可重设任意账户密码，用户可在「修改我的密码」中自助修改。</span>
-      </div>
-      <div className="card mb-14">
-        <div className="card-head">
-          <h3>权限说明</h3>
-          <span className="muted" style={{ fontSize: 12 }}>各权限角色可执行的操作</span>
-        </div>
-        <div className="grid g4 stack-mobile">
+
+      {/* The permission matrix is reference material — behind an icon so it
+          doesn't push the account list itself below the fold. */}
+      <div className="filter-bar">
+        <span className="spacer" />
+        <InfoPopover label="权限说明">
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10 }}>权限说明</div>
           {ACCOUNT_ROLE_OPTIONS.map((r) => (
-            <div
-              key={r}
-              style={{ background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 10, padding: '12px 14px' }}
-            >
+            <div key={r} style={{ marginBottom: 12 }}>
               <span className={`badge ${accountRoleClass(r)}`}>{ACCOUNT_ROLE_ZH[r]}</span>
-              <ul style={{ margin: '9px 0 0', paddingLeft: 16, fontSize: 12, color: 'var(--muted)', lineHeight: 1.7 }}>
+              <ul style={{ margin: '7px 0 0', paddingLeft: 16, fontSize: 12, color: 'var(--muted)', lineHeight: 1.7 }}>
                 {ACCOUNT_ROLE_PERMISSIONS[r].map((p, i) => (
                   <li key={i}>{p}</li>
                 ))}
               </ul>
             </div>
           ))}
-        </div>
+        </InfoPopover>
       </div>
 
-      <div className="card" style={{ padding: 6 }}>
+      {/* Desktop — table */}
+      <div className="card only-desktop" style={{ padding: 6 }}>
         <div className="table-wrap">
-          <table className="stack">
+          <table>
             <thead>
               <tr>
                 <SortTh sortKey="name" activeKey={acctSortKey} dir={acctSortDir} onSort={toggleAcctSort}>账户 · 关联成员</SortTh>
@@ -165,28 +176,53 @@ export default function SettingsPage() {
                 const role = u.member ? churchRoleZh(u.member.church_role) : '—';
                 return (
                   <tr key={u.id}>
-                    <td data-label="账户 · 关联成员">
-                      <strong>{u.member?.full_name ?? '—'}</strong>
-                    </td>
-                    <td data-label="教会身份">
+                    <td><strong>{u.member?.full_name ?? '—'}</strong></td>
+                    <td>
                       <RoleBadge role={role} />
                     </td>
-                    <td data-label="权限角色"><span className={`badge ${accountRoleClass(u.account_role)}`}>{ACCOUNT_ROLE_ZH[u.account_role]}</span></td>
-                    <td className="muted" data-label="登录邮箱">{u.email}</td>
-                    <td data-label="状态"><span className={`badge ${accountStatusClass(u.status)}`}>{accountStatusLabel(u.status)}</span></td>
-                    <td className="muted" style={{ whiteSpace: 'nowrap' }} data-label="最近登录">{u.last_sign_in_at ? formatDateTime(u.last_sign_in_at) : '从未'}</td>
+                    <td><span className={`badge ${accountRoleClass(u.account_role)}`}>{ACCOUNT_ROLE_ZH[u.account_role]}</span></td>
+                    <td className="muted">{u.email}</td>
+                    <td><span className={`badge ${accountStatusClass(u.status)}`}>{accountStatusLabel(u.status)}</span></td>
+                    <td className="muted" style={{ whiteSpace: 'nowrap' }}>{u.last_sign_in_at ? formatDateTime(u.last_sign_in_at) : '从未'}</td>
                     <td style={{ textAlign: 'right' }}>
-                      <button className="icon-btn" title="管理账户" onClick={() => setDetailId(u.id)}>›</button>
+                      <RowChevron title="管理账户" onClick={() => setDetailId(u.id)} />
                     </td>
                   </tr>
                 );
               })}
               {sortedAccounts.length === 0 && (
-                <tr><td colSpan={7} className="faint" style={{ textAlign: 'center', padding: 24 }}>尚无账户。</td></tr>
+                <tr><td colSpan={7} className="empty-inline">尚无账户。</td></tr>
               )}
             </tbody>
           </table>
         </div>
+      </div>
+
+      {/* Mobile — list tiles, same pattern as 成员目录 / 小组管理 */}
+      <div className="only-mobile">
+        {sortedAccounts.map((u) => {
+          const role = u.member ? churchRoleZh(u.member.church_role) : '—';
+          return (
+            <div key={u.id} className="mtile" onClick={() => setDetailId(u.id)}>
+              <div className="mtile-row1">
+                <div className="flex items-center gap-8 flex-wrap" style={{ minWidth: 0 }}>
+                  <strong>{u.member?.full_name ?? '—'}</strong>
+                  <RoleBadge role={role} />
+                </div>
+                <span className="mtile-cta"><ChevronRightIcon /></span>
+              </div>
+              <div className="mtile-line">{u.email}</div>
+              <div className="mtile-line flex items-center gap-8 flex-wrap">
+                <span className={`badge ${accountRoleClass(u.account_role)}`}>{ACCOUNT_ROLE_ZH[u.account_role]}</span>
+                <span className={`badge ${accountStatusClass(u.status)}`}>{accountStatusLabel(u.status)}</span>
+                <span>{u.last_sign_in_at ? formatDateTime(u.last_sign_in_at) : '从未登录'}</span>
+              </div>
+            </div>
+          );
+        })}
+        {sortedAccounts.length === 0 && (
+          <div className="empty-inline">尚无账户。</div>
+        )}
       </div>
 
       {addOpen && (
@@ -322,9 +358,7 @@ function AccountDetail({
 
       <div className="card">
         <div className="flex items-center gap-12 flex-wrap">
-          <div style={{ width: 60, height: 60, borderRadius: '50%', background: 'var(--brand)', color: '#fff', display: 'grid', placeItems: 'center', fontSize: 25, fontWeight: 600, flexShrink: 0, boxShadow: '0 0 0 4px var(--brand-soft)' }} className="serif">
-            {account.member?.full_name?.slice(-2) ?? '?'}
-          </div>
+          <Avatar name={account.member?.full_name ?? null} size="lg" />
           <div className="grow" style={{ minWidth: 0 }}>
             <div className="flex items-center gap-10 flex-wrap">
               <h2 style={{ margin: 0, fontSize: 20 }} className="serif">{account.member?.full_name}</h2>
@@ -400,21 +434,12 @@ function AccountDetail({
       {/* 通知 (notifications) hidden until email/push delivery is actually
           implemented — the toggles didn't send anything, just stored a flag. */}
 
-      <div
-        className="flex-between flex-wrap mt-16"
-        style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, boxShadow: 'var(--shadow)', padding: '16px 20px' }}
-      >
+      <div className="card flex-between flex-wrap mt-16">
         <div>
           <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--crit)' }}>删除账户</div>
           <div className="muted" style={{ fontSize: 11.5 }}>移除此登录账户 · 不会删除其成员档案</div>
         </div>
-        <button
-          className="btn"
-          style={{ background: 'transparent', color: 'var(--crit)', border: '1px solid var(--crit-soft)' }}
-          onClick={del}
-        >
-          删除账户
-        </button>
+        <button className="btn danger" onClick={del}>删除账户</button>
       </div>
 
       <div className="flex-between flex-wrap mt-16">

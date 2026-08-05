@@ -293,13 +293,13 @@ export default function DiscipleshipPage() {
                     <button className="btn ghost sm" style={{ marginRight: 6 }} onClick={() => setPopup(n)}>进度</button>
                     <button className="btn ghost sm" style={{ color: 'var(--brand)', marginRight: 6 }} onClick={() => window.open(`/d/${n.pair.form_token}`, '_blank')}>🔗 表单</button>
                     {perms.delete && (
-                      <button className="btn ghost sm" style={{ color: 'var(--crit)' }} onClick={() => delPair(n)}>删除</button>
+                      <button className="btn danger sm" onClick={() => delPair(n)}>删除</button>
                     )}
                   </td>
                 </tr>
               ))}
               {sortedNodes.length === 0 && (
-                <tr><td colSpan={4} className="faint" style={{ textAlign: 'center', padding: 24 }}>尚无配对。</td></tr>
+                <tr><td colSpan={4} className="empty-inline">尚无配对。</td></tr>
               )}
             </tbody>
           </table>
@@ -316,8 +316,7 @@ export default function DiscipleshipPage() {
                 </div>
                 <div className="flex gap-10" style={{ flexShrink: 0 }}>
                   <button
-                    className="mtile-cta"
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+                    className="tile-action"
                     onClick={(e) => {
                       e.stopPropagation();
                       window.open(`/d/${n.pair.form_token}`, '_blank');
@@ -327,8 +326,7 @@ export default function DiscipleshipPage() {
                   </button>
                   {perms.delete && (
                     <button
-                      className="mtile-cta"
-                      style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: 'var(--crit)' }}
+                      className="tile-action crit"
                       onClick={(e) => {
                         e.stopPropagation();
                         delPair(n);
@@ -347,7 +345,7 @@ export default function DiscipleshipPage() {
             </div>
           ))}
           {sortedNodes.length === 0 && (
-            <div className="faint" style={{ textAlign: 'center', padding: 24 }}>尚无配对。</div>
+            <div className="empty-inline">尚无配对。</div>
           )}
         </div>
       </div>

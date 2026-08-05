@@ -6,7 +6,19 @@ import { useFetch } from '@/lib/hooks';
 import { useSortableRows } from '@/lib/sort';
 import { api } from '@/lib/api';
 import { usePageChrome, useMe, useHallScope } from '@/components/AppShell';
-import { ErrorBanner, Field, HallSelect, Loading, Modal, RoleBadge, SortTh, useToast } from '@/components/ui';
+import {
+  ChevronRightIcon,
+  ErrorBanner,
+  ExportButton,
+  Field,
+  HallSelect,
+  Loading,
+  Modal,
+  RoleBadge,
+  RowChevron,
+  SortTh,
+  useToast,
+} from '@/components/ui';
 import { can } from '@/lib/perms';
 import { exportRows } from '@/lib/export';
 import { GroupDetail, GroupRow, MemberRow } from '@/lib/types';
@@ -144,31 +156,23 @@ export default function MembersPage() {
     <>
       <ErrorBanner message={error} />
 
-      <div className="flex-between flex-wrap gap-8 mb-16">
-        <div className="flex gap-8 flex-wrap" style={{ flex: 1, minWidth: 220 }}>
-          <input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="🔍 搜索姓名…"
-            style={{ maxWidth: 240, flex: 1, minWidth: 140 }}
-          />
-          <select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)} style={{ maxWidth: 160 }}>
-            <option value="all">全部身份（{counts.all}）</option>
-            {MEMBER_ROLE_FILTERS.map((r) => (
-              <option key={r} value={r}>{r}（{counts[r] ?? 0}）</option>
-            ))}
-          </select>
-          <select value={groupFilter} onChange={(e) => setGroupFilter(e.target.value)} style={{ maxWidth: 160 }}>
-            <option value="all">所有小组</option>
-            {groupOptions.groups.map((g) => (
-              <option key={g.id} value={g.id}>{g.name}（{g.count}）</option>
-            ))}
-            <option value={UNASSIGNED}>未分组（{groupOptions.unassigned}）</option>
-          </select>
-        </div>
-        <button className="btn ghost sm" onClick={exportMembers} disabled={sorted.length === 0}>
-          ⬇ 导出 Excel
-        </button>
+      <div className="filter-bar">
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="🔍 搜索姓名…" />
+        <select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}>
+          <option value="all">全部身份（{counts.all}）</option>
+          {MEMBER_ROLE_FILTERS.map((r) => (
+            <option key={r} value={r}>{r}（{counts[r] ?? 0}）</option>
+          ))}
+        </select>
+        <select value={groupFilter} onChange={(e) => setGroupFilter(e.target.value)}>
+          <option value="all">所有小组</option>
+          {groupOptions.groups.map((g) => (
+            <option key={g.id} value={g.id}>{g.name}（{g.count}）</option>
+          ))}
+          <option value={UNASSIGNED}>未分组（{groupOptions.unassigned}）</option>
+        </select>
+        <span className="spacer" />
+        <ExportButton onClick={exportMembers} disabled={sorted.length === 0} />
       </div>
 
       {/* Desktop — table */}
@@ -212,14 +216,14 @@ export default function MembersPage() {
                     </td>
                     <td className="muted tnum">{formatDate(m.joined_at)}</td>
                     <td style={{ textAlign: 'right' }}>
-                      <button className="icon-btn" title="查看档案" onClick={() => router.push(`/members/${m.id}`)}>›</button>
+                      <RowChevron title="查看档案" onClick={() => router.push(`/members/${m.id}`)} />
                     </td>
                   </tr>
                 );
               })}
               {sorted.length === 0 && (
                 <tr>
-                  <td colSpan={hallLocked ? 7 : 8} className="faint" style={{ textAlign: 'center', padding: 28 }}>
+                  <td colSpan={hallLocked ? 7 : 8} className="empty-inline">
                     没有符合条件的成员。
                   </td>
                 </tr>
@@ -241,7 +245,7 @@ export default function MembersPage() {
                   <span className="muted" style={{ fontSize: 12.5 }}>· {m.group?.name ?? '未分组'}</span>
                   <RoleBadge role={role} />
                 </div>
-                <span className="mtile-cta">档案 →</span>
+                <span className="mtile-cta"><ChevronRightIcon /></span>
               </div>
               {/* Only render detail lines that have real content — a tile with no
                   phone/date shouldn't show bare “—” placeholder rows. */}
@@ -261,7 +265,7 @@ export default function MembersPage() {
           );
         })}
         {sorted.length === 0 && (
-          <div className="faint" style={{ textAlign: 'center', padding: 28 }}>
+          <div className="empty-inline">
             没有符合条件的成员。
           </div>
         )}

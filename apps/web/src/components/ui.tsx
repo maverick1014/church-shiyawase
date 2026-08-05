@@ -195,6 +195,100 @@ export function Field({
   );
 }
 
+/* -------------------------------------------------------------------------
+ * Icons — SVG rather than glyphs like › or ⬇, whose visual weight and vertical
+ * centring drift between fonts and platforms. Stroke follows currentColor.
+ * ---------------------------------------------------------------------- */
+
+export function ChevronRightIcon({ size = 18 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M9 6l6 6-6 6" />
+    </svg>
+  );
+}
+
+export function DownloadIcon({ size = 17 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 3v12m0 0l-4.5-4.5M12 15l4.5-4.5M4 19h16" />
+    </svg>
+  );
+}
+
+export function InfoIcon({ size = 17 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 11v5M12 7.6v.2" />
+    </svg>
+  );
+}
+
+/**
+ * The one "open this row" affordance — used by every list, in both the desktop
+ * table and the mobile tile, so the control never differs between them.
+ */
+export function RowChevron({ title, onClick }: { title: string; onClick?: () => void }) {
+  return (
+    <button className="icon-btn" title={title} aria-label={title} onClick={onClick}>
+      <ChevronRightIcon />
+    </button>
+  );
+}
+
+/**
+ * The one export control. Icon-only (the label added nothing next to a column
+ * of 导出-something buttons) and full control height, so it lines up with the
+ * dropdowns it sits beside in a `.filter-bar`.
+ */
+export function ExportButton({
+  onClick,
+  disabled,
+  title = '导出 Excel',
+}: {
+  onClick: () => void;
+  disabled?: boolean;
+  title?: string;
+}) {
+  return (
+    <button className="btn ghost" onClick={onClick} disabled={disabled} title={title} aria-label={title}>
+      <DownloadIcon />
+    </button>
+  );
+}
+
+/**
+ * Reference material that would otherwise push the real content down the page
+ * (e.g. the permission matrix in 用户管理). Opens on hover and on click, so it
+ * works on both a desktop pointer and a touch screen.
+ */
+export function InfoPopover({ label, children }: { label: string; children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <span
+      className="info-pop"
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+    >
+      <button
+        type="button"
+        className="info-pop-trigger"
+        aria-label={label}
+        title={label}
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+      >
+        <InfoIcon />
+      </button>
+      {open && <span className="info-pop-body">{children}</span>}
+    </span>
+  );
+}
+
 /**
  * 堂会 picker, shared by every entity form so the options and the
  * 全堂开放 rule live in one place (rule G4).

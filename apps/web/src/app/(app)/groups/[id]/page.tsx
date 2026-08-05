@@ -6,7 +6,7 @@ import { useFetch } from '@/lib/hooks';
 import { useSortableRows } from '@/lib/sort';
 import { api } from '@/lib/api';
 import { usePageChrome, useMe } from '@/components/AppShell';
-import { ErrorBanner, Field, HallSelect, Loading, RoleBadge, SortTh, TagsInput, useConfirm, useToast } from '@/components/ui';
+import { ErrorBanner, ExportButton, Field, HallSelect, Loading, RoleBadge, SortTh, TagsInput, useConfirm, useToast } from '@/components/ui';
 import { can } from '@/lib/perms';
 import { exportMatrix } from '@/lib/export';
 import { GroupAttendanceResponse, GroupDetail, GroupRow, MemberRow } from '@/lib/types';
@@ -357,7 +357,7 @@ function GroupPanel({
                 ))}
                 {sortedGroupMembers.length === 0 && (
                   <tr>
-                    <td colSpan={3} className="faint" style={{ textAlign: 'center', padding: 24 }}>
+                    <td colSpan={3} className="empty-inline">
                       本组暂无成员，从上方选择加入。
                     </td>
                   </tr>
@@ -490,9 +490,7 @@ function WeeklyAttendance({ groupId }: { groupId: string }) {
             按年 / 月查看 · 每周固定为当月主日 · 勾选表示当周出席
           </div>
         </div>
-        <button className="btn ghost sm" onClick={exportGrid} disabled={!data}>
-          ⬇ 导出
-        </button>
+        <ExportButton onClick={exportGrid} disabled={!data} title="导出每周出席" />
       </div>
 
       <div className="flex gap-8 mb-14 flex-wrap">

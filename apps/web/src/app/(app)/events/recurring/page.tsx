@@ -7,6 +7,7 @@ import { useSortableRows } from '@/lib/sort';
 import { api } from '@/lib/api';
 import { usePageChrome, useMe, useHallScope } from '@/components/AppShell';
 import {
+  ChevronRightIcon,
   ErrorBanner,
   Field,
   HallSelect,
@@ -188,7 +189,7 @@ export default function RecurringEventsPage() {
               ))}
               {sorted.length === 0 && (
                 <tr>
-                  <td colSpan={hallLocked ? 7 : 8} className="faint" style={{ textAlign: 'center', padding: 28 }}>
+                  <td colSpan={hallLocked ? 7 : 8} className="empty-inline">
                     尚无循环聚会，点右上角「＋ 新增循环」建立。
                   </td>
                 </tr>
@@ -209,7 +210,10 @@ export default function RecurringEventsPage() {
                   {' '}· 每{weekdayZh(r.weekday)} {formatMeetingTime(r.start_time)}
                 </span>
               </div>
-              <span className={`badge ${r.active ? 'b-good' : 'b-gray'}`}>{r.active ? '启用' : '停用'}</span>
+              <div className="flex items-center gap-8" style={{ flexShrink: 0 }}>
+                <span className={`badge ${r.active ? 'b-good' : 'b-gray'}`}>{r.active ? '启用' : '停用'}</span>
+                {perms.write && <span className="mtile-cta"><ChevronRightIcon /></span>}
+              </div>
             </div>
             <div className="mtile-line">
               {r.hall?.name ?? '全堂'}
@@ -219,7 +223,7 @@ export default function RecurringEventsPage() {
           </div>
         ))}
         {sorted.length === 0 && (
-          <div className="faint" style={{ textAlign: 'center', padding: 28 }}>
+          <div className="empty-inline">
             尚无循环聚会，点右上角「＋ 新增循环」建立。
           </div>
         )}
@@ -366,8 +370,8 @@ function RecurringModal({
       <div className="modal-actions">
         {onDelete && (
           <button
-            className="btn ghost"
-            style={{ color: 'var(--crit)', borderColor: 'var(--crit-soft)', marginRight: 'auto' }}
+            className="btn danger"
+            style={{ marginRight: 'auto' }}
             onClick={onDelete}
           >
             删除循环

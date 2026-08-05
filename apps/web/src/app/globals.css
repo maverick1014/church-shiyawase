@@ -642,10 +642,16 @@ th.sortable:hover {
 .btn.good {
   background: var(--good);
 }
+/* The one destructive-button style. Every 删除 / 移除 / 拒绝 uses this rather
+   than re-declaring crit colours inline. */
 .btn.danger {
   background: transparent;
   color: var(--crit);
-  border-color: var(--border);
+  border-color: var(--crit-soft);
+}
+.btn.danger:hover {
+  background: var(--crit-soft);
+  filter: none;
 }
 .btn.sm {
   height: var(--control-h-sm);
@@ -660,6 +666,71 @@ th.sortable:hover {
   opacity: 0.5;
   cursor: not-allowed;
   filter: none;
+}
+
+/* Info popover — reference material folded behind an icon so it doesn't push
+   the page's real content down. */
+.info-pop {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+.info-pop-trigger {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--muted);
+  cursor: pointer;
+}
+.info-pop-trigger:hover {
+  color: var(--brand);
+  border-color: var(--brand);
+}
+.info-pop-body {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 8px);
+  right: 0;
+  width: min(340px, calc(100vw - 40px));
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 14px 16px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.13);
+  text-align: left;
+  font-weight: 400;
+  cursor: default;
+}
+
+/* Filter row above a list. Inside a form a control fills its Field; here it
+   should be only as wide as its own content, so the row reads as a set of
+   chips rather than a grid of equal boxes. Every control keeps the standard
+   --control-h, so dropdowns, the search box and the export button line up. */
+.filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.filter-bar > input,
+.filter-bar > select,
+.filter-bar > .btn {
+  width: auto;
+}
+.filter-bar > input {
+  min-width: 200px;
+  flex: 0 1 240px;
+}
+/* Pushes what follows to the right edge of the row (e.g. the export button). */
+.filter-bar > .spacer {
+  flex: 1 1 auto;
 }
 
 /* ==========================================================================
@@ -1100,6 +1171,9 @@ textarea {
 .items-center {
   align-items: center;
 }
+.gap-4 {
+  gap: 4px;
+}
 .gap-6 {
   gap: 6px;
 }
@@ -1128,6 +1202,7 @@ textarea {
   flex: 1;
 }
 
+/* Page-level empty state — a standalone panel where content would have been. */
 .empty {
   text-align: center;
   color: var(--faint);
@@ -1136,6 +1211,16 @@ textarea {
   background: var(--surface);
   border: 1px dashed var(--border);
   border-radius: var(--radius);
+}
+/* Empty state nested inside a card or a table body. Same voice as .empty, but
+   without the panel chrome — a dashed box inside a card reads as a mistake.
+   One class for both `<td colSpan>` and `<div>` so every list empties alike. */
+.empty-inline,
+td.empty-inline {
+  text-align: center;
+  color: var(--faint);
+  padding: 26px 20px;
+  font-size: 13px;
 }
 .loading {
   text-align: center;
@@ -1275,12 +1360,28 @@ textarea {
 .mtile-row1 strong {
   font-size: 15px;
 }
+/* The tile's "open this" affordance — the same chevron the desktop table row
+   uses, so the control reads identically on both. */
 .mtile-cta {
+  display: inline-flex;
+  align-items: center;
+  color: var(--brand);
+  flex-shrink: 0;
+}
+/* A secondary action inside a tile (open the form, delete…). Distinct from
+   .mtile-cta, which is the tile's own "open" chevron. */
+.tile-action {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
   color: var(--brand);
   font-size: 12.5px;
   font-weight: 600;
   white-space: nowrap;
-  flex-shrink: 0;
+}
+.tile-action.crit {
+  color: var(--crit);
 }
 .mtile-line {
   margin-top: 7px;
