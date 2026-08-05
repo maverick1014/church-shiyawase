@@ -151,9 +151,10 @@ tog/
 - The member list itself is a simple name + remove list — no per-member position dropdown; 核心成员/普通成员/新成员 are set on the member's own profile page instead.
 
 ### 5.3 Events & attendance (聚会与出席)
-- Event types: 主日崇拜 / 聚会 / 祷告会 / 团契 / 其他; fields: 标题、说明、地点、开始/结束时间.
+- Event types: 主日崇拜 / 聚会 / 祷告会 / 团契 / 其他; fields: 标题、说明、地点、开始/结束时间、堂会.
 - List (upcoming vs past); create/edit/delete.
 - **Attendance check-in**: per member mark 出席 / 请假 / 缺席; bulk save; simple counts.
+- **循环聚会 (`/events/recurring`)**: schedules like 每周日 10:00 主日崇拜. Each rule sets 名称/类型/星期/时间/地点/堂会/提前天数 (default 35 ≈ one month) and can be paused. `GET /events` fills the window from the active rules — generation is **lazy, not a cron job**: the calendar only has to be right for whoever is looking at it, and there's no scheduled task to fail silently. Forward-only and idempotent, so a service deliberately deleted (public holiday) is not resurrected. **Deleting a rule keeps its already-generated events** (they carry attendance records).
 
 ### 5.4 Donations (奉献管理)
 - Fields: 奉献人(可匿名)、金额、币种、类别(十一/主日/建堂/宣教/感恩…)、方式(现金/转账/刷卡/线上)、日期、备注.
@@ -187,13 +188,14 @@ tog/
 Enums: `church_role(pastor,member)`, `group_position(leader,assistant_leader,intern_leader,core_member,regular_member,new_member)`, `member_status(active,inactive)`, `gender_type`, `event_type`, `attendance_status(present,absent,excused)`, `donation_method`, `enrollment_status(pending,approved,in_progress,completed,dropped)`, `pair_status(active,completed,paused)`.
 
 Tables:
-- `halls(id, name, sort_order, auto_sunday_service, created_at)` — 中文堂 / 英文堂 / 马来文堂. One shared database; a hall is a **scope column**, not a separate deployment.
+- `halls(id, name, sort_order, created_at)` — 中文堂 / 英文堂 / 马来文堂. One shared database; a hall is a **scope column**, not a separate deployment.
 - `groups(id, name, description, meeting_day weekday, meeting_time, location, tags text[], hall_id→halls **NOT NULL**, created_at)` — **no leader columns** (derived); 小组状态 (可分植/可加人/刚好) is also derived, not stored.
 - `households(id, name, address, phone, created_at)` — optional family grouping.
 - `members(id, full_name, chinese_name, email, phone, gender, date_of_birth, church_role, status, group_id→groups, group_position, household_id→households, hall_id→halls **NOT NULL**, joined_at, notes, timestamps)`
   - `check (group_position is null or group_id is not null)`
   - **partial unique indexes**: one `leader` / one `assistant_leader` / one `intern_leader` per `group_id`.
-- `events(id, title, description, event_type, location, starts_at, ends_at, hall_id→halls **nullable**, created_at)` — `hall_id is null` = 全堂 / 联合聚会. Unique index `(starts_at, hall_id) nulls not distinct where event_type='service'` so each hall may hold its own 10:00 主日崇拜.
+- `events(id, title, description, event_type, location, starts_at, ends_at, hall_id→halls **nullable**, recurring_id→recurring_events **nullable, on delete set null**, created_at)` — `hall_id is null` = 全堂 / 联合聚会. Unique index `(starts_at, hall_id) nulls not distinct where event_type='service'` so each hall may hold its own 10:00 主日崇拜; `(recurring_id, starts_at)` keeps the top-up idempotent.
+- `recurring_events(id, title, event_type, weekday, start_time, location, hall_id→halls nullable, lookahead_days default 35, active, created_at)` — 循环聚会 schedules. `GET /events` tops the calendar up from the active rules (lazy, no cron). Deleting a rule **keeps** the events it produced (FK is `on delete set null`); it only stops future generation.
 - `event_attendance(id, event_id, member_id, status, checked_in_at, notes, unique(event_id,member_id))`
 - `donations(id, member_id?, amount, currency, fund, method, donated_at, notes, created_at)`
 - `trainings(id, name, description, category, trainer_id→members, total_sessions, is_enrollable, starts_on, ends_on, hall_id→halls **nullable**, created_at)` — `hall_id is null` = 全堂开放.
@@ -217,6 +219,7 @@ Tables:
 | `/groups` | 小组管理 · 列表 | table of all groups (小组名称+标签, 组长, 组员人数, 新成员人数, 小组状态, 聚会时间地点), sortable, filter by 标签/星期几, click a row → detail |
 | `/groups/[id]` | 小组详情 | create/delete, member allocation (simple list), **铁三角** leader picker (the only identity assignment here) |
 | `/events` | 聚会与出席 | event cards + **点名** (出席/请假/缺席) |
+| `/events/recurring` | 循环聚会 | recurring schedules (每周X HH:MM) that auto-fill the calendar; pause/edit/delete |
 | `/donations` | 奉献管理 | fund summary tiles + records table + create |
 | `/trainings` | 培训课程 | catalog cards + create |
 | `/trainings/[id]` | 培训详情 | sessions, enrollment approval, **核对名单** grid, per-session attendance |

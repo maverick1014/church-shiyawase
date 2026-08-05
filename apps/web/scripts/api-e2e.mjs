@@ -127,6 +127,34 @@ async function main() {
     ok('delete event → 200', (await req('DELETE', `/api/events/${evId}`, H)).status === 200);
   }
 
+  // ---- Recurring events (循环聚会) ------------------------------------------
+  const rules = (await req('GET', '/api/recurring-events', H)).json;
+  ok('recurring-events is an array', Array.isArray(rules), JSON.stringify(rules).slice(0, 120));
+  const mkRule = await req('POST', '/api/recurring-events', {
+    ...H,
+    body: { title: `E2E循环-${Date.now()}`, event_type: 'prayer', weekday: 'wednesday', start_time: '20:00:00', location: '副堂', hall_id: hallId, lookahead_days: 14 },
+  });
+  ok('create recurring rule → 200 + id', mkRule.status === 200 && mkRule.json?.id, `status ${mkRule.status} ${JSON.stringify(mkRule.json).slice(0,120)}`);
+  const ruleId = mkRule.json?.id;
+  if (ruleId) {
+    ok('update recurring rule → 200', (await req('PATCH', `/api/recurring-events/${ruleId}`, { ...H, body: { active: false } })).status === 200);
+    // GET /events tops the calendar up from the active rules; a paused rule
+    // must not generate anything.
+    const afterPause = (await req('GET', '/api/events', H)).json;
+    ok('paused rule generates nothing', Array.isArray(afterPause) && !afterPause.some((e) => e.recurring_id === ruleId));
+    ok('re-activate rule → 200', (await req('PATCH', `/api/recurring-events/${ruleId}`, { ...H, body: { active: true } })).status === 200);
+    const afterResume = (await req('GET', '/api/events', H)).json;
+    const generated = (afterResume || []).filter((e) => e.recurring_id === ruleId);
+    ok('active rule fills the calendar', generated.length > 0, `${generated.length} generated`);
+    ok('generated events land on the rule weekday', generated.every((e) => new Date(e.starts_at).getUTCDay() === 3 || new Date(e.starts_at).getDay() === 3));
+    // Deleting the rule must KEEP the events it produced (they hold attendance).
+    ok('delete recurring rule → 200', (await req('DELETE', `/api/recurring-events/${ruleId}`, H)).status === 200);
+    const afterDelete = (await req('GET', '/api/events', H)).json;
+    const survivors = (afterDelete || []).filter((e) => generated.some((g) => g.id === e.id));
+    ok('generated events survive rule deletion', survivors.length === generated.length, `${survivors.length}/${generated.length} kept`);
+    for (const e of survivors) await req('DELETE', `/api/events/${e.id}`, H); // cleanup
+  }
+
   // ---- Groups CRUD (+ weekly attendance) ----------------------------------
   const mkGrp = await req('POST', '/api/groups', { ...H, body: { name: `E2E小组-${Date.now()}`, hall_id: hallId } });
   ok('create group → 200 + id', mkGrp.status === 200 && mkGrp.json?.id, `status ${mkGrp.status}`);
