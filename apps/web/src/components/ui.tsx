@@ -449,6 +449,7 @@ export function SortTh({
   dir,
   onSort,
   align,
+  className,
   style,
 }: {
   children: ReactNode;
@@ -457,12 +458,14 @@ export function SortTh({
   dir: 'asc' | 'desc';
   onSort: (key: string) => void;
   align?: 'right' | 'center';
+  /** Column-width class (`col-hall`, `col-status`, …) — never an ad-hoc width. */
+  className?: string;
   style?: React.CSSProperties;
 }) {
   const active = activeKey === sortKey;
   return (
     <th
-      className="sortable"
+      className={`sortable ${className ?? ''}`}
       style={{ ...(align ? { textAlign: align } : undefined), ...style }}
       onClick={() => onSort(sortKey)}
       aria-sort={active ? (dir === 'asc' ? 'ascending' : 'descending') : 'none'}

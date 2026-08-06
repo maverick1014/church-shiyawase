@@ -26,6 +26,11 @@ Testing layers (in `apps/web`):
   `NODE_USE_ENV_PROXY=1 PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-browsers/chromium-1194/chrome-linux/chrome UI_E2E_PASSWORD=… npm run test:ui-e2e`.
   When you add/rename a page or a key interaction, add a matching check to
   `scripts/ui-e2e.mjs`.
+- `npm run ui:shots` — **screenshot sweep**: captures every list page at a phone
+  and a desktop viewport into `$OUT` (default `/tmp/shots`; `WIDE=1` for
+  desktop). ui-e2e proves the pages *work*; it cannot see that two pages lay
+  their header out differently. After any layout change, run this and **look at
+  the images** — a green ui-e2e is not evidence the UI is consistent.
 
 ---
 
@@ -94,6 +99,18 @@ Prefer `useFetch` + `useMemo` over manual effect/loading bookkeeping.
 - Passwords: PBKDF2 hash server-side only, min 8 chars, never stored/logged in
   plaintext; password fields use `PasswordInput` (show/hide) with the right
   `autoComplete`.
+
+### G7a — One page-chrome shape for every page
+The header is **title only** (no subtitles). A page contributes *its own*
+actions via `usePageChrome({ action })` and nothing else — shell-level controls
+(the congregation switcher) live in the shell: top right of the header on
+desktop, in the nav drawer on phones. Never render a shell control into
+`.content-actions`, and never give a page action an ad-hoc width; page actions
+are content-sized like every control in a `.filter-bar`. Filters go in one
+`.filter-bar` per page, ordered search → filters → `.spacer` → export/info.
+Fixed table-column widths come from the shared `col-*` classes, never a
+hand-typed pixel value — a width tuned to two CJK glyphs clips the moment the
+same label is English.
 
 ### G7 — Mobile-first & theme
 Tables become list tiles on small screens (`.only-desktop` / `.only-mobile`

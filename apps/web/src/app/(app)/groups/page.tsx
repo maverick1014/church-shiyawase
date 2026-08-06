@@ -156,14 +156,14 @@ export default function GroupsPage() {
                     count, new-member count and status stay narrow. */}
                 <SortTh sortKey="name" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('groups.col.name')}</SortTh>
                 {!hallLocked && (
-                  <SortTh sortKey="hall" activeKey={sortKey} dir={sortDir} onSort={toggleSort} style={{ width: 96 }}>{t('hall.label')}</SortTh>
+                  <SortTh sortKey="hall" activeKey={sortKey} dir={sortDir} onSort={toggleSort} className="col-hall">{t('hall.label')}</SortTh>
                 )}
                 <SortTh sortKey="leader" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('groups.col.leader')}</SortTh>
-                <SortTh sortKey="count" activeKey={sortKey} dir={sortDir} onSort={toggleSort} style={{ width: 88 }}>{t('groups.col.count')}</SortTh>
-                <SortTh sortKey="new" activeKey={sortKey} dir={sortDir} onSort={toggleSort} style={{ width: 82 }}>{t('groups.col.newCount')}</SortTh>
-                <SortTh sortKey="status" activeKey={sortKey} dir={sortDir} onSort={toggleSort} style={{ width: 92 }}>{t('groups.col.status')}</SortTh>
+                <SortTh sortKey="count" activeKey={sortKey} dir={sortDir} onSort={toggleSort} className="col-count">{t('groups.col.count')}</SortTh>
+                <SortTh sortKey="new" activeKey={sortKey} dir={sortDir} onSort={toggleSort} className="col-count">{t('groups.col.newCount')}</SortTh>
+                <SortTh sortKey="status" activeKey={sortKey} dir={sortDir} onSort={toggleSort} className="col-status">{t('groups.col.status')}</SortTh>
                 <th>{t('groups.col.schedule')}</th>
-                <th style={{ width: 52 }} />
+                <th className="col-chevron" />
               </tr>
             </thead>
             <tbody>

@@ -452,9 +452,30 @@ td {
 .table-fixed {
   table-layout: fixed;
 }
-.table-fixed td {
+.table-fixed td,
+.table-fixed th {
   overflow: hidden;
   text-overflow: ellipsis;
+}
+/* Shared widths for the narrow utility columns. They used to be hand-typed per
+   page, tuned to two or three CJK glyphs — so the moment a header became an
+   English word ("Congregation", "Status") it overran its neighbour and badges
+   were sliced in half. One set of names, one set of numbers, wide enough for
+   the longest label in any of the three languages. */
+.table-fixed .col-count {
+  width: 96px;
+}
+.table-fixed .col-status {
+  width: 136px;
+}
+.table-fixed .col-date {
+  width: 124px;
+}
+.table-fixed .col-hall {
+  width: 150px;
+}
+.table-fixed .col-chevron {
+  width: 52px;
 }
 /* A lone trailing chevron/icon-button column (the "open detail" affordance)
    should hug the row's right edge instead of carrying full text-cell padding.
