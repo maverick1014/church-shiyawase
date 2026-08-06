@@ -13,19 +13,26 @@ import { EnrollmentRow, GroupDetail, GroupRow, MemberRow, PairRow } from '@/lib/
 import { ChurchRole, GroupPosition, LEADERSHIP_POSITIONS, MemberStatus, Gender } from '@tog/shared';
 import {
   categoryBadgeClass,
-  ENROLLMENT_STATUS_LABELS,
+  CHURCH_ROLE_OPTIONS,
+  churchRoleKey,
   enrollmentStatusClass,
+  enrollmentStatusKey,
   formatDate,
-  GENDER_LABELS,
+  genderKey,
+  GENDER_OPTIONS,
   GROUP_POSITION_OPTIONS,
-  memberRoleZh,
-  memberStatusLabel,
-  positionZh,
+  MEMBER_STATUS_OPTIONS,
+  memberRole,
+  memberStatusKey,
+  positionKey,
+  trainingCategoryLabel,
 } from '@/lib/labels';
+import { useT } from '@/lib/i18n';
 
 export default function MemberDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
+  const tr = useT();
 
   const member = useFetch<MemberRow>(`/members/${id}`);
   const record = useFetch<EnrollmentRow[]>(`/members/${id}/trainings`);
@@ -44,22 +51,22 @@ export default function MemberDetailPage() {
   const { sorted: sortedRecords, sortKey: recSortKey, sortDir: recSortDir, toggleSort: toggleRecSort } =
     useSortableRows(
       records,
-      (t, key) => {
+      (row, key) => {
         switch (key) {
           case 'category':
-            return t.training?.category ?? undefined;
+            return trainingCategoryLabel(row.training?.category ?? null, tr) || undefined;
           case 'status':
-            return ENROLLMENT_STATUS_LABELS[t.status] ?? t.status;
+            return tr(enrollmentStatusKey(row.status));
           case 'completed':
-            return t.completed_at ?? undefined;
+            return row.completed_at ?? undefined;
           default:
-            return t.training?.name;
+            return row.training?.name;
         }
       },
       { key: 'course', dir: 'asc' },
     );
 
-  usePageChrome({ title: '成员详情', subtitle: '档案 · 个人培训记录 · 四十天守望' }, [id]);
+  usePageChrome({ title: tr('member.title'), subtitle: tr('member.subtitle') }, [id, tr]);
 
   const onPickAvatar = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -69,7 +76,7 @@ export default function MemberDetailPage() {
       const fd = new FormData();
       fd.append('file', file);
       await api.upload(`/members/${id}/avatar`, fd);
-      toast('头像已更新');
+      toast(tr('member.toast.avatar'));
       member.reload();
     } catch (err) {
       toast((err as Error).message, 'error');
@@ -80,29 +87,30 @@ export default function MemberDetailPage() {
   };
 
   if (member.initialLoading) return <Loading />;
-  if (member.error || !member.data) return <ErrorBanner message={member.error ?? '找不到成员'} />;
+  if (member.error || !member.data)
+    return <ErrorBanner message={member.error ?? tr('member.notFound')} />;
 
   const m = member.data;
-  const role = memberRoleZh(m);
+  const role = memberRole(m);
   const pairs = (allPairs.data ?? []).filter(
     (p) => p.mentor_id === m.id || p.trainee_id === m.id,
   );
 
   const facts = [
-    { k: '邮箱', v: m.email ?? '—' },
-    { k: '电话', v: m.phone ?? '—' },
-    { k: '性别', v: m.gender ? GENDER_LABELS[m.gender] ?? '—' : '—' },
-    { k: '所属小组', v: m.group?.name ?? '未分组' },
-    { k: '状态', v: memberStatusLabel(m.status) },
-    { k: '加入日期', v: formatDate(m.joined_at) },
-    { k: '生日', v: formatDate(m.date_of_birth) },
-    { k: '家庭', v: m.household?.name ?? '—' },
+    { k: tr('members.field.email'), v: m.email ?? '—' },
+    { k: tr('members.field.phone'), v: m.phone ?? '—' },
+    { k: tr('member.field.gender'), v: m.gender ? tr(genderKey(m.gender)) : '—' },
+    { k: tr('members.col.group'), v: m.group?.name ?? tr('members.filter.ungrouped') },
+    { k: tr('members.col.status'), v: tr(memberStatusKey(m.status)) },
+    { k: tr('member.field.joined'), v: formatDate(m.joined_at) },
+    { k: tr('member.field.birthday'), v: formatDate(m.date_of_birth) },
+    { k: tr('member.field.household'), v: m.household?.name ?? '—' },
   ];
 
   return (
     <>
       <button className="back-btn" onClick={() => router.push('/members')}>
-        ‹ 返回成员目录
+        {tr('member.back')}
       </button>
 
       <div className="card">
@@ -116,7 +124,7 @@ export default function MemberDetailPage() {
               </div>
               <div className="muted" style={{ fontSize: 12.5, marginTop: 3 }}>
                 {m.chinese_name ? `${m.chinese_name} · ` : ''}
-                {m.group?.name ?? '未分组'}
+                {m.group?.name ?? tr('members.filter.ungrouped')}
               </div>
               {perms.write && (
                 <button
@@ -125,7 +133,11 @@ export default function MemberDetailPage() {
                   onClick={() => fileRef.current?.click()}
                   disabled={uploading}
                 >
-                  {uploading ? '上传中…' : m.avatar_url ? '更换头像' : '上传头像'}
+                  {uploading
+                    ? tr('member.uploading')
+                    : m.avatar_url
+                      ? tr('member.changeAvatar')
+                      : tr('member.uploadAvatar')}
                 </button>
               )}
               <input
@@ -138,28 +150,28 @@ export default function MemberDetailPage() {
             </div>
           </div>
           <div className="flex gap-8">
-            {perms.write && <button className="btn" onClick={() => setEditOpen(true)}>编辑资料</button>}
+            {perms.write && <button className="btn" onClick={() => setEditOpen(true)}>{tr('member.editProfile')}</button>}
             {perms.delete && (
               <button
                 className="btn danger"
                 onClick={async () => {
                   const ok = await confirm({
-                    title: '删除成员',
-                    message: `删除 ${m.full_name} 的成员档案？其培训、配对与出席记录将一并移除，且不可恢复。`,
-                    confirmText: '删除',
+                    title: tr('member.delete.title'),
+                    message: tr('member.delete.message', { name: m.full_name }),
+                    confirmText: tr('common.delete'),
                     danger: true,
                   });
                   if (!ok) return;
                   try {
                     await api.delete(`/members/${m.id}`);
-                    toast('已删除成员');
+                    toast(tr('member.toast.deleted'));
                     router.push('/members');
                   } catch (e) {
                     toast((e as Error).message, 'error');
                   }
                 }}
               >
-                删除
+                {tr('common.delete')}
               </button>
             )}
           </div>
@@ -174,40 +186,40 @@ export default function MemberDetailPage() {
           ))}
         </div>
 
-        <div className="section-label" style={{ margin: '24px 0 12px' }}>个人培训档案</div>
+        <div className="section-label" style={{ margin: '24px 0 12px' }}>{tr('member.trainingRecord')}</div>
         <div className="table-wrap">
           <table>
             <thead>
               <tr>
-                <SortTh sortKey="course" activeKey={recSortKey} dir={recSortDir} onSort={toggleRecSort}>课程</SortTh>
-                <SortTh sortKey="category" activeKey={recSortKey} dir={recSortDir} onSort={toggleRecSort}>类别</SortTh>
-                <SortTh sortKey="status" activeKey={recSortKey} dir={recSortDir} onSort={toggleRecSort}>状态</SortTh>
-                <th style={{ width: 200 }}>进度</th>
-                <SortTh sortKey="completed" activeKey={recSortKey} dir={recSortDir} onSort={toggleRecSort}>完成日期</SortTh>
+                <SortTh sortKey="course" activeKey={recSortKey} dir={recSortDir} onSort={toggleRecSort}>{tr('member.col.course')}</SortTh>
+                <SortTh sortKey="category" activeKey={recSortKey} dir={recSortDir} onSort={toggleRecSort}>{tr('member.col.category')}</SortTh>
+                <SortTh sortKey="status" activeKey={recSortKey} dir={recSortDir} onSort={toggleRecSort}>{tr('members.col.status')}</SortTh>
+                <th style={{ width: 200 }}>{tr('member.col.progress')}</th>
+                <SortTh sortKey="completed" activeKey={recSortKey} dir={recSortDir} onSort={toggleRecSort}>{tr('member.col.completed')}</SortTh>
               </tr>
             </thead>
             <tbody>
-              {sortedRecords.map((t) => (
-                <tr key={t.id}>
-                  <td><strong>{t.training?.name ?? '—'}</strong></td>
+              {sortedRecords.map((row) => (
+                <tr key={row.id}>
+                  <td><strong>{row.training?.name ?? '—'}</strong></td>
                   <td>
-                    <span className={`badge ${categoryBadgeClass(t.training?.category ?? null)}`}>
-                      {t.training?.category ?? '—'}
+                    <span className={`badge ${categoryBadgeClass(row.training?.category ?? null)}`}>
+                      {trainingCategoryLabel(row.training?.category ?? null, tr) || '—'}
                     </span>
                   </td>
                   <td>
-                    <span className={`badge ${enrollmentStatusClass(t.status)}`}>
-                      {ENROLLMENT_STATUS_LABELS[t.status] ?? t.status}
+                    <span className={`badge ${enrollmentStatusClass(row.status)}`}>
+                      {tr(enrollmentStatusKey(row.status))}
                     </span>
                   </td>
-                  <td><ProgressBar percent={t.progress} /></td>
-                  <td className="muted tnum">{formatDate(t.completed_at)}</td>
+                  <td><ProgressBar percent={row.progress} /></td>
+                  <td className="muted tnum">{formatDate(row.completed_at)}</td>
                 </tr>
               ))}
               {sortedRecords.length === 0 && (
                 <tr>
                   <td colSpan={5} className="empty-inline">
-                    尚无培训记录。
+                    {tr('member.noTraining')}
                   </td>
                 </tr>
               )}
@@ -215,9 +227,9 @@ export default function MemberDetailPage() {
           </table>
         </div>
 
-        <div className="section-label" style={{ margin: '24px 0 12px' }}>四十天守望</div>
+        <div className="section-label" style={{ margin: '24px 0 12px' }}>{tr('disc.title')}</div>
         {pairs.length === 0 ? (
-          <div className="faint" style={{ fontSize: 13 }}>尚未参与四十天守望。</div>
+          <div className="faint" style={{ fontSize: 13 }}>{tr('member.noPairs')}</div>
         ) : (
           pairs.map((p) => {
             const asMentor = p.mentor_id === m.id;
@@ -229,10 +241,10 @@ export default function MemberDetailPage() {
                 style={{ background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 10, padding: '12px 14px', marginBottom: 8, cursor: 'pointer' }}
                 onClick={() => setPopupPair(p.id)}
               >
-                <span className="badge b-brand">{asMentor ? '带领者' : '被带领'}</span>
+                <span className="badge b-brand">{asMentor ? tr('disc.col.mentor') : tr('disc.col.trainee')}</span>
                 <strong>{other}</strong>
                 <div className="grow" />
-                <span className="badge b-warn">查看进度 →</span>
+                <span className="badge b-warn">{tr('member.viewProgress')}</span>
               </div>
             );
           })
@@ -246,7 +258,7 @@ export default function MemberDetailPage() {
           onSaved={() => {
             setEditOpen(false);
             member.reload();
-            toast('已保存资料');
+            toast(tr('member.toast.saved'));
           }}
         />
       )}
@@ -282,6 +294,7 @@ function EditMemberModal({
   });
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const t = useT();
   const toast = useToast();
 
   const allGroups = useFetch<GroupRow[]>('/groups');
@@ -304,7 +317,7 @@ function EditMemberModal({
 
   const save = async () => {
     if (!form.full_name.trim()) {
-      setErr('请填写姓名');
+      setErr(t('members.err.name'));
       return;
     }
     setSaving(true);
@@ -343,54 +356,56 @@ function EditMemberModal({
   };
 
   return (
-    <Modal title="编辑成员资料" onClose={onClose}>
+    <Modal title={t('member.edit.title')} onClose={onClose}>
       {err && <ErrorBanner message={err} />}
       <div className="form-row">
-        <Field label="姓名">
+        <Field label={t('members.field.name')}>
           <input value={form.full_name} onChange={(e) => setForm({ ...form, full_name: e.target.value })} />
         </Field>
-        <Field label="英文名 / 别名">
+        <Field label={t('members.field.nickname')}>
           <input value={form.chinese_name} onChange={(e) => setForm({ ...form, chinese_name: e.target.value })} />
         </Field>
       </div>
       <div className="form-row">
-        <Field label="电话">
+        <Field label={t('members.field.phone')}>
           <input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="012-000 0000" />
         </Field>
-        <Field label="邮箱">
+        <Field label={t('members.field.email')}>
           <input value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="name@grace.org" />
         </Field>
       </div>
       <div className="form-row">
-        <Field label="性别">
+        <Field label={t('member.field.gender')}>
           <select value={form.gender} onChange={(e) => setForm({ ...form, gender: e.target.value as Gender | '' })}>
-            <option value="">未填写</option>
-            <option value={Gender.Male}>{GENDER_LABELS[Gender.Male]}</option>
-            <option value={Gender.Female}>{GENDER_LABELS[Gender.Female]}</option>
+            <option value="">{t('common.unset')}</option>
+            {GENDER_OPTIONS.map((g) => (
+              <option key={g} value={g}>{t(genderKey(g))}</option>
+            ))}
           </select>
         </Field>
-        <Field label="状态">
+        <Field label={t('members.col.status')}>
           <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value as MemberStatus })}>
-            <option value={MemberStatus.Active}>在册</option>
-            <option value={MemberStatus.Inactive}>停止聚会</option>
+            {MEMBER_STATUS_OPTIONS.map((st) => (
+              <option key={st} value={st}>{t(memberStatusKey(st))}</option>
+            ))}
           </select>
         </Field>
       </div>
       <div className="form-row">
-        <Field label="生日">
+        <Field label={t('member.field.birthday')}>
           <input type="date" className={form.date_of_birth ? undefined : 'date-empty'} value={form.date_of_birth} onChange={(e) => setForm({ ...form, date_of_birth: e.target.value })} />
         </Field>
-        <Field label="加入日期">
+        <Field label={t('member.field.joined')}>
           <input type="date" className={form.joined_at ? undefined : 'date-empty'} value={form.joined_at} onChange={(e) => setForm({ ...form, joined_at: e.target.value })} />
         </Field>
       </div>
       <div className="form-row">
-        <Field label="堂会">
+        <Field label={t('hall.label')}>
           <HallSelect value={form.hall_id} onChange={(id) => setForm({ ...form, hall_id: id })} />
         </Field>
-        <Field label="所属小组">
+        <Field label={t('members.field.group')}>
           <select value={form.group_id} onChange={(e) => changeGroup(e.target.value)}>
-            <option value="">未分组</option>
+            <option value="">{t('members.filter.ungrouped')}</option>
             {(allGroups.data ?? []).map((g) => (
               <option key={g.id} value={g.id}>{g.name}</option>
             ))}
@@ -398,42 +413,37 @@ function EditMemberModal({
         </Field>
       </div>
       <div className="form-row">
-        <Field label="教会身份">
+        <Field label={t('members.field.churchRole')}>
           <select value={form.church_role} onChange={(e) => setForm({ ...form, church_role: e.target.value as ChurchRole })}>
-            <option value={ChurchRole.Member}>一般成员</option>
-            <option value={ChurchRole.CoWorker}>同工</option>
-            <option value={ChurchRole.Deacon}>执事</option>
-            <option value={ChurchRole.Pastor}>牧师</option>
+            {CHURCH_ROLE_OPTIONS.map((cr) => (
+              <option key={cr} value={cr}>{t(churchRoleKey(cr))}</option>
+            ))}
           </select>
         </Field>
         {/* Only meaningful once a group is chosen — hidden rather than shown
             disabled, so there's nothing implying a rank that doesn't apply. */}
         {form.group_id && (
-          <Field label="小组身份">
+          <Field label={t('members.field.groupRole')}>
             <select
               value={form.group_position}
               onChange={(e) => setForm({ ...form, group_position: e.target.value as GroupPosition })}
             >
               {GROUP_POSITION_OPTIONS.map((p) => (
-                <option key={p} value={p}>{positionZh(p)}</option>
+                <option key={p} value={p}>{t(positionKey(p))}</option>
               ))}
             </select>
           </Field>
         )}
       </div>
-      <Field label="备注">
+      <Field label={t('member.field.notes')}>
         <textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} rows={2} />
       </Field>
       <div className="hint" style={{ marginBottom: 6 }}>
-        {form.group_id ? (
-          <>💡 指派新的领袖会自动将原领袖降为核心成员。</>
-        ) : (
-          <>💡 该成员尚未加入小组，小组身份暂不可设定；先在上方选择所属小组。</>
-        )}
+        {form.group_id ? t('member.hint.leadership') : t('member.hint.noGroup')}
       </div>
       <div className="modal-actions">
-        <button className="btn ghost" onClick={onClose}>取消</button>
-        <button className="btn" onClick={save} disabled={saving}>{saving ? '保存中…' : '保存'}</button>
+        <button className="btn ghost" onClick={onClose}>{t('common.cancel')}</button>
+        <button className="btn" onClick={save} disabled={saving}>{saving ? t('common.saving') : t('common.save')}</button>
       </div>
     </Modal>
   );

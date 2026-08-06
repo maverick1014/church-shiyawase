@@ -9,10 +9,12 @@ import { ErrorBanner, Loading, useConfirm, useToast } from '@/components/ui';
 import { TrainingModal } from '@/components/TrainingModal';
 import { can } from '@/lib/perms';
 import { MemberRow, TrainingRow } from '@/lib/types';
-import { categoryBadgeClass, formatDate } from '@/lib/labels';
+import { categoryBadgeClass, formatDate, trainingCategoryLabel } from '@/lib/labels';
+import { useT } from '@/lib/i18n';
 
 export default function TrainingsPage() {
   const router = useRouter();
+  const t = useT();
   const toast = useToast();
   const confirm = useConfirm();
   const perms = can(useMe().role);
@@ -23,15 +25,15 @@ export default function TrainingsPage() {
 
   usePageChrome(
     {
-      title: '培训课程',
-      subtitle: '课程目录 · 报名审核 · 核对名单',
+      title: t('trainings.title'),
+      subtitle: t('trainings.subtitle'),
       action: perms.write ? (
         <button className="btn" onClick={() => setAddOpen(true)}>
-          ＋ 新增课程
+          {t('trainings.add')}
         </button>
       ) : undefined,
     },
-    [perms.write],
+    [perms.write, t],
   );
 
   const now = new Date();
@@ -39,27 +41,27 @@ export default function TrainingsPage() {
   const { active, ended } = useMemo(() => {
     const a: TrainingRow[] = [];
     const e: TrainingRow[] = [];
-    for (const t of list) {
-      const isEnded = t.ends_on && new Date(t.ends_on) < now;
-      if (isEnded || !t.is_enrollable) e.push(t);
-      else a.push(t);
+    for (const course of list) {
+      const isEnded = course.ends_on && new Date(course.ends_on) < now;
+      if (isEnded || !course.is_enrollable) e.push(course);
+      else a.push(course);
     }
     return { active: a, ended: e };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [list]);
 
-  const del = async (t: TrainingRow): Promise<boolean> => {
+  const del = async (course: TrainingRow): Promise<boolean> => {
     const ok = await confirm({
-      title: '删除课程',
-      message: `删除「${t.name}」？报名与名单记录将一并移除。`,
-      confirmText: '删除',
+      title: t('trainings.delete.title'),
+      message: t('trainings.delete.message', { name: course.name }),
+      confirmText: t('common.delete'),
       danger: true,
     });
     if (!ok) return false;
     try {
-      await api.delete(`/trainings/${t.id}`);
+      await api.delete(`/trainings/${course.id}`);
       trainings.reload();
-      toast('已删除课程');
+      toast(t('trainings.toast.deleted'));
       return true;
     } catch (e) {
       toast((e as Error).message, 'error');
@@ -69,27 +71,34 @@ export default function TrainingsPage() {
 
   const renderCards = (items: TrainingRow[], faded?: boolean) => (
     <div className="grid g3">
-      {items.map((t) => (
-        <div className="card" key={t.id} style={{ display: 'flex', flexDirection: 'column', opacity: faded ? 0.86 : 1 }}>
+      {items.map((course) => (
+        <div className="card" key={course.id} style={{ display: 'flex', flexDirection: 'column', opacity: faded ? 0.86 : 1 }}>
           <div className="flex-between">
-            <span className={`badge ${categoryBadgeClass(t.category)}`}>{t.category ?? '课程'}</span>
-            <span className={`badge ${t.is_enrollable ? 'b-good' : 'b-gray'}`}>
-              {t.is_enrollable ? '开放报名' : '已截止'}
+            <span className={`badge ${categoryBadgeClass(course.category)}`}>
+              {trainingCategoryLabel(course.category, t) || t('trainings.defaultCategory')}
+            </span>
+            <span className={`badge ${course.is_enrollable ? 'b-good' : 'b-gray'}`}>
+              {course.is_enrollable ? t('trainings.open') : t('trainings.closed')}
             </span>
           </div>
-          <h3 style={{ margin: '12px 0 2px', fontSize: 16, cursor: 'pointer' }} className="serif" onClick={() => router.push(`/trainings/${t.id}`)}>
-            {t.name}
+          <h3 style={{ margin: '12px 0 2px', fontSize: 16, cursor: 'pointer' }} className="serif" onClick={() => router.push(`/trainings/${course.id}`)}>
+            {course.name}
           </h3>
           <div className="muted" style={{ fontSize: 12.5 }}>
-            讲师：{t.trainer?.full_name ?? '待定'} · {t.total_sessions} 场次
+            {t('trainings.trainer', { name: course.trainer?.full_name ?? t('common.pending') })}
+            {' · '}
+            {t('trainings.sessions', { n: course.total_sessions })}
           </div>
           <div className="muted" style={{ fontSize: 12, marginTop: 10 }}>
-            {formatDate(t.starts_on)} 至 {formatDate(t.ends_on)}
+            {t('trainings.dateRange', {
+              from: formatDate(course.starts_on),
+              to: formatDate(course.ends_on),
+            })}
           </div>
           <div className="grow" />
           <div className="flex gap-8 mt-14">
-            <button className="btn sm grow" onClick={() => router.push(`/trainings/${t.id}`)}>名单</button>
-            {perms.write && <button className="btn ghost sm" onClick={() => setEditing(t)}>编辑</button>}
+            <button className="btn sm grow" onClick={() => router.push(`/trainings/${course.id}`)}>{t('trainings.roster')}</button>
+            {perms.write && <button className="btn ghost sm" onClick={() => setEditing(course)}>{t('common.edit')}</button>}
           </div>
         </div>
       ))}
@@ -104,15 +113,15 @@ export default function TrainingsPage() {
 
       <div className="section-label mb-14">
         <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--good)', display: 'inline-block' }} />
-        进行中课程 <span className="faint" style={{ fontWeight: 400 }}>· 开放报名</span>
+        {t('trainings.active')} <span className="faint" style={{ fontWeight: 400 }}>{t('trainings.activeSub')}</span>
       </div>
-      {active.length ? renderCards(active) : <div className="empty">暂无进行中的课程 · 点右上角「＋ 新增课程」开设</div>}
+      {active.length ? renderCards(active) : <div className="empty">{t('trainings.emptyActive')}</div>}
 
       <div className="section-label" style={{ margin: '28px 0 14px' }}>
         <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--faint)', display: 'inline-block' }} />
-        已结束 / 已截止 <span className="faint" style={{ fontWeight: 400 }}>· 已完成的课程</span>
+        {t('trainings.ended')} <span className="faint" style={{ fontWeight: 400 }}>{t('trainings.endedSub')}</span>
       </div>
-      {ended.length ? renderCards(ended, true) : <div className="empty">暂无已结束的课程</div>}
+      {ended.length ? renderCards(ended, true) : <div className="empty">{t('trainings.emptyEnded')}</div>}
 
       {(addOpen || editing) && (
         <TrainingModal
@@ -127,7 +136,7 @@ export default function TrainingsPage() {
             setAddOpen(false);
             setEditing(null);
             trainings.reload();
-            toast(wasEdit ? '已更新课程' : '已新增课程');
+            toast(wasEdit ? t('trainings.toast.updated') : t('trainings.toast.created'));
             if (!wasEdit) router.push(`/trainings/${id}`);
           }}
           onDelete={

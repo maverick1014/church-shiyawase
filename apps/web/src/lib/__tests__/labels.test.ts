@@ -4,26 +4,27 @@ import {
   roleDot,
   categoryBadgeClass,
   enrollmentStatusClass,
-  memberStatusLabel,
+  memberStatusKey,
   formatMoney,
   initialOf,
   groupHealthStatus,
   groupHealthClass,
-  GROUP_HEALTH_LABELS,
+  groupHealthKey,
 } from '@/lib/labels';
+import { DisplayRole } from '@tog/shared';
 
-describe('role labels', () => {
+describe('role palette', () => {
   it('roleTagStyle returns the pastor palette', () => {
-    expect(roleTagStyle('牧师')).toEqual({ background: '#fbe3e0', color: '#b3261e' });
+    expect(roleTagStyle(DisplayRole.Pastor)).toEqual({ background: '#fbe3e0', color: '#b3261e' });
   });
 
   it('roleDot returns the core-member dot colour', () => {
-    expect(roleDot('核心成员')).toBe('#2f7ad1');
+    expect(roleDot(DisplayRole.CoreMember)).toBe('#2f7ad1');
   });
 
-  it('unknown role falls back to the 未分组 palette', () => {
-    expect(roleTagStyle('不存在的身份')).toEqual({ background: '#f0eeec', color: '#9a938f' });
-    expect(roleDot('不存在的身份')).toBe('#c3bbb6');
+  it('unknown role falls back to the ungrouped palette', () => {
+    expect(roleTagStyle('no-such-role')).toEqual({ background: '#f0eeec', color: '#9a938f' });
+    expect(roleDot('no-such-role')).toBe('#c3bbb6');
   });
 });
 
@@ -45,10 +46,10 @@ describe('enrollmentStatusClass', () => {
   });
 });
 
-describe('memberStatusLabel', () => {
-  it('maps member statuses to Chinese labels', () => {
-    expect(memberStatusLabel('active')).toBe('在册');
-    expect(memberStatusLabel('inactive')).toBe('停止聚会');
+describe('memberStatusKey', () => {
+  it('maps member statuses to dictionary keys', () => {
+    expect(memberStatusKey('active')).toBe('memberStatus.active');
+    expect(memberStatusKey('inactive')).toBe('memberStatus.inactive');
   });
 });
 
@@ -78,10 +79,10 @@ describe('groupHealthStatus', () => {
     expect(groupHealthStatus(10, 10)).toBe('balanced');
   });
 
-  it('labels and badge classes cover every status', () => {
-    expect(GROUP_HEALTH_LABELS.splittable).toBe('可分植');
-    expect(GROUP_HEALTH_LABELS.need_members).toBe('可加人');
-    expect(GROUP_HEALTH_LABELS.balanced).toBe('刚好');
+  it('keys and badge classes cover every status', () => {
+    expect(groupHealthKey('splittable')).toBe('groupHealth.splittable');
+    expect(groupHealthKey('need_members')).toBe('groupHealth.need_members');
+    expect(groupHealthKey('balanced')).toBe('groupHealth.balanced');
     expect(groupHealthClass('splittable')).toBe('b-good');
     expect(groupHealthClass('need_members')).toBe('b-warn');
     expect(groupHealthClass('balanced')).toBe('b-gray');
@@ -93,11 +94,16 @@ describe('formatting helpers', () => {
     expect(formatMoney(200)).toBe('200.00');
   });
 
-  it('initialOf returns the last two chars of a name', () => {
+  it('initialOf returns the last two chars of a CJK name', () => {
     expect(initialOf('陈约翰')).toBe('约翰');
   });
 
-  it('initialOf returns ? for null', () => {
+  it('initialOf returns the leading initial of a Latin name', () => {
+    expect(initialOf('john tan')).toBe('J');
+  });
+
+  it('initialOf returns ? for null or blank', () => {
     expect(initialOf(null)).toBe('?');
+    expect(initialOf('   ')).toBe('?');
   });
 });

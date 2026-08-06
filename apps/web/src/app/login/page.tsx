@@ -3,12 +3,17 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { BrandLogo } from '@/components/BrandLogo';
+import { Field, PasswordInput } from '@/components/ui';
+import { useT } from '@/lib/i18n';
 
 export default function LoginPage() {
   const router = useRouter();
+  // No session exists yet, so there is no account language to honour: the
+  // login screen always renders in the app default (English) via the i18n
+  // context's default value.
+  const t = useT();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [showPw, setShowPw] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -24,7 +29,7 @@ export default function LoginPage() {
       });
       if (!res.ok) {
         const b = await res.json().catch(() => ({}));
-        throw new Error(b.message ?? '登录失败');
+        throw new Error(b.message ?? t('login.failed'));
       }
       router.push('/');
       router.refresh();
@@ -57,21 +62,20 @@ export default function LoginPage() {
             <BrandLogo size={34} />
           </span>
           <div className="serif" style={{ fontSize: 19, fontWeight: 600 }}>
-            主恩堂
+            {t('login.title')}
             <div className="muted" style={{ fontSize: 11, fontWeight: 500, letterSpacing: 1 }}>
-              教会管理系统
+              {t('login.subtitle')}
             </div>
           </div>
         </div>
-        <h2 className="serif" style={{ fontSize: 18, margin: '14px 0 4px' }}>登录</h2>
+        <h2 className="serif" style={{ fontSize: 18, margin: '14px 0 4px' }}>{t('login.submit')}</h2>
         <p className="muted" style={{ fontSize: 12.5, margin: '0 0 16px' }}>
-          请使用管理员分配的账户登录。
+          {t('login.hint')}
         </p>
 
         {err && <div className="error-banner">⚠️ {err}</div>}
 
-        <div className="field">
-          <label className="field-label">登录邮箱</label>
+        <Field label={t('login.email')}>
           <input
             type="email"
             value={email}
@@ -80,31 +84,18 @@ export default function LoginPage() {
             autoComplete="username"
             required
           />
-        </div>
-        <div className="field">
-          <label className="field-label">密码</label>
-          <div className="pw-field">
-            <input
-              type={showPw ? 'text' : 'password'}
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="••••••••"
-              autoComplete="current-password"
-              required
-            />
-            <button
-              type="button"
-              className="pw-toggle"
-              onClick={() => setShowPw((s) => !s)}
-              aria-label={showPw ? '隐藏密码' : '显示密码'}
-              title={showPw ? '隐藏密码' : '显示密码'}
-            >
-              {showPw ? '🙈' : '👁'}
-            </button>
-          </div>
-        </div>
+        </Field>
+        <Field label={t('login.password')}>
+          <PasswordInput
+            value={password}
+            onChange={setPassword}
+            placeholder="••••••••"
+            autoComplete="current-password"
+            required
+          />
+        </Field>
         <button className="btn block" type="submit" disabled={busy} style={{ marginTop: 6 }}>
-          {busy ? '登录中…' : '登录'}
+          {busy ? t('login.submitting') : t('login.submit')}
         </button>
       </form>
     </div>

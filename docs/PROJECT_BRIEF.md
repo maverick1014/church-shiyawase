@@ -22,7 +22,9 @@ identity rules in §3; design *around* them.
 **Phase 2 — Build (Claude Code):**
 Implement the approved design against the architecture in §4, the data model in §6, and
 the API in §8. The database schema in `supabase/migrations/0001_init.sql` is the source of
-truth. UI copy is **Simplified Chinese**.
+truth. UI copy is **multilingual**: every string comes from the dictionaries in
+`apps/web/src/lib/i18n/` (English / 简体中文 / Bahasa Melayu), never from a
+literal in a component.
 
 ---
 
@@ -33,7 +35,9 @@ with a distinctive **40-day one-on-one discipleship (四十天一对一守望)**
 
 - **Church:** Tabernacle of Grace (中文名用「恩典会幕」). Tagline: *Discipling the Church to Disciple the World*（门训教会，广传世界）.
 - **Users:** pastor (牧师), group leaders (小组长), assistant/intern leaders, admins/co-workers.
-- **UI language:** **Simplified Chinese, everywhere.**
+- **UI language:** **three languages — English (default), 简体中文, Bahasa
+  Melayu** — chosen per login account in 用户管理 and applied across the whole
+  interface. Member/group/course names are data and are never translated.
 - **Auth:** **None yet** (open app). Design/build must leave room to add Supabase Auth + role-based permissions later.
 
 ### Core goals
@@ -282,7 +286,7 @@ Donations: 十一奉献/主日奉献/建堂/宣教, methods 现金/转账/线上
 | 4 | Donation fund presets | 十一奉献 / 主日奉献 / 建堂 / 宣教 / 感恩 |
 | 5 | Mentor can have multiple trainees? | **Yes** (multiple pairs) |
 | 6 | Auth now? | **No** — add Supabase Auth + role permissions later |
-| 7 | Traditional Chinese / English toggle? | Simplified Chinese only for v1 |
+| 7 | Traditional Chinese / English toggle? | **Done** — English / 简体中文 / Bahasa Melayu, per account, English by default |
 | 8 | Discipleship link: expiry / reset? | Long-lived; token resettable — **confirm** |
 | 9 | Daily form: view/back-fill past days? | Prototype allows "再填一天"; confirm history/back-fill |
 

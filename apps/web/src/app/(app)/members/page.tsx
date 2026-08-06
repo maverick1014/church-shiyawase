@@ -23,21 +23,26 @@ import { can } from '@/lib/perms';
 import { exportRows } from '@/lib/export';
 import { GroupDetail, GroupRow, MemberRow } from '@/lib/types';
 import {
+  CHURCH_ROLE_OPTIONS,
+  churchRoleKey,
   formatDate,
-  GENDER_LABELS,
+  genderKey,
   GROUP_POSITION_OPTIONS,
   MEMBER_ROLE_FILTERS,
-  memberRoleZh,
+  memberRole,
   memberStatusClass,
-  memberStatusLabel,
-  positionZh,
+  memberStatusKey,
+  positionKey,
+  roleKey,
 } from '@/lib/labels';
+import { useT } from '@/lib/i18n';
 import { ChurchRole, GroupPosition, LEADERSHIP_POSITIONS, MemberStatus } from '@tog/shared';
 
 const UNASSIGNED = '__unassigned__';
 
 export default function MembersPage() {
   const router = useRouter();
+  const t = useT();
   const toast = useToast();
   const perms = can(useMe().role);
   // Only worth a column when the account can actually see more than one hall.
@@ -50,15 +55,15 @@ export default function MembersPage() {
 
   usePageChrome(
     {
-      title: '成员目录',
-      subtitle: '点击成员可查看及编辑身份',
+      title: t('members.title'),
+      subtitle: t('members.subtitle'),
       action: perms.write ? (
         <button className="btn" onClick={() => setAddOpen(true)}>
-          ＋ 新增成员
+          {t('members.add')}
         </button>
       ) : undefined,
     },
-    [perms.write],
+    [perms.write, t],
   );
 
   const members = data ?? [];
@@ -67,7 +72,7 @@ export default function MembersPage() {
     const c: Record<string, number> = { all: members.length };
     MEMBER_ROLE_FILTERS.forEach((r) => (c[r] = 0));
     for (const m of members) {
-      const r = memberRoleZh(m);
+      const r = memberRole(m);
       if (c[r] != null) c[r]++;
     }
     return c;
@@ -96,7 +101,7 @@ export default function MembersPage() {
   const rows = useMemo(() => {
     const term = q.trim();
     return members.filter((m) => {
-      const role = memberRoleZh(m);
+      const role = memberRole(m);
       if (roleFilter !== 'all' && role !== roleFilter) return false;
       if (groupFilter === UNASSIGNED) {
         if (m.group) return false;
@@ -113,7 +118,7 @@ export default function MembersPage() {
       case 'name':
         return m.full_name;
       case 'role':
-        return (MEMBER_ROLE_FILTERS as readonly string[]).indexOf(memberRoleZh(m));
+        return (MEMBER_ROLE_FILTERS as readonly string[]).indexOf(memberRole(m));
       case 'group':
         return m.group?.name ?? undefined;
       case 'hall':
@@ -121,7 +126,7 @@ export default function MembersPage() {
       case 'phone':
         return m.phone ?? undefined;
       case 'status':
-        return memberStatusLabel(m.status);
+        return t(memberStatusKey(m.status));
       case 'joined':
         return m.joined_at ?? undefined;
       default:
@@ -135,17 +140,17 @@ export default function MembersPage() {
 
   const exportMembers = () => {
     exportRows(
-      '成员目录',
-      '成员',
+      t('members.title'),
+      t('members.col.member'),
       sorted.map((m) => ({
-        姓名: m.full_name,
-        身份: memberRoleZh(m),
-        所属小组: m.group?.name ?? '未分组',
-        邮箱: m.email ?? '',
-        电话: m.phone ?? '',
-        性别: m.gender ? GENDER_LABELS[m.gender] ?? '' : '',
-        状态: memberStatusLabel(m.status),
-        加入日期: formatDate(m.joined_at),
+        [t('export.name')]: m.full_name,
+        [t('export.role')]: t(roleKey(memberRole(m))),
+        [t('export.group')]: m.group?.name ?? t('members.filter.ungrouped'),
+        [t('export.email')]: m.email ?? '',
+        [t('export.phone')]: m.phone ?? '',
+        [t('member.field.gender')]: m.gender ? t(genderKey(m.gender)) : '',
+        [t('export.status')]: t(memberStatusKey(m.status)),
+        [t('export.joined')]: formatDate(m.joined_at),
       })),
     );
   };
@@ -157,19 +162,19 @@ export default function MembersPage() {
       <ErrorBanner message={error} />
 
       <div className="filter-bar">
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="🔍 搜索姓名…" />
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t('members.searchPlaceholder')} />
         <select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}>
-          <option value="all">全部身份（{counts.all}）</option>
+          <option value="all">{t('members.filter.role')} ({counts.all})</option>
           {MEMBER_ROLE_FILTERS.map((r) => (
-            <option key={r} value={r}>{r}（{counts[r] ?? 0}）</option>
+            <option key={r} value={r}>{t(roleKey(r))} ({counts[r] ?? 0})</option>
           ))}
         </select>
         <select value={groupFilter} onChange={(e) => setGroupFilter(e.target.value)}>
-          <option value="all">所有小组</option>
+          <option value="all">{t('members.filter.group')}</option>
           {groupOptions.groups.map((g) => (
-            <option key={g.id} value={g.id}>{g.name}（{g.count}）</option>
+            <option key={g.id} value={g.id}>{g.name} ({g.count})</option>
           ))}
-          <option value={UNASSIGNED}>未分组（{groupOptions.unassigned}）</option>
+          <option value={UNASSIGNED}>{t('members.filter.ungrouped')} ({groupOptions.unassigned})</option>
         </select>
         <span className="spacer" />
         <ExportButton onClick={exportMembers} disabled={sorted.length === 0} />
@@ -181,23 +186,23 @@ export default function MembersPage() {
           <table className="table-fixed">
             <thead>
               <tr>
-                {/* 成员 / 身份 / 所属小组 / 联系方式 share the width equally; the
-                    utility columns (状态 / 加入日期) + chevron stay narrow. */}
-                <SortTh sortKey="name" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>成员</SortTh>
-                <SortTh sortKey="role" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>身份</SortTh>
+                {/* Member / identity / group / contact share the width equally;
+                    the utility columns (status / joined) + chevron stay narrow. */}
+                <SortTh sortKey="name" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('members.col.member')}</SortTh>
+                <SortTh sortKey="role" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('members.col.role')}</SortTh>
                 {!hallLocked && (
-                  <SortTh sortKey="hall" activeKey={sortKey} dir={sortDir} onSort={toggleSort} style={{ width: 96 }}>堂会</SortTh>
+                  <SortTh sortKey="hall" activeKey={sortKey} dir={sortDir} onSort={toggleSort} style={{ width: 96 }}>{t('hall.label')}</SortTh>
                 )}
-                <SortTh sortKey="group" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>所属小组</SortTh>
-                <SortTh sortKey="phone" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>联系方式</SortTh>
-                <SortTh sortKey="status" activeKey={sortKey} dir={sortDir} onSort={toggleSort} style={{ width: 96 }}>状态</SortTh>
-                <SortTh sortKey="joined" activeKey={sortKey} dir={sortDir} onSort={toggleSort} style={{ width: 116 }}>加入日期</SortTh>
+                <SortTh sortKey="group" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('members.col.group')}</SortTh>
+                <SortTh sortKey="phone" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('members.col.contact')}</SortTh>
+                <SortTh sortKey="status" activeKey={sortKey} dir={sortDir} onSort={toggleSort} style={{ width: 96 }}>{t('members.col.status')}</SortTh>
+                <SortTh sortKey="joined" activeKey={sortKey} dir={sortDir} onSort={toggleSort} style={{ width: 116 }}>{t('members.col.joined')}</SortTh>
                 <th style={{ width: 52 }} />
               </tr>
             </thead>
             <tbody>
               {sorted.map((m) => {
-                const role = memberRoleZh(m);
+                const role = memberRole(m);
                 return (
                   <tr key={m.id}>
                     <td>
@@ -207,16 +212,16 @@ export default function MembersPage() {
                       <RoleBadge role={role} />
                     </td>
                     {!hallLocked && <td className="muted">{m.hall?.name ?? '—'}</td>}
-                    <td className="muted">{m.group?.name ?? '未分组'}</td>
+                    <td className="muted">{m.group?.name ?? t('members.filter.ungrouped')}</td>
                     <td className="muted tnum">{m.phone ?? '—'}</td>
                     <td>
                       <span className={`badge ${memberStatusClass(m.status)}`}>
-                        {memberStatusLabel(m.status)}
+                        {t(memberStatusKey(m.status))}
                       </span>
                     </td>
                     <td className="muted tnum">{formatDate(m.joined_at)}</td>
                     <td style={{ textAlign: 'right' }}>
-                      <RowChevron title="查看档案" onClick={() => router.push(`/members/${m.id}`)} />
+                      <RowChevron title={t('members.viewProfile')} onClick={() => router.push(`/members/${m.id}`)} />
                     </td>
                   </tr>
                 );
@@ -224,7 +229,7 @@ export default function MembersPage() {
               {sorted.length === 0 && (
                 <tr>
                   <td colSpan={hallLocked ? 7 : 8} className="empty-inline">
-                    没有符合条件的成员。
+                    {t('members.empty')}
                   </td>
                 </tr>
               )}
@@ -233,16 +238,16 @@ export default function MembersPage() {
         </div>
       </div>
 
-      {/* Mobile — list tiles: name + 档案, 身份·小组, 联系方式, 状态·加入日期 */}
+      {/* Mobile — list tiles: name + group + identity, contact, status + joined */}
       <div className="only-mobile">
         {sorted.map((m) => {
-          const role = memberRoleZh(m);
+          const role = memberRole(m);
           return (
             <div key={m.id} className="mtile" onClick={() => router.push(`/members/${m.id}`)}>
               <div className="mtile-row1">
                 <div className="flex items-center gap-8 flex-wrap" style={{ minWidth: 0 }}>
                   <strong>{m.full_name}</strong>
-                  <span className="muted" style={{ fontSize: 12.5 }}>· {m.group?.name ?? '未分组'}</span>
+                  <span className="muted" style={{ fontSize: 12.5 }}>· {m.group?.name ?? t('members.filter.ungrouped')}</span>
                   <RoleBadge role={role} />
                 </div>
                 <span className="mtile-cta"><ChevronRightIcon /></span>
@@ -252,10 +257,10 @@ export default function MembersPage() {
               {m.phone && <div className="mtile-line">{m.phone}</div>}
               {(m.status !== MemberStatus.Active || m.joined_at) && (
                 <div className="mtile-line">
-                  {/* Active is the norm — only surface the status when it's not 在册. */}
+                  {/* Active is the norm — only surface the status when it isn't. */}
                   {m.status !== MemberStatus.Active && (
                     <span className={`badge ${memberStatusClass(m.status)}`}>
-                      {memberStatusLabel(m.status)}
+                      {t(memberStatusKey(m.status))}
                     </span>
                   )}
                   {m.joined_at && <span>{formatDate(m.joined_at)}</span>}
@@ -264,23 +269,17 @@ export default function MembersPage() {
             </div>
           );
         })}
-        {sorted.length === 0 && (
-          <div className="empty-inline">
-            没有符合条件的成员。
-          </div>
-        )}
+        {sorted.length === 0 && <div className="empty-inline">{t('members.empty')}</div>}
       </div>
 
-      <div className="hint mt-14">
-        💡 点击成员可查看<strong>培训档案</strong>与门训配对，并在档案页编辑资料与身份。
-      </div>
+      <div className="hint mt-14">{t('members.hint')}</div>
 
       {addOpen && (
         <AddMemberModal
           onClose={() => setAddOpen(false)}
           onSaved={() => {
             setAddOpen(false);
-            toast('已新增成员');
+            toast(t('members.toast.created'));
             reload();
           }}
         />
@@ -296,6 +295,7 @@ function AddMemberModal({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const t = useT();
   const toast = useToast();
   const allGroups = useFetch<GroupRow[]>('/groups');
   const { halls, hallId } = useHallScope();
@@ -325,11 +325,11 @@ function AddMemberModal({
 
   const save = async () => {
     if (!form.full_name.trim()) {
-      setErr('请填写姓名');
+      setErr(t('members.err.name'));
       return;
     }
     if (!effectiveHallId) {
-      setErr('请选择堂会');
+      setErr(t('members.err.hall'));
       return;
     }
     setSaving(true);
@@ -363,29 +363,28 @@ function AddMemberModal({
   };
 
   return (
-    <Modal title="新增成员" onClose={onClose}>
+    <Modal title={t('members.new.title')} onClose={onClose}>
       {err && <ErrorBanner message={err} />}
       <div className="form-row">
-        <Field label="姓名">
+        <Field label={t('members.field.name')}>
           <input
             value={form.full_name}
             onChange={(e) => setForm({ ...form, full_name: e.target.value })}
-            placeholder="中文姓名"
           />
         </Field>
-        <Field label="昵称 / 别名">
+        <Field label={t('members.field.nickname')}>
           <input value={form.chinese_name} onChange={(e) => setForm({ ...form, chinese_name: e.target.value })} />
         </Field>
       </div>
       <div className="form-row">
-        <Field label="电话">
+        <Field label={t('members.field.phone')}>
           <input
             value={form.phone}
             onChange={(e) => setForm({ ...form, phone: e.target.value })}
             placeholder="012-000 0000"
           />
         </Field>
-        <Field label="邮箱">
+        <Field label={t('members.field.email')}>
           <input
             value={form.email}
             onChange={(e) => setForm({ ...form, email: e.target.value })}
@@ -394,12 +393,12 @@ function AddMemberModal({
         </Field>
       </div>
       <div className="form-row">
-        <Field label="堂会">
+        <Field label={t('hall.label')}>
           <HallSelect value={effectiveHallId} onChange={(id) => setForm({ ...form, hall_id: id })} />
         </Field>
-        <Field label="所属小组">
+        <Field label={t('members.field.group')}>
           <select value={form.group_id} onChange={(e) => setForm({ ...form, group_id: e.target.value })}>
-            <option value="">未分组</option>
+            <option value="">{t('members.filter.ungrouped')}</option>
             {(allGroups.data ?? []).map((g) => (
               <option key={g.id} value={g.id}>{g.name}</option>
             ))}
@@ -407,31 +406,30 @@ function AddMemberModal({
         </Field>
       </div>
       <div className="form-row">
-        <Field label="教会身份">
+        <Field label={t('members.field.churchRole')}>
           <select value={form.church_role} onChange={(e) => setForm({ ...form, church_role: e.target.value as ChurchRole })}>
-            <option value={ChurchRole.Member}>一般成员</option>
-            <option value={ChurchRole.CoWorker}>同工</option>
-            <option value={ChurchRole.Deacon}>执事</option>
-            <option value={ChurchRole.Pastor}>牧师</option>
+            {CHURCH_ROLE_OPTIONS.map((cr) => (
+              <option key={cr} value={cr}>{t(churchRoleKey(cr))}</option>
+            ))}
           </select>
         </Field>
         {form.group_id && (
-          <Field label="小组身份">
+          <Field label={t('members.field.groupRole')}>
             <select
               value={form.group_position}
               onChange={(e) => setForm({ ...form, group_position: e.target.value as GroupPosition })}
             >
               {GROUP_POSITION_OPTIONS.map((p) => (
-                <option key={p} value={p}>{positionZh(p)}</option>
+                <option key={p} value={p}>{t(positionKey(p))}</option>
               ))}
             </select>
           </Field>
         )}
       </div>
       <div className="modal-actions">
-        <button className="btn ghost" onClick={onClose}>取消</button>
+        <button className="btn ghost" onClick={onClose}>{t('common.cancel')}</button>
         <button className="btn" onClick={save} disabled={saving}>
-          {saving ? '保存中…' : '保存'}
+          {saving ? t('common.saving') : t('common.save')}
         </button>
       </div>
     </Modal>

@@ -5,7 +5,8 @@ import { api } from '@/lib/api';
 import { ErrorBanner, Field, HallSelect, Modal, useToast } from '@/components/ui';
 import { useHallScope } from '@/lib/hall';
 import { MemberRow, TrainingRow } from '@/lib/types';
-import { TRAINING_CATEGORIES } from '@/lib/labels';
+import { TRAINING_CATEGORIES, trainingCategoryLabel } from '@/lib/labels';
+import { useT } from '@/lib/i18n';
 
 export function TrainingModal({
   members,
@@ -20,6 +21,7 @@ export function TrainingModal({
   onSaved: (id: string) => void;
   onDelete?: () => void;
 }) {
+  const t = useT();
   const { hallId } = useHallScope();
   const [form, setForm] = useState({
     name: initial?.name ?? '',
@@ -30,7 +32,7 @@ export function TrainingModal({
     ends_on: initial?.ends_on?.slice(0, 10) ?? '',
     is_enrollable: initial?.is_enrollable ?? true,
     // Editing keeps the course's own hall; creating defaults to the hall being
-    // viewed (and to 全堂开放 only when viewing 全部堂会).
+    // viewed (and to the open-to-all option only when viewing all halls).
     hall_id: initial ? initial.hall_id : hallId || null,
   });
   const [saving, setSaving] = useState(false);
@@ -39,7 +41,7 @@ export function TrainingModal({
 
   const save = async () => {
     if (!form.name.trim()) {
-      setErr('请填写课程名称');
+      setErr(t('trainings.err.name'));
       return;
     }
     setSaving(true);
@@ -55,10 +57,10 @@ export function TrainingModal({
       hall_id: form.hall_id,
     };
     try {
-      const t = initial
+      const saved = initial
         ? await api.patch<TrainingRow>(`/trainings/${initial.id}`, body)
         : await api.post<TrainingRow>('/trainings', body);
-      onSaved(t.id);
+      onSaved(saved.id);
     } catch (e) {
       setErr((e as Error).message);
       toast((e as Error).message, 'error');
@@ -68,46 +70,46 @@ export function TrainingModal({
   };
 
   return (
-    <Modal title={initial ? '编辑课程' : '新增课程'} onClose={onClose}>
+    <Modal title={initial ? t('trainings.edit.title') : t('trainings.new.title')} onClose={onClose}>
       {err && <ErrorBanner message={err} />}
-      <Field label="课程名称">
-        <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="例如：门徒训练 101" />
+      <Field label={t('trainings.field.name')}>
+        <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder={t('trainings.namePlaceholder')} />
       </Field>
       <div className="form-row">
-        <Field label="类别">
+        <Field label={t('trainings.field.category')}>
           <select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>
             {TRAINING_CATEGORIES.map((c) => (
-              <option key={c} value={c}>{c}</option>
+              <option key={c} value={c}>{trainingCategoryLabel(c, t)}</option>
             ))}
           </select>
         </Field>
-        <Field label="场次数">
+        <Field label={t('trainings.field.sessions')}>
           <input type="number" value={form.total_sessions} onChange={(e) => setForm({ ...form, total_sessions: Number(e.target.value) })} />
         </Field>
       </div>
       <div className="form-row">
-        <Field label="讲师">
+        <Field label={t('trainings.field.trainer')}>
           <select value={form.trainer_id} onChange={(e) => setForm({ ...form, trainer_id: e.target.value })}>
-            <option value="">待定</option>
+            <option value="">{t('common.pending')}</option>
             {members.map((m) => (
               <option key={m.id} value={m.id}>{m.full_name}</option>
             ))}
           </select>
         </Field>
-        <Field label="堂会">
+        <Field label={t('hall.label')}>
           <HallSelect
             value={form.hall_id}
             onChange={(id) => setForm({ ...form, hall_id: id })}
             allowAll
-            allLabel="全堂开放"
+            allLabel={t('hall.allOpen')}
           />
         </Field>
       </div>
       <div className="form-row">
-        <Field label="开始日期">
+        <Field label={t('trainings.field.startsOn')}>
           <input type="date" className={form.starts_on ? undefined : 'date-empty'} value={form.starts_on} onChange={(e) => setForm({ ...form, starts_on: e.target.value })} />
         </Field>
-        <Field label="结束日期">
+        <Field label={t('trainings.field.endsOn')}>
           <input type="date" className={form.ends_on ? undefined : 'date-empty'} value={form.ends_on} onChange={(e) => setForm({ ...form, ends_on: e.target.value })} />
         </Field>
       </div>
@@ -118,7 +120,7 @@ export function TrainingModal({
           onChange={(e) => setForm({ ...form, is_enrollable: e.target.checked })}
           style={{ width: 16, height: 16, accentColor: 'var(--brand)' }}
         />
-        开放报名（成员可自助报名，待审核）
+        {t('trainings.field.enrollable')}
       </label>
       <div className="modal-actions">
         {onDelete && (
@@ -127,11 +129,11 @@ export function TrainingModal({
             style={{ marginRight: 'auto' }}
             onClick={onDelete}
           >
-            删除课程
+            {t('trainings.delete')}
           </button>
         )}
-        <button className="btn ghost" onClick={onClose}>取消</button>
-        <button className="btn" onClick={save} disabled={saving}>{saving ? '保存中…' : '保存'}</button>
+        <button className="btn ghost" onClick={onClose}>{t('common.cancel')}</button>
+        <button className="btn" onClick={save} disabled={saving}>{saving ? t('common.saving') : t('common.save')}</button>
       </div>
     </Modal>
   );

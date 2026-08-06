@@ -11,19 +11,21 @@ import { can } from '@/lib/perms';
 import { exportMatrix } from '@/lib/export';
 import { GroupAttendanceResponse, GroupDetail, GroupRow, MemberRow } from '@/lib/types';
 import {
-  ATTENDANCE_LABELS,
+  attendanceKey,
   GROUP_POSITION_OPTIONS,
   roleDot,
   roleTagStyle,
-  positionZh,
-  WEEKDAY_LABELS,
+  positionKey,
+  weekdayKey,
   WEEKDAY_OPTIONS,
 } from '@/lib/labels';
+import { useLang, useT } from '@/lib/i18n';
 import { AttendanceStatus, GroupPosition, LEADERSHIP_POSITIONS, Weekday } from '@tog/shared';
 
 export default function GroupDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
+  const t = useT();
   const toast = useToast();
   const perms = can(useMe().role);
 
@@ -31,7 +33,7 @@ export default function GroupDetailPage() {
   const members = useFetch<MemberRow[]>('/members');
   const allGroups = useFetch<GroupRow[]>('/groups');
 
-  usePageChrome({ title: '小组详情', subtitle: '小组资料 · 带领团队 · 组员名单 · 每周出席' }, [id]);
+  usePageChrome({ title: t('group.title'), subtitle: t('group.subtitle') }, [id, t]);
 
   const refreshAll = () => {
     detail.reload();
@@ -46,12 +48,12 @@ export default function GroupDetailPage() {
   }, [allGroups.data]);
 
   if (detail.initialLoading) return <Loading />;
-  if (detail.error || !detail.data) return <ErrorBanner message={detail.error ?? '找不到小组'} />;
+  if (detail.error || !detail.data) return <ErrorBanner message={detail.error ?? t('group.notFound')} />;
 
   return (
     <>
       <button className="back-btn" onClick={() => router.push('/groups')}>
-        ‹ 返回小组列表
+        {t('group.back')}
       </button>
 
       <GroupPanel
@@ -60,7 +62,7 @@ export default function GroupDetailPage() {
         allTags={allTags}
         onChanged={refreshAll}
         onDeleted={() => {
-          toast('已删除小组');
+          toast(t('group.toast.deleted'));
           router.push('/groups');
         }}
       />
@@ -81,6 +83,7 @@ function GroupPanel({
   onChanged: () => void;
   onDeleted: () => void;
 }) {
+  const t = useT();
   const confirm = useConfirm();
   const toast = useToast();
   const perms = can(useMe().role);
@@ -106,8 +109,8 @@ function GroupPanel({
     [allMembers, group.id],
   );
 
-  // "大到小" — leadership ranks first, matching GROUP_POSITION_OPTIONS' own
-  // promotion order (leader ... new member).
+  // Highest rank first — matching GROUP_POSITION_OPTIONS' own promotion order
+  // (leader … new member).
   const positionRank = (pos: GroupPosition | null) =>
     (GROUP_POSITION_OPTIONS as readonly GroupPosition[]).indexOf(pos ?? GroupPosition.NewMember);
 
@@ -131,7 +134,7 @@ function GroupPanel({
         tags,
         hall_id: hall,
       });
-      toast('已保存设定');
+      toast(t('group.toast.saved'));
       onChanged();
     } catch (e) {
       setErr((e as Error).message);
@@ -143,9 +146,9 @@ function GroupPanel({
 
   const deleteGroup = async () => {
     const ok = await confirm({
-      title: '删除小组',
-      message: `删除「${group.name}」？组员将变为未分组。`,
-      confirmText: '删除',
+      title: t('group.delete.title'),
+      message: t('group.delete.message', { name: group.name }),
+      confirmText: t('common.delete'),
       danger: true,
     });
     if (!ok) return;
@@ -166,7 +169,7 @@ function GroupPanel({
         group_position: GroupPosition.NewMember,
       });
       setAddSel('');
-      toast('已加入本组');
+      toast(t('group.toast.joined'));
       onChanged();
     } catch (e) {
       setErr((e as Error).message);
@@ -175,17 +178,17 @@ function GroupPanel({
   };
 
   const removeMember = async (memberId: string) => {
-    const name = groupMembers.find((m) => m.id === memberId)?.full_name ?? '该成员';
+    const who = groupMembers.find((m) => m.id === memberId)?.full_name ?? t('group.thisMember');
     const ok = await confirm({
-      title: '移出小组',
-      message: `将 ${name} 移出本组？其身份与在组职位会一并清除。`,
-      confirmText: '移出',
+      title: t('group.removeMember.title'),
+      message: t('group.removeMember.message', { name: who }),
+      confirmText: t('common.remove'),
       danger: true,
     });
     if (!ok) return;
     try {
       await api.patch(`/members/${memberId}`, { group_id: null, group_position: null });
-      toast('已移出本组');
+      toast(t('group.toast.removed'));
       onChanged();
     } catch (e) {
       setErr((e as Error).message);
@@ -194,8 +197,8 @@ function GroupPanel({
   };
 
   // The only place a member's identity is assigned from this page: picking who
-  // holds each of the 3 leadership slots. Everything else (核心成员/普通成员/新
-  // 成员) is set on the member's own profile page instead — keeps this page simple.
+  // holds each of the 3 leadership slots. Every other rank (core / regular /
+  // new member) is set on the member's own profile page — keeps this simple.
   const assignLeadership = async (pos: GroupPosition, memberId: string) => {
     setErr(null);
     try {
@@ -206,7 +209,7 @@ function GroupPanel({
       if (memberId) {
         await api.patch(`/members/${memberId}`, { group_position: pos });
       }
-      toast('已更新带领团队');
+      toast(t('group.toast.leadership'));
       onChanged();
     } catch (e) {
       setErr((e as Error).message);
@@ -216,15 +219,15 @@ function GroupPanel({
 
   const renderTriNode = (pos: GroupPosition, style: React.CSSProperties) => {
     const holder = groupMembers.find((m) => m.group_position === pos);
-    const roleZh = positionZh(pos);
+    const roleLabel = t(positionKey(pos));
     return (
       <div style={{ position: 'absolute', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5, background: 'var(--surface)', padding: '3px 8px', borderRadius: 8, ...style }}>
         <span
           className={`badge ${holder ? '' : 'b-gray'}`}
-          style={holder ? { ...roleTagStyle(roleZh), fontWeight: 700 } : { fontWeight: 700 }}
+          style={holder ? { ...roleTagStyle(pos), fontWeight: 700 } : { fontWeight: 700 }}
         >
-          {holder && <i className="dot" style={{ background: roleDot(roleZh) }} />}
-          {roleZh}
+          {holder && <i className="dot" style={{ background: roleDot(pos) }} />}
+          {roleLabel}
         </span>
         {perms.write ? (
           <select
@@ -233,14 +236,14 @@ function GroupPanel({
             onChange={(e) => assignLeadership(pos, e.target.value)}
             style={{ maxWidth: 132, textAlign: 'center' }}
           >
-            <option value="">空缺</option>
+            <option value="">{t('common.vacant')}</option>
             {groupMembers.map((m) => (
               <option key={m.id} value={m.id}>{m.full_name}</option>
             ))}
           </select>
         ) : (
           <strong style={{ fontSize: 13, color: holder ? 'var(--ink)' : 'var(--faint)' }}>
-            {holder?.full_name ?? '空缺'}
+            {holder?.full_name ?? t('common.vacant')}
           </strong>
         )}
       </div>
@@ -251,45 +254,45 @@ function GroupPanel({
     <>
       {err && <ErrorBanner message={err} />}
       <div className="grid" style={{ gridTemplateColumns: '360px 1fr', gap: 16, alignItems: 'start' }} data-glayout>
-        {/* Left — group info + 铁三角 */}
+        {/* Left — group info + leadership trio */}
         <div className="card">
           <div className="card-head">
-            <h3>小组资料 · 带领团队</h3>
+            <h3>{t('group.info')}</h3>
           </div>
-          <Field label="小组名称">
+          <Field label={t('groups.field.name')}>
             <input value={name} onChange={(e) => setName(e.target.value)} />
           </Field>
-          <Field label="堂会">
+          <Field label={t('hall.label')}>
             <HallSelect value={hall} onChange={setHall} />
           </Field>
-          <Field label="简介">
+          <Field label={t('groups.field.desc')}>
             <input value={desc} onChange={(e) => setDesc(e.target.value)} />
           </Field>
           <div className="form-row">
-            <Field label="聚会日">
+            <Field label={t('groups.field.day')}>
               <select value={meetingDay} onChange={(e) => setMeetingDay(e.target.value as Weekday | '')}>
-                <option value="">未定</option>
+                <option value="">{t('groups.dayUnset')}</option>
                 {WEEKDAY_OPTIONS.map((d) => (
-                  <option key={d} value={d}>{WEEKDAY_LABELS[d]}</option>
+                  <option key={d} value={d}>{t(weekdayKey(d))}</option>
                 ))}
               </select>
             </Field>
-            <Field label="聚会时间">
+            <Field label={t('groups.field.time')}>
               <input type="time" className={meetingTime ? undefined : 'date-empty'} value={meetingTime} onChange={(e) => setMeetingTime(e.target.value)} />
             </Field>
           </div>
-          <Field label="地点">
+          <Field label={t('groups.field.location')}>
             <input value={location} onChange={(e) => setLocation(e.target.value)} />
           </Field>
-          <Field label="标签">
-            <TagsInput value={tags} onChange={setTags} suggestions={allTags} placeholder="例如：职青、晚上…" />
+          <Field label={t('groups.field.tags')}>
+            <TagsInput value={tags} onChange={setTags} suggestions={allTags} placeholder={t('groups.tagsPlaceholder')} />
           </Field>
 
           <div className="flex-between" style={{ margin: '16px 0 4px' }}>
             <div className="section-label">
-              铁三角 <span style={{ fontWeight: 400, fontSize: 12 }} className="muted">· 带领团队</span>
+              {t('group.triangle')} <span style={{ fontWeight: 400, fontSize: 12 }} className="muted">{t('group.triangleSub')}</span>
             </div>
-            <span className="faint" style={{ fontSize: 11.5 }}>{leadFilled} / 3 就位</span>
+            <span className="faint" style={{ fontSize: 11.5 }}>{t('group.filled', { n: leadFilled })}</span>
           </div>
           <div style={{ position: 'relative', height: 150, margin: '2px 0 4px' }}>
             <svg viewBox="0 0 300 150" preserveAspectRatio="none" width="100%" height="100%" style={{ position: 'absolute', inset: 0 }}>
@@ -300,13 +303,11 @@ function GroupPanel({
             {renderTriNode(GroupPosition.InternLeader, { bottom: 6, right: 0 })}
           </div>
 
-          <div className="hint" style={{ margin: '12px 0 14px' }}>
-            💡 在此指派组长 / 副组长 / 实习组长；指派新的领袖会自动将原领袖降为核心成员。
-          </div>
+          <div className="hint" style={{ margin: '12px 0 14px' }}>{t('group.hint')}</div>
           {perms.write && (
             <div className="flex gap-8">
-              <button className="btn" onClick={saveGroup} disabled={busy}>保存设定</button>
-              {perms.delete && <button className="btn ghost" onClick={deleteGroup}>删除小组</button>}
+              <button className="btn" onClick={saveGroup} disabled={busy}>{t('group.saveSettings')}</button>
+              {perms.delete && <button className="btn danger" onClick={deleteGroup}>{t('group.delete.title')}</button>}
             </div>
           )}
         </div>
@@ -314,28 +315,30 @@ function GroupPanel({
         {/* Right — member list */}
         <div className="card">
           <div className="card-head">
-            <h3>组员名单 <span className="muted" style={{ fontWeight: 400, fontSize: 13 }}>（{groupMembers.length} 人）</span></h3>
+            <h3>{t('group.roster')} <span className="muted" style={{ fontWeight: 400, fontSize: 13 }}>{t('group.rosterCount', { n: groupMembers.length })}</span></h3>
           </div>
           {perms.write && (
             <div className="flex gap-8 mb-14">
               <select value={addSel} onChange={(e) => setAddSel(e.target.value)} style={{ flex: 1 }}>
-                <option value="">选择成员加入本组…</option>
+                <option value="">{t('group.addMemberPlaceholder')}</option>
                 {unassigned.map((m) => (
                   <option key={m.id} value={m.id}>
-                    {m.full_name}
-                    {m.group ? `（${m.group.name}）` : ''}
+                    {t('group.memberOption', {
+                      name: m.full_name,
+                      group: m.group ? ` (${m.group.name})` : '',
+                    })}
                   </option>
                 ))}
               </select>
-              <button className="btn accent" onClick={addMember} disabled={!addSel}>＋ 添加成员</button>
+              <button className="btn accent" onClick={addMember} disabled={!addSel}>{t('group.addMember')}</button>
             </div>
           )}
           <div className="table-wrap">
             <table>
               <thead>
                 <tr>
-                  <SortTh sortKey="name" activeKey={memberSortKey} dir={memberSortDir} onSort={toggleMemberSort}>姓名</SortTh>
-                  <SortTh sortKey="position" activeKey={memberSortKey} dir={memberSortDir} onSort={toggleMemberSort}>身份</SortTh>
+                  <SortTh sortKey="name" activeKey={memberSortKey} dir={memberSortDir} onSort={toggleMemberSort}>{t('members.field.name')}</SortTh>
+                  <SortTh sortKey="position" activeKey={memberSortKey} dir={memberSortDir} onSort={toggleMemberSort}>{t('members.col.role')}</SortTh>
                   <th />
                 </tr>
               </thead>
@@ -346,11 +349,11 @@ function GroupPanel({
                       <strong>{m.full_name}</strong>
                     </td>
                     <td>
-                      <RoleBadge role={positionZh(m.group_position)} />
+                      <RoleBadge role={m.group_position ?? 'ungrouped'} />
                     </td>
                     <td style={{ textAlign: 'right' }}>
                       {perms.write && (
-                        <button className="btn ghost" onClick={() => removeMember(m.id)}>移除</button>
+                        <button className="btn danger" onClick={() => removeMember(m.id)}>{t('common.remove')}</button>
                       )}
                     </td>
                   </tr>
@@ -358,7 +361,7 @@ function GroupPanel({
                 {sortedGroupMembers.length === 0 && (
                   <tr>
                     <td colSpan={3} className="empty-inline">
-                      本组暂无成员，从上方选择加入。
+                      {t('group.emptyRoster')}
                     </td>
                   </tr>
                 )}
@@ -391,6 +394,8 @@ function weeksOfMonth(year: number, month1to12: number) {
 }
 
 function WeeklyAttendance({ groupId }: { groupId: string }) {
+  const t = useT();
+  const lang = useLang();
   const toast = useToast();
   const perms = can(useMe().role);
   const { data, initialLoading, reload } = useFetch<GroupAttendanceResponse>(
@@ -467,41 +472,52 @@ function WeeklyAttendance({ groupId }: { groupId: string }) {
     }
   };
 
+  // Month names follow the interface language rather than a hardcoded list.
+  const monthName = (m: number) =>
+    new Intl.DateTimeFormat(lang, { month: 'long' }).format(new Date(2000, m - 1, 1));
+
   const exportGrid = () => {
     if (!data) return;
-    const headers = ['成员', ...weeks.map((w) => `第${w.no}周(${w.day}日)`), '出席次数'];
+    const headers = [
+      t('members.col.member'),
+      ...weeks.map((w) => `${t('group.week', { n: w.no })} (${t('group.dayOfMonth', { n: w.day })})`),
+      t('group.attended'),
+    ];
     const matrix = sortedAttendanceRows.map((r) => {
       const inner = statusByMemberDate.get(r.member.id);
       const cells = weeks.map((w) => {
         const s = inner?.get(w.date);
-        return s ? ATTENDANCE_LABELS[s] : '';
+        return s ? t(attendanceKey(s)) : '';
       });
       return [r.member.full_name, ...cells, presentCount(r.member.id)];
     });
-    exportMatrix(`小组每周出席_${year}年${month}月`, '出席', headers, matrix);
+    exportMatrix(
+      t('group.exportFile', { year, month: String(month).padStart(2, '0') }),
+      t('group.attended'),
+      headers,
+      matrix,
+    );
   };
 
   return (
     <div className="card mt-16">
       <div className="card-head">
         <div>
-          <h3>每周出席</h3>
-          <div className="muted" style={{ fontSize: 12.5, marginTop: 2 }}>
-            按年 / 月查看 · 每周固定为当月主日 · 勾选表示当周出席
-          </div>
+          <h3>{t('group.weekly')}</h3>
+          <div className="muted" style={{ fontSize: 12.5, marginTop: 2 }}>{t('group.weeklySub')}</div>
         </div>
-        <ExportButton onClick={exportGrid} disabled={!data} title="导出每周出席" />
+        <ExportButton onClick={exportGrid} disabled={!data} title={t('group.exportTitle')} />
       </div>
 
       <div className="flex gap-8 mb-14 flex-wrap">
         <select value={year} onChange={(e) => setYear(Number(e.target.value))} style={{ width: 'auto' }}>
           {years.map((y) => (
-            <option key={y} value={y}>{y} 年</option>
+            <option key={y} value={y}>{y}</option>
           ))}
         </select>
         <select value={month} onChange={(e) => setMonth(Number(e.target.value))} style={{ width: 'auto' }}>
           {Array.from({ length: 12 }, (_, i) => i + 1).map((mo) => (
-            <option key={mo} value={mo}>{mo} 月</option>
+            <option key={mo} value={mo}>{monthName(mo)}</option>
           ))}
         </select>
       </div>
@@ -509,20 +525,20 @@ function WeeklyAttendance({ groupId }: { groupId: string }) {
       {initialLoading ? (
         <Loading />
       ) : !data || data.rows.length === 0 ? (
-        <div className="empty">本组暂无成员。</div>
+        <div className="empty">{t('group.noMembers')}</div>
       ) : (
         <div className="table-wrap">
           <table>
             <thead>
               <tr>
-                <SortTh sortKey="name" activeKey={attSortKey} dir={attSortDir} onSort={toggleAttSort}>成员</SortTh>
+                <SortTh sortKey="name" activeKey={attSortKey} dir={attSortDir} onSort={toggleAttSort}>{t('members.col.member')}</SortTh>
                 {weeks.map((w) => (
                   <th key={w.date} style={{ textAlign: 'center', whiteSpace: 'nowrap' }}>
-                    第{w.no}周
-                    <div className="faint" style={{ fontSize: 10.5, fontWeight: 400 }}>{w.day}日</div>
+                    {t('group.week', { n: w.no })}
+                    <div className="faint" style={{ fontSize: 10.5, fontWeight: 400 }}>{t('group.dayOfMonth', { n: w.day })}</div>
                   </th>
                 ))}
-                <SortTh sortKey="count" activeKey={attSortKey} dir={attSortDir} onSort={toggleAttSort} align="center">出席</SortTh>
+                <SortTh sortKey="count" activeKey={attSortKey} dir={attSortDir} onSort={toggleAttSort} align="center">{t('group.attended')}</SortTh>
               </tr>
             </thead>
             <tbody>
@@ -541,7 +557,7 @@ function WeeklyAttendance({ groupId }: { groupId: string }) {
                             onChange={() => toggle(w.date, r.member.id, present)}
                             disabled={!perms.write}
                             style={{ width: 18, height: 18, cursor: perms.write ? 'pointer' : 'default', accentColor: 'var(--brand)' }}
-                            title={present ? '出席' : '未出席'}
+                            title={present ? t('group.attended') : t('group.notAttended')}
                           />
                         </td>
                       );

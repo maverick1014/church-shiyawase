@@ -2,14 +2,16 @@ import type { Metadata, Viewport } from 'next';
 import './globals.css';
 import { PWARegister } from '@/components/PWARegister';
 
+// Document metadata is rendered before any session exists, so it uses the
+// app's default language (English) rather than the signed-in account's.
 export const metadata: Metadata = {
-  title: '主恩堂 · 教会管理系统',
-  description: '人 · 聚会 · 培训 · 四十天一对一守望',
+  title: 'Tabernacle of Grace · Church Management',
+  description: 'Members · events · trainings · forty-day one-to-one discipleship',
   manifest: '/manifest.webmanifest',
-  applicationName: '主恩堂',
+  applicationName: 'Tabernacle of Grace',
   appleWebApp: {
     capable: true,
-    title: '主恩堂',
+    title: 'Tabernacle of Grace',
     statusBarStyle: 'default',
   },
   // Favicon (app/icon.png) and apple-touch-icon (app/apple-icon.png) are wired
@@ -29,7 +31,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="zh-CN">
+    <html lang="en">
       <body>
         {children}
         <PWARegister />

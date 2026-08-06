@@ -6,12 +6,20 @@ import { usePathname } from 'next/navigation';
 import { ConfirmProvider, ToastProvider, useConfirm, useToast } from './ui';
 import { ChangePasswordModal } from './ChangePasswordModal';
 import { BrandLogo } from './BrandLogo';
-import { initialOf } from '@/lib/labels';
+import { accountRoleKey, initialOf } from '@/lib/labels';
 import { HallContext } from '@/lib/hall';
+import { I18nProvider, useT } from '@/lib/i18n';
+import type { MessageKey } from '@/lib/i18n';
 import { HallRow } from '@/lib/types';
-import { ACCOUNT_ROLE_LABELS, AccountRole } from '@tog/shared';
+import { AccountRole, Language } from '@tog/shared';
 
-type Me = { name: string; role: string; member: string | null; hall: string | null };
+type Me = {
+  name: string;
+  role: string;
+  member: string | null;
+  hall: string | null;
+  language: Language;
+};
 
 /* -------------------------------------------------------------------------
  * Current-user context — pages read the session role to gate UI (rule G2).
@@ -20,7 +28,9 @@ const MeContext = createContext<Me | null>(null);
 
 /** The logged-in account (name, role, member, hall). Only valid inside AppShell. */
 export function useMe(): Me {
-  return useContext(MeContext) ?? { name: '', role: '', member: null, hall: null };
+  return (
+    useContext(MeContext) ?? { name: '', role: '', member: null, hall: null, language: 'en' }
+  );
 }
 
 // Hall scope lives in lib/hall.tsx so useFetch can read it without importing
@@ -44,39 +54,61 @@ export function usePageChrome(chrome: Chrome, deps: unknown[] = []) {
 /* -------------------------------------------------------------------------
  * Navigation model
  * ---------------------------------------------------------------------- */
-type NavItem = { href: string; label: string; icon: string; role?: AccountRole };
-const NAV: { section: string; items: NavItem[] }[] = [
+type NavItem = { href: string; label: MessageKey; icon: string; role?: AccountRole };
+const NAV: { section: MessageKey; items: NavItem[] }[] = [
   {
-    section: '概览',
-    items: [{ href: '/', label: '仪表盘', icon: '◎' }],
+    section: 'nav.section.overview',
+    items: [{ href: '/', label: 'nav.dashboard', icon: '◎' }],
   },
   {
-    section: '牧养',
+    section: 'nav.section.care',
     items: [
-      { href: '/members', label: '成员目录', icon: '👥' },
-      { href: '/groups', label: '小组管理', icon: '🔗' },
-      { href: '/events', label: '聚会与出席', icon: '📅' },
+      { href: '/members', label: 'nav.members', icon: '👥' },
+      { href: '/groups', label: 'nav.groups', icon: '🔗' },
+      { href: '/events', label: 'nav.events', icon: '📅' },
     ],
   },
   {
-    section: '造就',
+    section: 'nav.section.growth',
     items: [
-      { href: '/trainings', label: '培训课程', icon: '📖' },
-      { href: '/discipleship', label: '四十天守望', icon: '✝' },
+      { href: '/trainings', label: 'nav.trainings', icon: '📖' },
+      { href: '/discipleship', label: 'nav.discipleship', icon: '✝' },
     ],
   },
   {
-    // 用户管理 is super_admin-only (matches the API gate on /accounts).
-    section: '系统',
-    items: [{ href: '/settings', label: '用户管理', icon: '⚙', role: AccountRole.SuperAdmin }],
+    // User management is super_admin-only (matches the API gate on /accounts).
+    section: 'nav.section.system',
+    items: [{ href: '/settings', label: 'nav.settings', icon: '⚙', role: AccountRole.SuperAdmin }],
   },
 ];
 
+/**
+ * The shell owns the session, so it also owns the interface language: it hands
+ * `me.language` to the i18n provider before rendering anything translated.
+ * While the session is still loading, the provider falls back to English.
+ */
 export function AppShell({ children }: { children: ReactNode }) {
+  const [me, setMe] = useState<Me | null | undefined>(undefined);
+  return (
+    <I18nProvider lang={me?.language}>
+      <Shell me={me} setMe={setMe}>{children}</Shell>
+    </I18nProvider>
+  );
+}
+
+function Shell({
+  me,
+  setMe,
+  children,
+}: {
+  me: Me | null | undefined;
+  setMe: (m: Me) => void;
+  children: ReactNode;
+}) {
+  const t = useT();
   const pathname = usePathname();
   const [navOpen, setNavOpen] = useState(false);
-  const [chrome, setChrome] = useState<Chrome>({ title: '仪表盘' });
-  const [me, setMe] = useState<Me | null | undefined>(undefined);
+  const [chrome, setChrome] = useState<Chrome>({ title: '' });
   const [halls, setHalls] = useState<HallRow[]>([]);
   // '' = 全部堂会. A single-hall account is pinned to its own hall below.
   const [hallId, setHallId] = useState('');
@@ -110,6 +142,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     return () => {
       alive = false;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const isActive = (href: string) =>
@@ -125,10 +158,10 @@ export function AppShell({ children }: { children: ReactNode }) {
         className="sm"
         value={hallId}
         onChange={(e) => setHallId(e.target.value)}
-        title="切换查看的堂会"
+        title={t('hall.switchTitle')}
         style={{ width: 'auto' }}
       >
-        <option value="">全部堂会</option>
+        <option value="">{t('hall.all')}</option>
         {halls.map((h) => (
           <option key={h.id} value={h.id}>{h.name}</option>
         ))}
@@ -138,7 +171,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   if (!me) {
     return (
       <div className="loading" style={{ minHeight: '100vh', display: 'grid', placeItems: 'center' }}>
-        加载中…
+        {t('common.loading')}
       </div>
     );
   }
@@ -156,7 +189,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                 <BrandLogo size={34} />
               </div>
               <div className="brand-name">
-                主恩堂
+                {t('login.title')}
                 <small>
                   TABERNACLE OF GRACE
                 </small>
@@ -168,14 +201,14 @@ export function AppShell({ children }: { children: ReactNode }) {
               if (items.length === 0) return null;
               return (
                 <div key={group.section}>
-                  <div className="nav-section">{group.section}</div>
+                  <div className="nav-section">{t(group.section)}</div>
                   {items.map((item) => (
                     <Link
                       key={item.href}
                       href={item.href}
                       className={`nav-link ${isActive(item.href) ? 'active' : ''}`}
                     >
-                      <span className="ico">{item.icon}</span> {item.label}
+                      <span className="ico">{item.icon}</span> {t(item.label)}
                     </Link>
                   ))}
                 </div>
@@ -194,7 +227,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                 <button
                   className="hamburger"
                   onClick={() => setNavOpen((o) => !o)}
-                  aria-label="菜单"
+                  aria-label={t('nav.menu')}
                 >
                   ☰
                 </button>
@@ -231,6 +264,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 }
 
 function NavUser({ me }: { me: Me }) {
+  const t = useT();
   const confirm = useConfirm();
   const toast = useToast();
   const [menuOpen, setMenuOpen] = useState(false);
@@ -239,9 +273,9 @@ function NavUser({ me }: { me: Me }) {
   const logout = async () => {
     setMenuOpen(false);
     const ok = await confirm({
-      title: '退出登录',
-      message: '确定要退出当前账户吗？',
-      confirmText: '退出登录',
+      title: t('nav.logout.confirmTitle'),
+      message: t('nav.logout.confirmMessage'),
+      confirmText: t('nav.logout'),
       danger: true,
     });
     if (!ok) return;
@@ -257,15 +291,15 @@ function NavUser({ me }: { me: Me }) {
     <div style={{ position: 'relative' }}>
       {menuOpen && (
         <div className="nav-user-menu">
-          <button onClick={() => { setMenuOpen(false); setPwOpen(true); }}>🔑 修改我的密码</button>
-          <button onClick={logout}>↩ 退出登录</button>
+          <button onClick={() => { setMenuOpen(false); setPwOpen(true); }}>🔑 {t('nav.changePassword')}</button>
+          <button onClick={logout}>↩ {t('nav.logout')}</button>
         </div>
       )}
-      <div className="nav-user" onClick={() => setMenuOpen((o) => !o)} title="账户菜单" style={{ cursor: 'pointer' }}>
+      <div className="nav-user" onClick={() => setMenuOpen((o) => !o)} title={t('nav.accountMenu')} style={{ cursor: 'pointer' }}>
         <div className="avatar">{initialOf(me.name)}</div>
         <div className="who">
           {me.name}
-          <small>{ACCOUNT_ROLE_LABELS[me.role as AccountRole] ?? me.role} · 账户菜单</small>
+          <small>{t(accountRoleKey(me.role))} · {t('nav.accountMenu')}</small>
         </div>
       </div>
       {pwOpen && (
@@ -273,7 +307,7 @@ function NavUser({ me }: { me: Me }) {
           onClose={() => setPwOpen(false)}
           onSaved={() => {
             setPwOpen(false);
-            toast('密码已更新');
+            toast(t('settings.toast.passwordChanged'));
           }}
         />
       )}
