@@ -144,15 +144,15 @@ export default function RecurringEventsPage() {
             <thead>
               <tr>
                 <SortTh sortKey="title" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('recurring.col.name')}</SortTh>
-                <SortTh sortKey="type" activeKey={sortKey} dir={sortDir} onSort={toggleSort} className="col-status">{t('recurring.col.type')}</SortTh>
-                <SortTh sortKey="when" activeKey={sortKey} dir={sortDir} onSort={toggleSort} className="col-date">{t('recurring.col.when')}</SortTh>
+                <SortTh sortKey="type" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('recurring.col.type')}</SortTh>
+                <SortTh sortKey="when" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('recurring.col.when')}</SortTh>
                 {!hallLocked && (
-                  <SortTh sortKey="hall" activeKey={sortKey} dir={sortDir} onSort={toggleSort} className="col-hall">{t('hall.label')}</SortTh>
+                  <SortTh sortKey="hall" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('hall.label')}</SortTh>
                 )}
                 <th>{t('recurring.col.location')}</th>
-                <SortTh sortKey="next" activeKey={sortKey} dir={sortDir} onSort={toggleSort} className="col-date">{t('recurring.col.next')}</SortTh>
-                <SortTh sortKey="active" activeKey={sortKey} dir={sortDir} onSort={toggleSort} className="col-status">{t('recurring.col.status')}</SortTh>
-                <th className="col-status" />
+                <SortTh sortKey="next" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('recurring.col.next')}</SortTh>
+                <SortTh sortKey="active" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('recurring.col.status')}</SortTh>
+                <th />
               </tr>
             </thead>
             <tbody>

@@ -108,9 +108,9 @@ desktop, in the nav drawer on phones. Never render a shell control into
 `.content-actions`, and never give a page action an ad-hoc width; page actions
 are content-sized like every control in a `.filter-bar`. Filters go in one
 `.filter-bar` per page, ordered search → filters → `.spacer` → export/info.
-Fixed table-column widths come from the shared `col-*` classes, never a
-hand-typed pixel value — a width tuned to two CJK glyphs clips the moment the
-same label is English.
+List tables size their columns to their own content (`table-layout: auto` +
+`white-space: nowrap` on cells). Never hand-type a column width: one tuned to
+two CJK glyphs clips the moment the same label is English.
 
 ### G7 — Mobile-first & theme
 Tables become list tiles on small screens (`.only-desktop` / `.only-mobile`

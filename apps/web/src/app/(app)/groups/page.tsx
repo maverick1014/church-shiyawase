@@ -156,14 +156,14 @@ export default function GroupsPage() {
                     count, new-member count and status stay narrow. */}
                 <SortTh sortKey="name" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('groups.col.name')}</SortTh>
                 {!hallLocked && (
-                  <SortTh sortKey="hall" activeKey={sortKey} dir={sortDir} onSort={toggleSort} className="col-hall">{t('hall.label')}</SortTh>
+                  <SortTh sortKey="hall" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('hall.label')}</SortTh>
                 )}
                 <SortTh sortKey="leader" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('groups.col.leader')}</SortTh>
-                <SortTh sortKey="count" activeKey={sortKey} dir={sortDir} onSort={toggleSort} className="col-count">{t('groups.col.count')}</SortTh>
-                <SortTh sortKey="new" activeKey={sortKey} dir={sortDir} onSort={toggleSort} className="col-count">{t('groups.col.newCount')}</SortTh>
-                <SortTh sortKey="status" activeKey={sortKey} dir={sortDir} onSort={toggleSort} className="col-status">{t('groups.col.status')}</SortTh>
+                <SortTh sortKey="count" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('groups.col.count')}</SortTh>
+                <SortTh sortKey="new" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('groups.col.newCount')}</SortTh>
+                <SortTh sortKey="status" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('groups.col.status')}</SortTh>
                 <th>{t('groups.col.schedule')}</th>
-                <th className="col-chevron" />
+                <th />
               </tr>
             </thead>
             <tbody>

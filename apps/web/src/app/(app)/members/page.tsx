@@ -190,13 +190,13 @@ export default function MembersPage() {
                 <SortTh sortKey="name" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('members.col.member')}</SortTh>
                 <SortTh sortKey="role" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('members.col.role')}</SortTh>
                 {!hallLocked && (
-                  <SortTh sortKey="hall" activeKey={sortKey} dir={sortDir} onSort={toggleSort} className="col-hall">{t('hall.label')}</SortTh>
+                  <SortTh sortKey="hall" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('hall.label')}</SortTh>
                 )}
                 <SortTh sortKey="group" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('members.col.group')}</SortTh>
                 <SortTh sortKey="phone" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('members.col.contact')}</SortTh>
-                <SortTh sortKey="status" activeKey={sortKey} dir={sortDir} onSort={toggleSort} className="col-status">{t('members.col.status')}</SortTh>
-                <SortTh sortKey="joined" activeKey={sortKey} dir={sortDir} onSort={toggleSort} className="col-date">{t('members.col.joined')}</SortTh>
-                <th className="col-chevron" />
+                <SortTh sortKey="status" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('members.col.status')}</SortTh>
+                <SortTh sortKey="joined" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('members.col.joined')}</SortTh>
+                <th />
               </tr>
             </thead>
             <tbody>

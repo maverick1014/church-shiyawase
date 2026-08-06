@@ -458,7 +458,7 @@ export function SortTh({
   dir: 'asc' | 'desc';
   onSort: (key: string) => void;
   align?: 'right' | 'center';
-  /** Column-width class (`col-hall`, `col-status`, …) — never an ad-hoc width. */
+  /** Extra classes for the header cell. Widths are auto — don't set one. */
   className?: string;
   style?: React.CSSProperties;
 }) {

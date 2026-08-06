@@ -445,37 +445,22 @@ td {
   border-bottom: 1px solid var(--border);
   vertical-align: middle;
 }
-/* Even-column list tables: `table-layout: fixed` makes columns with an explicit
-   width (the narrow utility columns — status/date/count, and the chevron) keep
-   that width, while the remaining content columns divide the leftover space
-   EQUALLY. Set widths on the header (thead) cells; the body follows. */
+/* List tables size each column to its own content.
+ *
+ * These were `table-layout: fixed` with a pixel width hand-typed per column, so
+ * that the content columns divided the leftover space equally and lined up
+ * across pages. That only held while every label was two or three CJK glyphs:
+ * the same columns in English clipped "Group leader" to "Group leade" and cut
+ * phone numbers in half, and no set of numbers can be right for three languages
+ * at once. Auto layout gives every column exactly what its content needs, which
+ * is the property that actually matters. `white-space: nowrap` keeps a cell on
+ * one line so rows stay the same height; a genuinely long cell scrolls with the
+ * table (`.table-wrap`) rather than reflowing the row. */
 .table-fixed {
-  table-layout: fixed;
+  table-layout: auto;
 }
-.table-fixed td,
-.table-fixed th {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-/* Shared widths for the narrow utility columns. They used to be hand-typed per
-   page, tuned to two or three CJK glyphs — so the moment a header became an
-   English word ("Congregation", "Status") it overran its neighbour and badges
-   were sliced in half. One set of names, one set of numbers, wide enough for
-   the longest label in any of the three languages. */
-.table-fixed .col-count {
-  width: 96px;
-}
-.table-fixed .col-status {
-  width: 136px;
-}
-.table-fixed .col-date {
-  width: 124px;
-}
-.table-fixed .col-hall {
-  width: 150px;
-}
-.table-fixed .col-chevron {
-  width: 52px;
+.table-fixed td {
+  white-space: nowrap;
 }
 /* A lone trailing chevron/icon-button column (the "open detail" affordance)
    should hug the row's right edge instead of carrying full text-cell padding.
