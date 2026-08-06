@@ -196,17 +196,44 @@ async function main() {
     // Mobile viewport → the groups list renders as .mtile tiles (the desktop
     // table is .only-desktop / hidden). Each tile navigates to its detail page.
     await page.locator('.mtile').first().waitFor({ timeout: 20000 });
-    check('the group list renders', (await page.locator('.mtile').count()) > 0);
-    await page.locator('.mtile').first().click();
-    await page.waitForURL(/\/groups\/[0-9a-f-]+/, { timeout: 15000 });
-    await page.locator('text=Leadership trio').first().waitFor({ timeout: 15000 });
-    check('group detail shows the leadership trio', true);
-    check('the leadership assignment dropdowns are present', (await page.locator('select.sm').count()) > 0);
-    check('the year / month selects are present', (await page.locator('select').count()) >= 2);
-    await page.locator('th:has-text("Week")').first().waitFor({ timeout: 20000 });
-    check('weekly attendance renders a column per Sunday', (await page.locator('th:has-text("Week")').count()) > 0,
-      `${await page.locator('th:has-text("Week")').count()} weeks`);
-    check('weekly attendance has tick boxes', (await page.locator('input[type=checkbox]').count()) > 0);
+    const groupTiles = await page.locator('.mtile').count();
+    check('the group list renders', groupTiles > 0);
+    // The weekly-attendance grid only has rows for a group that HAS members, so
+    // open one that reports a non-zero count rather than whatever sorts first —
+    // an empty group is a perfectly normal state and must not fail the suite.
+    //
+    // The counts come from a second fetch (/members) than the list itself, so
+    // every tile reads "0 members" for a moment after the list paints — wait for
+    // the real numbers before scanning, or this always picks the wrong group.
+    const POPULATED = /\b[1-9]\d*\s+members\b/;
+    await page
+      .waitForFunction(
+        () => /\b[1-9]\d*\s+members\b/.test(document.body.innerText),
+        null,
+        { timeout: 15000 },
+      )
+      .catch(() => {});
+    let populatedTile = -1;
+    for (let i = 0; i < groupTiles; i++) {
+      if (POPULATED.test(await page.locator('.mtile').nth(i).innerText())) {
+        populatedTile = i;
+        break;
+      }
+    }
+    if (populatedTile < 0) {
+      check('a group with members exists to open', false, 'every group is empty — weekly attendance not covered');
+    } else {
+      await page.locator('.mtile').nth(populatedTile).click();
+      await page.waitForURL(/\/groups\/[0-9a-f-]+/, { timeout: 15000 });
+      await page.locator('text=Leadership trio').first().waitFor({ timeout: 15000 });
+      check('group detail shows the leadership trio', true);
+      check('the leadership assignment dropdowns are present', (await page.locator('select.sm').count()) > 0);
+      check('the year / month selects are present', (await page.locator('select').count()) >= 2);
+      await page.locator('th:has-text("Week")').first().waitFor({ timeout: 20000 });
+      check('weekly attendance renders a column per Sunday', (await page.locator('th:has-text("Week")').count()) > 0,
+        `${await page.locator('th:has-text("Week")').count()} weeks`);
+      check('weekly attendance has tick boxes', (await page.locator('input[type=checkbox]').count()) > 0);
+    }
     await shot('04-group-detail');
 
     /* -- events & attendance ---------------------------------------------- */
