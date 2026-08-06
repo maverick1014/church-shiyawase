@@ -61,7 +61,6 @@ export default function RecurringEventsPage() {
   usePageChrome(
     {
       title: t('recurring.title'),
-      subtitle: t('recurring.subtitle'),
       action: perms.write ? (
         <button className="btn" onClick={() => setAddOpen(true)}>{t('recurring.add')}</button>
       ) : undefined,

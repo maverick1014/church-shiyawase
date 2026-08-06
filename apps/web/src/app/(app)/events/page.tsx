@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useFetch } from '@/lib/hooks';
 import { api } from '@/lib/api';
@@ -41,7 +41,6 @@ export default function EventsPage() {
   usePageChrome(
     {
       title: t('events.title'),
-      subtitle: t('events.subtitle'),
       action: perms.write ? (
         <>
           <button className="btn ghost" onClick={() => router.push('/events/recurring')}>
@@ -56,9 +55,31 @@ export default function EventsPage() {
     [perms.write, t],
   );
 
-  const list = events.data ?? [];
-  const now = new Date();
-  const sorted = [...list].sort((a, b) => +new Date(b.starts_at) - +new Date(a.starts_at));
+  // Same three-section shape as the training catalog, so both pages read the
+  // same way: what needs attention now, what is coming, what is done.
+  // "Today" is its own group because it is the one an admin actually acts on —
+  // it is the roll-call list for the day.
+  const { today, upcoming, past } = useMemo(() => {
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    const startOfTomorrow = new Date(startOfToday);
+    startOfTomorrow.setDate(startOfTomorrow.getDate() + 1);
+
+    const td: EventRow[] = [];
+    const up: EventRow[] = [];
+    const pa: EventRow[] = [];
+    for (const e of events.data ?? []) {
+      const at = new Date(e.starts_at);
+      if (at >= startOfTomorrow) up.push(e);
+      else if (at >= startOfToday) td.push(e);
+      else pa.push(e);
+    }
+    const byTime = (a: EventRow, b: EventRow) => +new Date(a.starts_at) - +new Date(b.starts_at);
+    // Soonest first while it is still ahead; most recent first once it is over.
+    return { today: td.sort(byTime), upcoming: up.sort(byTime), past: pa.sort(byTime).reverse() };
+  }, [events.data]);
+
+  const total = today.length + upcoming.length + past.length;
 
   const delEvent = async (e: EventRow): Promise<boolean> => {
     const ok = await confirm({
@@ -79,41 +100,67 @@ export default function EventsPage() {
     }
   };
 
+  // One card shape for every section — same structure as a training card.
+  const renderCards = (items: EventRow[], faded?: boolean) => (
+    <div className="grid g3">
+      {items.map((e) => (
+        <div className="card" key={e.id} style={{ display: 'flex', flexDirection: 'column', opacity: faded ? 0.86 : 1 }}>
+          <div className="flex-between">
+            <span className={`badge ${eventBadgeClass(e.event_type)}`}>
+              {t(eventTypeKey(e.event_type))}
+            </span>
+            {e.hall?.name && (
+              <span className="muted" style={{ fontSize: 12 }}>{e.hall.name}</span>
+            )}
+          </div>
+          <h3 style={{ margin: '12px 0 2px', fontSize: 16 }} className="serif">{e.title}</h3>
+          <div className="muted" style={{ fontSize: 12.5 }}>
+            {formatDateTime(e.starts_at)}{e.location ? ` · ${e.location}` : ''}
+          </div>
+          <div className="grow" />
+          <div className="flex gap-8 mt-14">
+            <button className="btn sm grow" onClick={() => setActiveId(e.id)}>{t('events.rollCall')}</button>
+            {perms.write && (
+              <button className="btn ghost sm" onClick={() => setEditing(e)}>{t('common.edit')}</button>
+            )}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+
+  const section = (
+    dot: string,
+    title: string,
+    sub: string,
+    items: EventRow[],
+    empty: string,
+    faded?: boolean,
+  ) => (
+    <>
+      <div className="section-label mb-14" style={{ marginTop: 28 }}>
+        <span style={{ width: 8, height: 8, borderRadius: '50%', background: dot, display: 'inline-block' }} />
+        {title} <span className="faint" style={{ fontWeight: 400 }}>{sub}</span>
+      </div>
+      {items.length ? renderCards(items, faded) : <div className="empty">{empty}</div>}
+    </>
+  );
+
   if (events.initialLoading) return <Loading />;
 
   return (
     <>
       <ErrorBanner message={events.error} />
 
-      <div className="grid g3">
-        {sorted.map((e) => {
-          const upcoming = new Date(e.starts_at) >= now;
-          return (
-            <div className="card" key={e.id}>
-              <div className="flex-between">
-                <span className={`badge ${eventBadgeClass(e.event_type)}`}>
-                  {t(eventTypeKey(e.event_type))}
-                </span>
-                <span className="muted" style={{ fontSize: 12 }}>{upcoming ? t('events.upcoming') : t('events.past')}</span>
-              </div>
-              <h3 style={{ margin: '12px 0 2px', fontSize: 16 }} className="serif">{e.title}</h3>
-              <div className="muted" style={{ fontSize: 12.5 }}>
-                {formatDateTime(e.starts_at)}{e.location ? ` · ${e.location}` : ''}
-              </div>
-              <div className="flex-between mt-14">
-                <span className="muted" style={{ fontSize: 12 }}>{e.description ?? ''}</span>
-                <div className="flex gap-6">
-                  {perms.write && (
-                    <button className="btn ghost sm" onClick={() => setEditing(e)}>{t('common.edit')}</button>
-                  )}
-                  <button className="btn sm" onClick={() => setActiveId(e.id)}>{t('events.rollCall')}</button>
-                </div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-      {sorted.length === 0 && <Empty>{t('events.empty')}</Empty>}
+      {total === 0 ? (
+        <Empty>{t('events.empty')}</Empty>
+      ) : (
+        <>
+          {section('var(--brand)', t('events.today'), t('events.todaySub'), today, t('events.emptyToday'))}
+          {section('var(--good)', t('events.upcoming'), t('events.upcomingSub'), upcoming, t('events.emptyUpcoming'))}
+          {section('var(--faint)', t('events.past'), t('events.pastSub'), past, t('events.emptyPast'), true)}
+        </>
+      )}
 
       {activeId && (
         <AttendancePanel

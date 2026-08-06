@@ -279,11 +279,6 @@ button {
   font-family: var(--font-serif);
   font-weight: 600;
 }
-.topbar .sub {
-  color: var(--muted);
-  font-size: 13px;
-  margin-top: 3px;
-}
 .hamburger {
   display: none;
   width: 38px;
@@ -319,6 +314,16 @@ button {
    into the content instead (see the ≤820px rules) so the header stays clean. */
 .content-actions {
   display: none;
+}
+
+/* The drawer's congregation switcher — the phone counterpart of the one at the
+   top right of the header. Shown only where .topbar-actions is hidden. */
+.nav-hall {
+  display: none;
+  padding: 0 10px 12px;
+}
+.nav-hall select {
+  width: 100%;
 }
 
 .scrim {
@@ -1296,8 +1301,17 @@ td.empty-inline {
     gap: 8px;
     margin-bottom: 16px;
   }
+  /* Sized by their own labels, like every control in a .filter-bar. Letting
+     them grow made the row's shape depend on how many buttons a page happened
+     to have, so no two list pages lined up. */
   .content-actions > * {
-    flex: 1 1 auto;
+    flex: 0 1 auto;
+  }
+  /* Paired with `.topbar-actions { display: none }` above: the congregation
+     switcher leaves the header at exactly the width where the header's actions
+     do, and reappears in the nav drawer. */
+  .nav-hall {
+    display: block;
   }
   .content {
     padding: 18px 16px 64px;

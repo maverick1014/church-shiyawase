@@ -44,7 +44,7 @@ export const en = {
   'nav.events': 'Events & Attendance',
   'nav.trainings': 'Trainings',
   'nav.discipleship': 'Forty Days',
-  'nav.settings': 'User Management',
+  'nav.settings': 'Users',
   'nav.menu': 'Menu',
   'nav.accountMenu': 'Account menu',
   'nav.changePassword': 'Change my password',
@@ -73,7 +73,6 @@ export const en = {
 
   /* ---- members --------------------------------------------------------- */
   'members.title': 'Members',
-  'members.subtitle': 'Tap a member to view and edit their identity',
   'members.add': '＋ Add member',
   'members.searchPlaceholder': '🔍 Search by name…',
   'members.filter.role': 'All identities',
@@ -102,7 +101,6 @@ export const en = {
 
   /* ---- member detail --------------------------------------------------- */
   'member.title': 'Member detail',
-  'member.subtitle': 'Profile · Training record · Forty Days',
   'member.back': '‹ Back to members',
   'member.editProfile': 'Edit profile',
   'member.uploadAvatar': 'Upload photo',
@@ -133,7 +131,6 @@ export const en = {
 
   /* ---- groups ---------------------------------------------------------- */
   'groups.title': 'Life Groups',
-  'groups.subtitle': 'All groups · tap to view details',
   'groups.add': '＋ Add group',
   'groups.searchPlaceholder': '🔍 Search group / leader…',
   'groups.filter.tag': 'All tags',
@@ -168,7 +165,6 @@ export const en = {
 
   /* ---- group detail ---------------------------------------------------- */
   'group.title': 'Group detail',
-  'group.subtitle': 'Profile · Leadership · Roster · Weekly attendance',
   'group.back': '‹ Back to groups',
   'group.info': 'Group profile · Leadership',
   'group.triangle': 'Leadership trio',
@@ -205,11 +201,17 @@ export const en = {
 
   /* ---- events ---------------------------------------------------------- */
   'events.title': 'Events & Attendance',
-  'events.subtitle': 'Services · prayer meetings · fellowship · roll call',
   'events.add': '＋ Add event',
   'events.recurring': '🔁 Recurring',
   'events.upcoming': 'Upcoming',
   'events.past': 'Past',
+  'events.today': 'Today',
+  'events.todaySub': '· happening today',
+  'events.upcomingSub': '· scheduled ahead',
+  'events.pastSub': '· already held',
+  'events.emptyToday': 'Nothing on today.',
+  'events.emptyUpcoming': 'Nothing scheduled yet.',
+  'events.emptyPast': 'No past events.',
   'events.rollCall': 'Roll call',
   'events.empty': 'No events yet — use “＋ Add event” at the top right.',
   'events.new.title': 'Add event',
@@ -236,7 +238,6 @@ export const en = {
 
   /* ---- recurring events ------------------------------------------------ */
   'recurring.title': 'Recurring events',
-  'recurring.subtitle': 'Fixed-time events fill the calendar automatically',
   'recurring.add': '＋ Add recurrence',
   'recurring.back': '‹ Back to events',
   'recurring.hint': '💡 Events are scheduled automatically for the next “lookahead” days (35 by default, about a month). If you delete one occurrence (a public holiday, say) it will not come back, and changing the weekday or time only affects newly scheduled ones.',
@@ -270,7 +271,6 @@ export const en = {
 
   /* ---- trainings ------------------------------------------------------- */
   'trainings.title': 'Trainings',
-  'trainings.subtitle': 'Catalog · enrolment review · attendance sheet',
   'trainings.add': '＋ Add course',
   'trainings.active': 'Active courses',
   'trainings.activeSub': '· open for enrolment',
@@ -315,7 +315,6 @@ export const en = {
   'disc.progress.linkCopied': 'Link copied',
   'disc.progress.direction': 'mentor → trainee',
   'disc.noProgram': 'No discipleship programme yet — create a discipleship_programs row first.',
-  'disc.intro': '✝ Forty-day one-to-one discipleship: the pastor disciples the group leaders, they disciple their assistants, and whoever has been discipled goes on to disciple the next person — until everyone has walked this road. Mentors fill in the form daily, so the pastor always sees the whole picture.',
   'disc.chain': 'Discipleship chain · relay map',
   'disc.chainSub': 'Generational tree · a graduate becomes a new starting point · tap a tag to filter by state',
   'disc.fullscreenChip': '⛶ Fullscreen',
@@ -348,7 +347,6 @@ export const en = {
 
   /* ---- training detail ------------------------------------------------- */
   'training.title': 'Training detail',
-  'training.subtitle': 'Sessions · enrolment review · attendance sheet',
   'training.back': '‹ Back to catalog',
   'training.enrollLink': '🔗 Enrolment link',
   'training.enrollLinkTitle': 'Copy the self-enrolment link to share',
@@ -403,7 +401,6 @@ export const en = {
 
   /* ---- discipleship ---------------------------------------------------- */
   'disc.title': 'Forty Days',
-  'disc.subtitle': 'One-to-one discipleship · cascade · daily form',
   'disc.add': '＋ Add pair',
   'disc.filter.active': 'Active',
   'disc.filter.done': 'Completed',
@@ -429,8 +426,7 @@ export const en = {
   'disc.progress.completed': 'Completed',
 
   /* ---- settings -------------------------------------------------------- */
-  'settings.title': 'User Management',
-  'settings.subtitle': 'Login accounts · permission roles · security & preferences',
+  'settings.title': 'Users',
   'settings.add': '＋ New account',
   'settings.changeMyPassword': 'Change my password',
   'settings.permissions': 'Permission roles',
@@ -442,7 +438,7 @@ export const en = {
   'settings.empty': 'No accounts yet.',
   'settings.manageAccount': 'Manage account',
   'settings.neverSignedIn': 'Never signed in',
-  'settings.onlySuperAdmin': 'Only a super admin can open user management.',
+  'settings.onlySuperAdmin': 'Only a super admin can open the user list.',
   'settings.back': '‹ Back to accounts',
   'settings.emailFromMember': 'Login email (from the member profile)',
   'settings.hallHint': '💡 Scoped to a congregation, this account can only see and manage that congregation’s members, groups, events and trainings. “All congregations” is unrestricted.',
@@ -493,7 +489,6 @@ export const en = {
 
   /* ---- dashboard ------------------------------------------------------- */
   'dash.title': 'Dashboard',
-  'dash.subtitle': 'An overview of the church at a glance',
   'dash.kpi.members': 'Total members',
   'dash.kpi.active': 'Active',
   'dash.kpi.events': 'Upcoming events',

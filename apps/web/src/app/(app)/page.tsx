@@ -21,7 +21,7 @@ import { MemberStatus } from '@tog/shared';
 
 export default function DashboardPage() {
   const t = useT();
-  usePageChrome({ title: t('dash.title'), subtitle: t('dash.subtitle') }, [t]);
+  usePageChrome({ title: t('dash.title') }, [t]);
 
   const members = useFetch<MemberRow[]>('/members');
   const events = useFetch<EventRow[]>('/events');

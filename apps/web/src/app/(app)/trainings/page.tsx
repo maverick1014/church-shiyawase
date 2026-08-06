@@ -26,7 +26,6 @@ export default function TrainingsPage() {
   usePageChrome(
     {
       title: t('trainings.title'),
-      subtitle: t('trainings.subtitle'),
       action: perms.write ? (
         <button className="btn" onClick={() => setAddOpen(true)}>
           {t('trainings.add')}

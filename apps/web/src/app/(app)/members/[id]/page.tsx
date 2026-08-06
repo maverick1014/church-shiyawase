@@ -66,7 +66,7 @@ export default function MemberDetailPage() {
       { key: 'course', dir: 'asc' },
     );
 
-  usePageChrome({ title: tr('member.title'), subtitle: tr('member.subtitle') }, [id, tr]);
+  usePageChrome({ title: tr('member.title') }, [id, tr]);
 
   const onPickAvatar = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];

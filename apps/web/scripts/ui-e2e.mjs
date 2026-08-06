@@ -138,7 +138,7 @@ async function main() {
     const sidebar = await page.locator('.sidebar').innerText();
     check(
       'sidebar lists every module + User Management (super admin only)',
-      ['Members', 'Life Groups', 'Events & Attendance', 'Trainings', 'Forty Days', 'User Management']
+      ['Members', 'Life Groups', 'Events & Attendance', 'Trainings', 'Forty Days', 'Users']
         .every((label) => sidebar.includes(label)),
     );
     await shot('01-dashboard');
@@ -290,7 +290,7 @@ async function main() {
     // topbar copy, which is display:none at this viewport and never "appears".
     await page.locator('button:visible:has-text("New account")').first().waitFor({ timeout: 20000 });
     const settingsBody = await page.locator('body').innerText();
-    check('user management loads (not the login page)', settingsBody.includes('New account'));
+    check('the user list loads (not the login page)', settingsBody.includes('New account'));
     // Permission roles now live behind an info icon rather than an always-open card.
     await page.locator('button[aria-label="Permission roles"]').first().click();
     await w(300);
@@ -305,6 +305,36 @@ async function main() {
     await page.locator('button:has-text("Save account settings")').waitFor({ timeout: 10000 });
     check('an account detail page opens', true);
     await shot('08-settings');
+
+    /* -- chrome layout is the same on every list page --------------------- */
+    // The bug this guards: the congregation switcher used to sit in the same
+    // stretch-to-fill row as each page's own buttons, so the top of every list
+    // page wrapped differently depending on how many buttons it happened to
+    // have. The switcher belongs to the shell, not the page.
+    mod('page chrome consistency');
+    // The switcher only renders for an account that can actually see more than
+    // one congregation, so only demand the drawer copy when one is expected.
+    const halls = await (await ctx.request.get(`${BASE}/api/halls`)).json();
+    const expectSwitcher = Array.isArray(halls) && halls.length > 1;
+
+    const LIST_PAGES = ['/members', '/groups', '/events', '/trainings', '/discipleship', '/settings'];
+    const strays = [];
+    const missingDrawerHall = [];
+    for (const path of LIST_PAGES) {
+      await page.goto(`${BASE}${path}`, { waitUntil: 'domcontentloaded' });
+      await page.locator('h1').first().waitFor({ timeout: 20000 });
+      // At this (mobile) viewport a page's own buttons render in .content-actions.
+      if ((await page.locator('.content-actions select').count()) > 0) strays.push(path);
+      // …and the switcher lives in the nav drawer instead.
+      if (expectSwitcher && (await page.locator('.sidebar .nav-hall select').count()) === 0) {
+        missingDrawerHall.push(path);
+      }
+    }
+    check('no page mixes the congregation switcher into its own action row',
+      strays.length === 0, strays.join(', ') || 'all clean');
+    check('the congregation switcher sits in the nav drawer on mobile',
+      missingDrawerHall.length === 0,
+      expectSwitcher ? missingDrawerHall.join(', ') || 'present on every page' : 'single congregation — n/a');
 
     /* -- interface language ----------------------------------------------- */
     mod('interface language');

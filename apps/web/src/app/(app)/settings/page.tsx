@@ -55,7 +55,6 @@ export default function SettingsPage() {
   usePageChrome(
     {
       title: t('settings.title'),
-      subtitle: t('settings.subtitle'),
       action: (
         <>
           <button className="btn ghost" onClick={() => setMyPwOpen(true)}>

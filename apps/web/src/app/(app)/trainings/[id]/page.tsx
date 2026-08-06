@@ -50,7 +50,7 @@ export default function TrainingDetailPage() {
       { key: 'name', dir: 'asc' },
     );
 
-  usePageChrome({ title: tr('training.title'), subtitle: tr('training.subtitle') }, [id, tr]);
+  usePageChrome({ title: tr('training.title') }, [id, tr]);
 
   if (detail.initialLoading) return <Loading />;
   if (detail.error || !detail.data)

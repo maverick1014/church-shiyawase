@@ -56,7 +56,6 @@ export default function MembersPage() {
   usePageChrome(
     {
       title: t('members.title'),
-      subtitle: t('members.subtitle'),
       action: perms.write ? (
         <button className="btn" onClick={() => setAddOpen(true)}>
           {t('members.add')}

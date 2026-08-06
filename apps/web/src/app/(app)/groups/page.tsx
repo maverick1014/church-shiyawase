@@ -48,7 +48,6 @@ export default function GroupsPage() {
   usePageChrome(
     {
       title: t('groups.title'),
-      subtitle: t('groups.subtitle'),
       action: perms.write ? (
         <button className="btn" onClick={() => setAddOpen(true)}>
           {t('groups.add')}

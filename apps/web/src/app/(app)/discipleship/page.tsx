@@ -52,7 +52,6 @@ export default function DiscipleshipPage() {
   usePageChrome(
     {
       title: t('disc.title'),
-      subtitle: t('disc.subtitle'),
       action: perms.write ? (
         <button className="btn" onClick={() => setAddOpen(true)} disabled={!programId}>
           {t('disc.add')}
@@ -222,8 +221,6 @@ export default function DiscipleshipPage() {
   return (
     <>
       <ErrorBanner message={pairs.error || overview.error} />
-
-      <div className="hint mb-16">{t('disc.intro')}</div>
 
       {/* Cascade / relay chart */}
       <div className="card">

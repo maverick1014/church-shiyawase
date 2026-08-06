@@ -38,9 +38,9 @@ export function useMe(): Me {
 export { useHallScope } from '@/lib/hall';
 
 /* -------------------------------------------------------------------------
- * Page chrome context — pages set the topbar title / subtitle / action.
+ * Page chrome context — pages set the topbar title / action.
  * ---------------------------------------------------------------------- */
-type Chrome = { title: string; subtitle?: string; action?: ReactNode };
+type Chrome = { title: string; action?: ReactNode };
 const ChromeContext = createContext<(c: Chrome) => void>(() => {});
 
 export function usePageChrome(chrome: Chrome, deps: unknown[] = []) {
@@ -149,9 +149,12 @@ function Shell({
     href === '/' ? pathname === '/' : pathname.startsWith(href);
 
   // Hall switcher — only for accounts that span more than one hall; a
-  // hall-scoped account has nothing to switch to. Rendered in the topbar on
-  // desktop and again in the content actions on mobile (where .topbar-actions
-  // is hidden), so it never disappears on a phone.
+  // hall-scoped account has nothing to switch to.
+  //
+  // It belongs to the shell, not to the page, so it lives at the top right of
+  // the header on desktop and inside the nav drawer on phones — never mixed in
+  // with the page's own action buttons, which is what made every list page lay
+  // its top row out differently.
   const hallSwitcher =
     me && !me.hall && halls.length > 1 ? (
       <select
@@ -188,13 +191,17 @@ function Shell({
               <div className="brand-mark">
                 <BrandLogo size={34} />
               </div>
-              <div className="brand-name">
-                {t('login.title')}
-                <small>
-                  TABERNACLE OF GRACE
-                </small>
-              </div>
+              <div className="brand-name">{t('login.title')}</div>
             </div>
+
+            {/* Phones only: the topbar's actions are hidden below 820px, so the
+                congregation switcher moves into the drawer, above the nav. */}
+            {hallSwitcher && (
+              <div className="nav-hall">
+                <div className="nav-section" style={{ padding: '0 12px 6px' }}>{t('hall.label')}</div>
+                {hallSwitcher}
+              </div>
+            )}
 
             {NAV.map((group) => {
               const items = group.items.filter((it) => !it.role || it.role === me.role);
@@ -231,26 +238,18 @@ function Shell({
                 >
                   ☰
                 </button>
-                <div>
-                  <h1>{chrome.title}</h1>
-                  {chrome.subtitle && <div className="sub">{chrome.subtitle}</div>}
-                </div>
+                <h1>{chrome.title}</h1>
               </div>
-              {(hallSwitcher || chrome.action) && (
+              {(chrome.action || hallSwitcher) && (
                 <div className="flex items-center gap-10 topbar-actions">
-                  {hallSwitcher}
                   {chrome.action}
+                  {hallSwitcher}
                 </div>
               )}
             </div>
 
             <div className="content view-anim" key={pathname}>
-              {(hallSwitcher || chrome.action) && (
-                <div className="content-actions">
-                  {hallSwitcher}
-                  {chrome.action}
-                </div>
-              )}
+              {chrome.action && <div className="content-actions">{chrome.action}</div>}
               {children}
             </div>
           </div>

@@ -33,7 +33,7 @@ export default function GroupDetailPage() {
   const members = useFetch<MemberRow[]>('/members');
   const allGroups = useFetch<GroupRow[]>('/groups');
 
-  usePageChrome({ title: t('group.title'), subtitle: t('group.subtitle') }, [id, t]);
+  usePageChrome({ title: t('group.title') }, [id, t]);
 
   const refreshAll = () => {
     detail.reload();
