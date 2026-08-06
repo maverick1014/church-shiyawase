@@ -3,12 +3,13 @@
 import { useState } from 'react';
 import { useFetch } from '@/lib/hooks';
 import { PairDetail, PairRow, ProgressRow } from '@/lib/types';
-import { formatDate, memberRoleZh, PAIR_STATUS_LABELS, pairStatusClass } from '@/lib/labels';
+import { formatDate, memberRole, pairStatusClass, pairStatusKey, roleKey } from '@/lib/labels';
+import { useT } from '@/lib/i18n';
 import { ErrorBanner, Loading, Modal, useToast } from './ui';
 
 /**
  * Self-contained 40-day progress dialog for a discipleship pair. Fetches the
- * pair detail (and the pair list for the 培育谱系 lineage) so any page can open
+ * pair detail (and the pair list for the lineage chain) so any page can open
  * it with just a pairId — no shared page navigation required. Each day cell is
  * clickable so a pastor / leader can read that day's remark and follow up.
  */
@@ -19,6 +20,7 @@ export function PairProgressModal({
   pairId: string;
   onClose: () => void;
 }) {
+  const t = useT();
   const toast = useToast();
   const pair = useFetch<PairDetail>(`/discipleship/pairs/${pairId}`);
   const allPairs = useFetch<PairRow[]>('/discipleship/pairs');
@@ -35,7 +37,9 @@ export function PairProgressModal({
 
   const link = p && typeof window !== 'undefined' ? `${window.location.origin}/d/${p.form_token}` : '';
   const copy = () =>
-    navigator.clipboard?.writeText(link).then(() => toast('链接已复制'), () => toast(link));
+    navigator.clipboard
+      ?.writeText(link)
+      .then(() => toast(t('disc.progress.linkCopied')), () => toast(link));
 
   // Walk the lineage up to the root of the relay chain.
   const byId = new Map((allPairs.data ?? []).map((x) => [x.id, x]));
@@ -64,13 +68,14 @@ export function PairProgressModal({
                 <strong className="serif" style={{ fontSize: 16 }}>{p.trainee?.full_name}</strong>
               </div>
               <div className="muted" style={{ fontSize: 12, marginTop: 3 }}>
-                带领 → 被带领{p.trainee ? ` · ${memberRoleZh(p.trainee)}` : ''}
+                {t('disc.progress.direction')}
+                {p.trainee ? ` · ${t(roleKey(memberRole(p.trainee)))}` : ''}
                 <span className={`badge ${pairStatusClass(p.status)}`} style={{ marginLeft: 8 }}>
-                  {PAIR_STATUS_LABELS[p.status] ?? p.status}
+                  {t(pairStatusKey(p.status))}
                 </span>
               </div>
             </div>
-            <button className="icon-btn" style={{ flexShrink: 0 }} onClick={onClose} title="关闭">✕</button>
+            <button className="icon-btn" style={{ flexShrink: 0 }} onClick={onClose} title={t('common.close')}>✕</button>
           </div>
 
           <div className="progress-row mt-14">
@@ -78,8 +83,7 @@ export function PairProgressModal({
             <span className="pct">{pct}%</span>
           </div>
           <div className="muted" style={{ fontSize: 13, margin: '16px 0 8px' }}>
-            40 天守望格 · 已完成 {done} / {total} 天 · ★ 表示当天有留言 ·{' '}
-            <span style={{ color: 'var(--brand)' }}>点日格看当天记录</span>
+            {t('disc.progress.grid', { done, total })}
           </div>
           <div className="day-grid">
             {Array.from({ length: total }, (_, i) => {
@@ -92,7 +96,11 @@ export function PairProgressModal({
                     selDay === dnum ? 'sel' : ''
                   }`}
                   onClick={() => setSelDay(dnum)}
-                  title={hasNote ? `第 ${dnum} 天 · 有留言` : `第 ${dnum} 天`}
+                  title={
+                    hasNote
+                      ? t('disc.progress.dayNote', { n: dnum })
+                      : t('disc.progress.day', { n: dnum })
+                  }
                 >
                   {dnum}
                   {hasNote && <span className="note-star">★</span>}
@@ -113,17 +121,24 @@ export function PairProgressModal({
             >
               <div className="flex-between" style={{ alignItems: 'center', gap: 8 }}>
                 <strong style={{ fontSize: 14 }}>
-                  第 {selDay} 天{sel?.entry_date ? ` · ${formatDate(sel.entry_date)}` : ''}
+                  {t('disc.progress.day', { n: selDay })}
+                  {sel?.entry_date ? ` · ${formatDate(sel.entry_date)}` : ''}
                 </strong>
                 <span className={`badge ${sel ? (sel.completed ? 'b-good' : 'b-warn') : 'b-gray'}`}>
-                  {sel ? (sel.completed ? '已完成' : '未完成') : '尚未填写'}
+                  {sel
+                    ? sel.completed
+                      ? t('disc.progress.completed')
+                      : t('disc.progress.notCompleted')
+                    : t('disc.progress.notFilled')}
                 </span>
               </div>
               <div style={{ fontSize: 13, color: 'var(--ink)', marginTop: 8, lineHeight: 1.75, whiteSpace: 'pre-wrap' }}>
                 {sel?.notes ? (
                   sel.notes
                 ) : (
-                  <span className="faint">{sel ? '本日没有留言。' : '带领者尚未填写这一天。'}</span>
+                  <span className="faint">
+                    {sel ? t('disc.progress.noNote') : t('disc.progress.notFilledBody')}
+                  </span>
                 )}
               </div>
             </div>
@@ -131,7 +146,7 @@ export function PairProgressModal({
 
           {lineage.length > 1 && (
             <div style={{ marginTop: 18 }}>
-              <div className="section-label" style={{ marginBottom: 8 }}>培育谱系 · 接棒链</div>
+              <div className="section-label" style={{ marginBottom: 8 }}>{t('disc.progress.lineage')}</div>
               <div className="flex items-center gap-8 flex-wrap">
                 {lineage.map((x, i) => (
                   <div key={x.id} className="flex items-center gap-8">
@@ -147,13 +162,13 @@ export function PairProgressModal({
           )}
 
           <div className="field mt-16">
-            <label className="field-label">带领者专属填写链接</label>
+            <label className="field-label">{t('disc.progress.linkLabel')}</label>
             <input readOnly value={link} style={{ background: 'var(--surface-2)', color: 'var(--muted)' }} />
           </div>
           <div className="flex gap-8">
-            <button className="btn grow" onClick={copy}>复制链接</button>
+            <button className="btn grow" onClick={copy}>{t('disc.progress.copyLink')}</button>
             <button className="btn accent grow" onClick={() => window.open(`/d/${p.form_token}`, '_blank')}>
-              打开表单
+              {t('disc.progress.openForm')}
             </button>
           </div>
         </>

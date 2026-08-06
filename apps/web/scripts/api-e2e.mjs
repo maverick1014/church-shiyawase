@@ -98,6 +98,8 @@ async function main() {
   if (!admin) return finish();
   const me = await req('GET', '/api/auth/me', { cookie: admin });
   ok('me returns super_admin', me.json?.role === 'super_admin', me.json?.role);
+  ok('me carries a supported interface language',
+    ['en', 'zh', 'ms'].includes(me.json?.language), String(me.json?.language));
   const H = { cookie: admin };
 
   // ---- Reference data -----------------------------------------------------
@@ -244,6 +246,13 @@ async function main() {
     if (accId) {
       ok('update account role → 200', (await req('PATCH', `/api/accounts/${accId}`, { ...H, body: { account_role: 'admin' } })).status === 200);
       ok('reset account password → 200', (await req('POST', `/api/accounts/${accId}/password`, { ...H, body: { password: 'newPass2026' } })).status === 200);
+      // Interface language: new accounts default to English, only the three
+      // shipped languages are storable, and anything else is a 400.
+      ok('new account defaults to English', mkAcc.json?.language === 'en', String(mkAcc.json?.language));
+      const setZh = await req('PATCH', `/api/accounts/${accId}`, { ...H, body: { language: 'zh' } });
+      ok('set account language → 200 + persisted', setZh.status === 200 && setZh.json?.language === 'zh', `status ${setZh.status} ${setZh.json?.language}`);
+      const badLang = await req('PATCH', `/api/accounts/${accId}`, { ...H, body: { language: 'fr' } });
+      ok('unsupported language → 400', badLang.status === 400, `status ${badLang.status}`);
       ok('delete account → 200', (await req('DELETE', `/api/accounts/${accId}`, H)).status === 200);
     }
     await req('PATCH', `/api/members/${targetMember.id}`, { ...H, body: { email: originalEmail } });

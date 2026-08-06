@@ -1,16 +1,19 @@
 import type { MetadataRoute } from 'next';
 
 /**
- * Web App Manifest — makes the site installable ("添加到主屏幕" / Add to Home
- * Screen) as a standalone app with the 主恩堂 logo. Next serves this at
+ * Web App Manifest — makes the site installable (Add to Home Screen) as a
+ * standalone app with the church logo. Next serves this at
  * /manifest.webmanifest and injects the <link rel="manifest"> automatically.
+ *
+ * The manifest is static, so it uses the app's default language (English)
+ * regardless of the language an individual account has chosen.
  */
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: '主恩堂 · 教会管理系统',
-    short_name: '主恩堂',
-    description: '人 · 聚会 · 培训 · 四十天一对一守望',
-    lang: 'zh-CN',
+    name: 'Tabernacle of Grace · Church Management',
+    short_name: 'Tabernacle of Grace',
+    description: 'Members · events · trainings · forty-day one-to-one discipleship',
+    lang: 'en',
     start_url: '/',
     scope: '/',
     display: 'standalone',

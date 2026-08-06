@@ -20,18 +20,18 @@ import {
 import { can } from '@/lib/perms';
 import { RecurringEventRow } from '@/lib/types';
 import {
-  EVENT_TYPE_LABELS,
   EVENT_TYPE_OPTIONS,
   eventBadgeClass,
+  eventTypeKey,
   formatDate,
   formatMeetingTime,
-  WEEKDAY_LABELS,
+  weekdayKey,
   WEEKDAY_OPTIONS,
-  weekdayZh,
 } from '@/lib/labels';
+import { useT } from '@/lib/i18n';
 import { EventType, Weekday } from '@tog/shared';
 
-/** The next date this rule will land on, for the 「下次」 column. */
+/** The next date this rule will land on, for the "next" column. */
 function nextOccurrence(weekday: Weekday, time: string): Date {
   const WEEKDAY_INDEX: Record<string, number> = {
     sunday: 0, monday: 1, tuesday: 2, wednesday: 3, thursday: 4, friday: 5, saturday: 6,
@@ -49,6 +49,7 @@ function nextOccurrence(weekday: Weekday, time: string): Date {
 
 export default function RecurringEventsPage() {
   const router = useRouter();
+  const t = useT();
   const toast = useToast();
   const confirm = useConfirm();
   const perms = can(useMe().role);
@@ -59,13 +60,13 @@ export default function RecurringEventsPage() {
 
   usePageChrome(
     {
-      title: '循环聚会',
-      subtitle: '固定时间的聚会自动排入日历 · 无需每周手动新增',
+      title: t('recurring.title'),
+      subtitle: t('recurring.subtitle'),
       action: perms.write ? (
-        <button className="btn" onClick={() => setAddOpen(true)}>＋ 新增循环</button>
+        <button className="btn" onClick={() => setAddOpen(true)}>{t('recurring.add')}</button>
       ) : undefined,
     },
-    [perms.write],
+    [perms.write, t],
   );
 
   const rows = useMemo(
@@ -82,7 +83,7 @@ export default function RecurringEventsPage() {
     (r, key) => {
       switch (key) {
         case 'type':
-          return EVENT_TYPE_LABELS[r.event_type] ?? r.event_type;
+          return t(eventTypeKey(r.event_type));
         case 'when':
           return `${r.weekday}${r.start_time}`;
         case 'hall':
@@ -100,16 +101,16 @@ export default function RecurringEventsPage() {
 
   const remove = async (r: RecurringEventRow): Promise<boolean> => {
     const ok = await confirm({
-      title: '删除循环聚会',
-      message: `删除「${r.title}」的循环设定？已经排入日历的聚会会保留（出席记录不受影响），只是往后不再自动新增。`,
-      confirmText: '删除',
+      title: t('recurring.delete.title'),
+      message: t('recurring.delete.message', { name: r.title }),
+      confirmText: t('common.delete'),
       danger: true,
     });
     if (!ok) return false;
     try {
       await api.delete(`/recurring-events/${r.id}`);
       rules.reload();
-      toast('已删除循环设定');
+      toast(t('recurring.toast.deleted'));
       return true;
     } catch (e) {
       toast((e as Error).message, 'error');
@@ -121,7 +122,7 @@ export default function RecurringEventsPage() {
     try {
       await api.patch(`/recurring-events/${r.id}`, { active: !r.active });
       rules.reload();
-      toast(r.active ? '已停用' : '已启用');
+      toast(r.active ? t('recurring.toast.paused') : t('recurring.toast.resumed'));
     } catch (e) {
       toast((e as Error).message, 'error');
     }
@@ -131,15 +132,11 @@ export default function RecurringEventsPage() {
 
   return (
     <>
-      <button className="back-btn" onClick={() => router.push('/events')}>‹ 返回聚会与出席</button>
+      <button className="back-btn" onClick={() => router.push('/events')}>{t('recurring.back')}</button>
 
       <ErrorBanner message={rules.error} />
 
-      <div className="hint mb-16">
-        💡 系统会自动把未来「提前天数」内的聚会排进日历（预设 35 天，约一个月）。
-        已排进去的那一次若手动删掉（例如公假停聚），不会被重新加回来；
-        修改星期或时间也只影响之后新排的，已排好的不受影响。
-      </div>
+      <div className="hint mb-16">{t('recurring.hint')}</div>
 
       {/* Desktop — table */}
       <div className="card only-desktop" style={{ padding: 6 }}>
@@ -147,15 +144,15 @@ export default function RecurringEventsPage() {
           <table className="table-fixed">
             <thead>
               <tr>
-                <SortTh sortKey="title" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>名称</SortTh>
-                <SortTh sortKey="type" activeKey={sortKey} dir={sortDir} onSort={toggleSort} style={{ width: 110 }}>类型</SortTh>
-                <SortTh sortKey="when" activeKey={sortKey} dir={sortDir} onSort={toggleSort} style={{ width: 130 }}>时间</SortTh>
+                <SortTh sortKey="title" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('recurring.col.name')}</SortTh>
+                <SortTh sortKey="type" activeKey={sortKey} dir={sortDir} onSort={toggleSort} style={{ width: 110 }}>{t('recurring.col.type')}</SortTh>
+                <SortTh sortKey="when" activeKey={sortKey} dir={sortDir} onSort={toggleSort} style={{ width: 130 }}>{t('recurring.col.when')}</SortTh>
                 {!hallLocked && (
-                  <SortTh sortKey="hall" activeKey={sortKey} dir={sortDir} onSort={toggleSort} style={{ width: 100 }}>堂会</SortTh>
+                  <SortTh sortKey="hall" activeKey={sortKey} dir={sortDir} onSort={toggleSort} style={{ width: 100 }}>{t('hall.label')}</SortTh>
                 )}
-                <th>地点</th>
-                <SortTh sortKey="next" activeKey={sortKey} dir={sortDir} onSort={toggleSort} style={{ width: 116 }}>下次</SortTh>
-                <SortTh sortKey="active" activeKey={sortKey} dir={sortDir} onSort={toggleSort} style={{ width: 84 }}>状态</SortTh>
+                <th>{t('recurring.col.location')}</th>
+                <SortTh sortKey="next" activeKey={sortKey} dir={sortDir} onSort={toggleSort} style={{ width: 116 }}>{t('recurring.col.next')}</SortTh>
+                <SortTh sortKey="active" activeKey={sortKey} dir={sortDir} onSort={toggleSort} style={{ width: 84 }}>{t('recurring.col.status')}</SortTh>
                 <th style={{ width: 128 }} />
               </tr>
             </thead>
@@ -165,24 +162,31 @@ export default function RecurringEventsPage() {
                   <td><strong>{r.title}</strong></td>
                   <td>
                     <span className={`badge ${eventBadgeClass(r.event_type)}`}>
-                      {EVENT_TYPE_LABELS[r.event_type] ?? r.event_type}
+                      {t(eventTypeKey(r.event_type))}
                     </span>
                   </td>
-                  <td className="muted">每{weekdayZh(r.weekday)} {formatMeetingTime(r.start_time)}</td>
-                  {!hallLocked && <td className="muted">{r.hall?.name ?? '全堂'}</td>}
+                  <td className="muted">
+                    {t('recurring.every', {
+                      day: t(weekdayKey(r.weekday)),
+                      time: formatMeetingTime(r.start_time),
+                    })}
+                  </td>
+                  {!hallLocked && <td className="muted">{r.hall?.name ?? t('hall.allOpen')}</td>}
                   <td className="muted">{r.location ?? '—'}</td>
                   <td className="muted tnum">{r.active ? formatDate(r.next.toISOString()) : '—'}</td>
                   <td>
-                    <span className={`badge ${r.active ? 'b-good' : 'b-gray'}`}>{r.active ? '启用' : '停用'}</span>
+                    <span className={`badge ${r.active ? 'b-good' : 'b-gray'}`}>
+                      {r.active ? t('common.enabled') : t('common.disabled')}
+                    </span>
                   </td>
                   <td style={{ textAlign: 'right' }}>
                     {perms.write && (
                       <button className="btn ghost sm" onClick={() => toggleActive(r)}>
-                        {r.active ? '停用' : '启用'}
+                        {r.active ? t('common.disable') : t('common.enable')}
                       </button>
                     )}
                     {perms.write && (
-                      <button className="btn ghost sm" style={{ marginLeft: 6 }} onClick={() => setEditing(r)}>编辑</button>
+                      <button className="btn ghost sm" style={{ marginLeft: 6 }} onClick={() => setEditing(r)}>{t('common.edit')}</button>
                     )}
                   </td>
                 </tr>
@@ -190,7 +194,7 @@ export default function RecurringEventsPage() {
               {sorted.length === 0 && (
                 <tr>
                   <td colSpan={hallLocked ? 7 : 8} className="empty-inline">
-                    尚无循环聚会，点右上角「＋ 新增循环」建立。
+                    {t('recurring.empty')}
                   </td>
                 </tr>
               )}
@@ -207,25 +211,31 @@ export default function RecurringEventsPage() {
               <div style={{ minWidth: 0 }}>
                 <strong>{r.title}</strong>
                 <span className="muted" style={{ fontSize: 12.5 }}>
-                  {' '}· 每{weekdayZh(r.weekday)} {formatMeetingTime(r.start_time)}
+                  {' · '}
+                  {t('recurring.every', {
+                    day: t(weekdayKey(r.weekday)),
+                    time: formatMeetingTime(r.start_time),
+                  })}
                 </span>
               </div>
               <div className="flex items-center gap-8" style={{ flexShrink: 0 }}>
-                <span className={`badge ${r.active ? 'b-good' : 'b-gray'}`}>{r.active ? '启用' : '停用'}</span>
+                <span className={`badge ${r.active ? 'b-good' : 'b-gray'}`}>
+                  {r.active ? t('common.enabled') : t('common.disabled')}
+                </span>
                 {perms.write && <span className="mtile-cta"><ChevronRightIcon /></span>}
               </div>
             </div>
             <div className="mtile-line">
-              {r.hall?.name ?? '全堂'}
+              {r.hall?.name ?? t('hall.allOpen')}
               {r.location ? ` · ${r.location}` : ''}
-              {r.active ? ` · 下次 ${formatDate(r.next.toISOString())}` : ''}
+              {r.active
+                ? ` ${t('recurring.nextInline', { date: formatDate(r.next.toISOString()) })}`
+                : ''}
             </div>
           </div>
         ))}
         {sorted.length === 0 && (
-          <div className="empty-inline">
-            尚无循环聚会，点右上角「＋ 新增循环」建立。
-          </div>
+          <div className="empty-inline">{t('recurring.empty')}</div>
         )}
       </div>
 
@@ -241,7 +251,7 @@ export default function RecurringEventsPage() {
             setAddOpen(false);
             setEditing(null);
             rules.reload();
-            toast(wasEdit ? '已更新循环设定' : '已新增循环聚会');
+            toast(wasEdit ? t('recurring.toast.updated') : t('recurring.toast.created'));
           }}
           onDelete={
             editing && perms.delete
@@ -269,10 +279,11 @@ function RecurringModal({
   onSaved: () => void;
   onDelete?: () => void;
 }) {
+  const t = useT();
   const toast = useToast();
   const { hallId } = useHallScope();
   const [form, setForm] = useState({
-    title: rule?.title ?? '主日崇拜',
+    title: rule?.title ?? t('recurring.defaultTitle'),
     event_type: (rule?.event_type ?? EventType.Service) as EventType,
     weekday: (rule?.weekday ?? Weekday.Sunday) as Weekday,
     start_time: rule?.start_time?.slice(0, 5) ?? '10:00',
@@ -285,11 +296,11 @@ function RecurringModal({
 
   const save = async () => {
     if (!form.title.trim()) {
-      setErr('请填写名称');
+      setErr(t('recurring.err.name'));
       return;
     }
     if (!form.start_time) {
-      setErr('请填写时间');
+      setErr(t('recurring.err.time'));
       return;
     }
     setSaving(true);
@@ -316,45 +327,45 @@ function RecurringModal({
   };
 
   return (
-    <Modal title={rule ? '编辑循环聚会' : '新增循环聚会'} onClose={onClose}>
+    <Modal title={rule ? t('recurring.edit.title') : t('recurring.new.title')} onClose={onClose}>
       {err && <ErrorBanner message={err} />}
-      <Field label="名称">
-        <input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="例如：主日崇拜" />
+      <Field label={t('recurring.col.name')}>
+        <input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder={t('recurring.titlePlaceholder')} />
       </Field>
       <div className="form-row">
-        <Field label="类型">
+        <Field label={t('events.field.type')}>
           <select value={form.event_type} onChange={(e) => setForm({ ...form, event_type: e.target.value as EventType })}>
-            {EVENT_TYPE_OPTIONS.map((t) => (
-              <option key={t} value={t}>{EVENT_TYPE_LABELS[t]}</option>
+            {EVENT_TYPE_OPTIONS.map((et) => (
+              <option key={et} value={et}>{t(eventTypeKey(et))}</option>
             ))}
           </select>
         </Field>
-        <Field label="堂会">
+        <Field label={t('hall.label')}>
           <HallSelect
             value={form.hall_id}
             onChange={(id) => setForm({ ...form, hall_id: id })}
             allowAll
-            allLabel="全堂 / 联合聚会"
+            allLabel={t('hall.allOpenEvent')}
           />
         </Field>
       </div>
       <div className="form-row">
-        <Field label="每周">
+        <Field label={t('recurring.field.everyWeek')}>
           <select value={form.weekday} onChange={(e) => setForm({ ...form, weekday: e.target.value as Weekday })}>
             {WEEKDAY_OPTIONS.map((d) => (
-              <option key={d} value={d}>{WEEKDAY_LABELS[d]}</option>
+              <option key={d} value={d}>{t(weekdayKey(d))}</option>
             ))}
           </select>
         </Field>
-        <Field label="时间">
+        <Field label={t('training.session.time')}>
           <input type="time" value={form.start_time} onChange={(e) => setForm({ ...form, start_time: e.target.value })} />
         </Field>
       </div>
       <div className="form-row">
-        <Field label="地点">
-          <input value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} placeholder="大堂" />
+        <Field label={t('recurring.col.location')}>
+          <input value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} placeholder={t('recurring.locationPlaceholder')} />
         </Field>
-        <Field label="提前生成（天）">
+        <Field label={t('recurring.field.lookahead')}>
           <input
             type="number"
             min={1}
@@ -364,9 +375,7 @@ function RecurringModal({
           />
         </Field>
       </div>
-      <div className="hint" style={{ marginBottom: 14 }}>
-        💡 提前 35 天 ≈ 一个月，随时都能看到下个月的排程。
-      </div>
+      <div className="hint" style={{ marginBottom: 14 }}>{t('recurring.lookaheadHint')}</div>
       <div className="modal-actions">
         {onDelete && (
           <button
@@ -374,11 +383,11 @@ function RecurringModal({
             style={{ marginRight: 'auto' }}
             onClick={onDelete}
           >
-            删除循环
+            {t('recurring.delete')}
           </button>
         )}
-        <button className="btn ghost" onClick={onClose}>取消</button>
-        <button className="btn" onClick={save} disabled={saving}>{saving ? '保存中…' : '保存'}</button>
+        <button className="btn ghost" onClick={onClose}>{t('common.cancel')}</button>
+        <button className="btn" onClick={save} disabled={saving}>{saving ? t('common.saving') : t('common.save')}</button>
       </div>
     </Modal>
   );

@@ -7,18 +7,21 @@ import { usePageChrome } from '@/components/AppShell';
 import { Card, ErrorBanner, Loading } from '@/components/ui';
 import { EventRow, MemberRow, OverviewRow, ProgramRow } from '@/lib/types';
 import {
-  EVENT_TYPE_LABELS,
   eventBadgeClass,
+  eventTypeKey,
   formatDateTime,
-  memberRoleZh,
+  memberRole,
   roleDot,
+  roleKey,
   roleTagStyle,
   ROLE_ORDER,
 } from '@/lib/labels';
+import { useT } from '@/lib/i18n';
 import { MemberStatus } from '@tog/shared';
 
 export default function DashboardPage() {
-  usePageChrome({ title: '仪表盘', subtitle: '主恩堂教会 · 牧养全貌一览' });
+  const t = useT();
+  usePageChrome({ title: t('dash.title'), subtitle: t('dash.subtitle') }, [t]);
 
   const members = useFetch<MemberRow[]>('/members');
   const events = useFetch<EventRow[]>('/events');
@@ -50,12 +53,13 @@ export default function DashboardPage() {
     const counts: Record<string, number> = {};
     ROLE_ORDER.forEach((r) => (counts[r] = 0));
     for (const m of memberList) {
-      const r = memberRoleZh(m);
+      const r = memberRole(m);
       if (counts[r] != null) counts[r]++;
     }
     const max = Math.max(1, ...Object.values(counts));
     return ROLE_ORDER.map((r) => ({
-      label: r,
+      key: r,
+      label: t(roleKey(r)),
       count: counts[r],
       width: `${(counts[r] / max) * 100}%`,
       // The role's dot colour at ~65% alpha — same palette as the badges but
@@ -63,7 +67,7 @@ export default function DashboardPage() {
       fill: `${roleDot(r)}A6`,
       fg: roleTagStyle(r).color,
     }));
-  }, [memberList]);
+  }, [memberList, t]);
 
   const discFocus = useMemo(
     () =>
@@ -74,10 +78,10 @@ export default function DashboardPage() {
   );
 
   const kpis = [
-    { label: '成员总数', value: memberList.length, suffix: ' 位' },
-    { label: '在册成员', value: activeCount, suffix: ' 位' },
-    { label: '即将聚会', value: upcoming.length, suffix: ' 场' },
-    { label: '门训进行中', value: activePairs, suffix: ' 对' },
+    { label: t('dash.kpi.members'), value: memberList.length, suffix: t('dash.unit.people') },
+    { label: t('dash.kpi.active'), value: activeCount, suffix: t('dash.unit.people') },
+    { label: t('dash.kpi.events'), value: upcoming.length, suffix: t('dash.unit.events') },
+    { label: t('dash.kpi.discipleship'), value: activePairs, suffix: t('dash.unit.pairs') },
   ];
 
   if (loading) return <Loading />;
@@ -100,12 +104,12 @@ export default function DashboardPage() {
 
       <div className="grid g2-wide mt-16">
         <Card
-          title="成员身份分布"
-          right={<span className="muted" style={{ fontSize: 12 }}>共 {memberList.length} 位</span>}
+          title={t('dash.roleChart')}
+          right={<span className="muted" style={{ fontSize: 12 }}>{t('dash.memberTotal', { n: memberList.length })}</span>}
         >
           {roleChart.map((r) => (
             <div
-              key={r.label}
+              key={r.key}
               style={{
                 display: 'grid',
                 gridTemplateColumns: '96px 1fr 34px',
@@ -126,20 +130,20 @@ export default function DashboardPage() {
         </Card>
 
         <Card
-          title="即将到来的聚会"
+          title={t('dash.upcoming')}
           right={
             <Link className="muted" href="/events" style={{ fontSize: 12, fontWeight: 600 }}>
-              查看全部 →
+              {t('dash.viewAll')}
             </Link>
           }
         >
           {upcoming.length === 0 ? (
-            <p className="faint" style={{ fontSize: 13 }}>暂无即将到来的聚会。</p>
+            <p className="faint" style={{ fontSize: 13 }}>{t('dash.noUpcoming')}</p>
           ) : (
             upcoming.slice(0, 5).map((e) => (
               <div key={e.id} className="flex items-center gap-10 flex-wrap" style={{ padding: '11px 0', borderBottom: '1px solid var(--border)' }}>
                 <span className={`badge ${eventBadgeClass(e.event_type)}`}>
-                  {EVENT_TYPE_LABELS[e.event_type] ?? e.event_type}
+                  {t(eventTypeKey(e.event_type))}
                 </span>
                 <strong style={{ fontSize: 13 }}>{e.title}</strong>
                 <div className="grow" />
@@ -154,15 +158,15 @@ export default function DashboardPage() {
 
       <div className="mt-16">
         <Card
-          title="门训进度关注"
+          title={t('dash.discProgress')}
           right={
             <Link className="muted" href="/discipleship" style={{ fontSize: 12, fontWeight: 600 }}>
-              牧者总览 →
+              {t('dash.pastorOverview')}
             </Link>
           }
         >
           {discFocus.length === 0 ? (
-            <p className="faint" style={{ fontSize: 13 }}>暂无进行中的门训配对。</p>
+            <p className="faint" style={{ fontSize: 13 }}>{t('dash.noDisc')}</p>
           ) : (
             discFocus.map((d) => (
               <div key={d.pair_id} className="flex items-center gap-12" style={{ padding: '9px 0', borderBottom: '1px solid var(--border)' }}>

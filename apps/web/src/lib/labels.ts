@@ -1,66 +1,83 @@
 import {
   AccountRole,
-  ACCOUNT_ROLE_LABELS,
   AccountStatus,
   AttendanceStatus,
   ChurchRole,
+  DisplayRole,
+  DISPLAY_ROLE_ORDER,
   EnrollmentStatus,
   EventType,
   Gender,
-  GROUP_POSITION_LABELS,
   GroupPosition,
   MemberStatus,
   PairStatus,
   Weekday,
-  displayRoleZh,
+  displayRole,
 } from '@tog/shared';
+import type { MessageKey } from './i18n/en';
+
+/*
+ * This module never returns a translated string — it returns the *key* the
+ * caller renders through `t()`. That keeps one dictionary as the single source
+ * of wording (G4) and keeps palettes/filters keyed by stable codes so they
+ * survive a language switch.
+ */
 
 /* -------------------------------------------------------------------------
  * Members & derived identity
  * ---------------------------------------------------------------------- */
 
-/** Chinese label for a group position (小组长/副组长/…). */
-export function positionZh(pos: GroupPosition | string | null): string {
-  if (!pos) return '未分组';
-  const l = GROUP_POSITION_LABELS[pos as GroupPosition];
-  return l ? l.zh : String(pos);
+/** Message key for a group position (小组长/副组长/…) — falls back to 未分组. */
+export function positionKey(pos: GroupPosition | string | null): MessageKey {
+  if (!pos) return 'role.ungrouped';
+  return `role.${pos}` as MessageKey;
+}
+
+/** Message key for a display role code. */
+export function roleKey(role: DisplayRole | string): MessageKey {
+  return `role.${role}` as MessageKey;
 }
 
 /** The role shown for a member: 牧师 if pastor, else their group position. */
-export function memberRoleZh(m: {
+export function memberRole(m: {
   church_role: ChurchRole;
   group_position: GroupPosition | null;
-}): string {
-  return displayRoleZh(m);
+}): DisplayRole {
+  return displayRole(m);
 }
 
-const CHURCH_ROLE_LABELS: Record<ChurchRole, string> = {
-  [ChurchRole.Pastor]: '牧师',
-  [ChurchRole.Deacon]: '执事',
-  [ChurchRole.CoWorker]: '同工',
-  [ChurchRole.Member]: '一般成员',
+/** The church-wide role only — never the group position. */
+export function churchRoleKey(role: ChurchRole | string): MessageKey {
+  return `churchRole.${role}` as MessageKey;
+}
+
+/**
+ * The badge palette is keyed by DisplayRole, so a church role has to be mapped
+ * onto its equivalent rank before it can be rendered with `RoleBadge`.
+ */
+const CHURCH_DISPLAY_ROLE: Record<ChurchRole, DisplayRole> = {
+  [ChurchRole.Pastor]: DisplayRole.Pastor,
+  [ChurchRole.Deacon]: DisplayRole.Deacon,
+  [ChurchRole.CoWorker]: DisplayRole.CoWorker,
+  [ChurchRole.Member]: DisplayRole.RegularMember,
 };
 
-/** The church-wide role only (牧师/执事/同工/一般成员) — never the group position. */
-export function churchRoleZh(role: ChurchRole): string {
-  return CHURCH_ROLE_LABELS[role] ?? String(role);
+export function churchDisplayRole(role: ChurchRole | string): DisplayRole {
+  return CHURCH_DISPLAY_ROLE[role as ChurchRole] ?? DisplayRole.Ungrouped;
 }
 
-/** Full display order for the seven ranks, for filter chips + charts. */
-export const ROLE_ORDER = [
-  '牧师',
-  '执事',
-  '同工',
-  '小组长',
-  '副组长',
-  '实习组长',
-  '核心成员',
-  '普通成员',
-  '新成员',
-] as const;
+export const CHURCH_ROLE_OPTIONS: ChurchRole[] = [
+  ChurchRole.Pastor,
+  ChurchRole.Deacon,
+  ChurchRole.CoWorker,
+  ChurchRole.Member,
+];
 
-/** Member-directory filter chips: the seven ranks plus 未分组 (unassigned). */
-export const MEMBER_ROLE_FILTERS = [...ROLE_ORDER, '未分组'] as const;
+/** Full display order for the ranks, for filter dropdowns + charts. */
+export const ROLE_ORDER = DISPLAY_ROLE_ORDER;
+
+/** Member-directory filters: the ranks plus 未分组 (unassigned). */
+export const MEMBER_ROLE_FILTERS: DisplayRole[] = [...ROLE_ORDER, DisplayRole.Ungrouped];
 
 /**
  * The six in-group ranks, in promotion order — shared by 小组管理's position
@@ -80,16 +97,6 @@ export const GROUP_POSITION_OPTIONS: GroupPosition[] = [
  * Groups — meeting schedule
  * ---------------------------------------------------------------------- */
 
-export const WEEKDAY_LABELS: Record<Weekday, string> = {
-  [Weekday.Sunday]: '周日',
-  [Weekday.Monday]: '周一',
-  [Weekday.Tuesday]: '周二',
-  [Weekday.Wednesday]: '周三',
-  [Weekday.Thursday]: '周四',
-  [Weekday.Friday]: '周五',
-  [Weekday.Saturday]: '周六',
-};
-
 export const WEEKDAY_OPTIONS: Weekday[] = [
   Weekday.Sunday,
   Weekday.Monday,
@@ -100,9 +107,8 @@ export const WEEKDAY_OPTIONS: Weekday[] = [
   Weekday.Saturday,
 ];
 
-export function weekdayZh(day: Weekday | string | null): string {
-  if (!day) return '';
-  return WEEKDAY_LABELS[day as Weekday] ?? String(day);
+export function weekdayKey(day: Weekday | string): MessageKey {
+  return `weekday.${day}` as MessageKey;
 }
 
 /** Postgres `time` comes back as "HH:MM:SS" — trim to "HH:MM" for display. */
@@ -111,17 +117,21 @@ export function formatMeetingTime(time: string | null): string {
 }
 
 /** Combined "周二 20:00 · Emily家" summary for lists — blank pieces are skipped. */
-export function meetingScheduleZh(g: { meeting_day: Weekday | string | null; meeting_time: string | null; location: string | null }): string {
-  const dayTime = [weekdayZh(g.meeting_day), formatMeetingTime(g.meeting_time)].filter(Boolean).join(' ');
+export function meetingSchedule(
+  g: { meeting_day: Weekday | string | null; meeting_time: string | null; location: string | null },
+  t: (key: MessageKey) => string,
+): string {
+  const day = g.meeting_day ? t(weekdayKey(g.meeting_day)) : '';
+  const dayTime = [day, formatMeetingTime(g.meeting_time)].filter(Boolean).join(' ');
   return [dayTime, g.location].filter(Boolean).join(' · ');
 }
 
 /**
  * Group health — derived purely from member counts (never stored): whether a
  * group is ready to split into two, could use more people, or is balanced.
- *   可分植 (splittable):    total > 10 and new-member count <= 2
- *   可加人 (needs members): total < 10 and new-member count <= old-member count
- *   刚好 (balanced):        everything else (incl. total === 10 exactly)
+ *   splittable:    total > 10 and new-member count <= 2
+ *   need_members:  total < 10 and new-member count <= old-member count
+ *   balanced:      everything else (incl. total === 10 exactly)
  */
 export type GroupHealthStatus = 'splittable' | 'need_members' | 'balanced';
 
@@ -132,11 +142,9 @@ export function groupHealthStatus(totalMembers: number, newMembers: number): Gro
   return 'balanced';
 }
 
-export const GROUP_HEALTH_LABELS: Record<GroupHealthStatus, string> = {
-  splittable: '可分植',
-  need_members: '可加人',
-  balanced: '刚好',
-};
+export function groupHealthKey(status: GroupHealthStatus): MessageKey {
+  return `groupHealth.${status}` as MessageKey;
+}
 
 export function groupHealthClass(status: GroupHealthStatus): string {
   switch (status) {
@@ -152,40 +160,40 @@ export function groupHealthClass(status: GroupHealthStatus): string {
 /**
  * Per-role tag palette — matches the Claude Design `roleTags` exactly. Each
  * derived role gets its own colour family (bg / fg / dot), not a shared tone.
+ * Keyed by the DisplayRole code so the colours survive a language switch.
  */
 export const ROLE_TAG: Record<string, { bg: string; fg: string; dot: string }> = {
-  牧师: { bg: '#fbe3e0', fg: '#b3261e', dot: '#d1362b' },
-  执事: { bg: '#fde2ef', fg: '#a3266d', dot: '#c93b8d' },
-  同工: { bg: '#dcf3ee', fg: '#157866', dot: '#22a087' },
-  一般成员: { bg: '#e5e8ec', fg: '#4a5560', dot: '#7c8894' },
-  小组长: { bg: '#fce7d4', fg: '#b5650f', dot: '#e0862b' },
-  副组长: { bg: '#faf0c6', fg: '#8a6a0d', dot: '#d4a715' },
-  实习组长: { bg: '#d7f0df', fg: '#1f7a44', dot: '#2f9e5b' },
-  核心成员: { bg: '#dae8fb', fg: '#1d5fb8', dot: '#2f7ad1' },
-  普通成员: { bg: '#e5e8ec', fg: '#4a5560', dot: '#7c8894' },
-  新成员: { bg: '#eae1f8', fg: '#6b3fa0', dot: '#8b5cc7' },
-  访客: { bg: '#ece9e6', fg: '#7a736e', dot: '#b0a49b' },
-  未分组: { bg: '#f0eeec', fg: '#9a938f', dot: '#c3bbb6' },
+  [DisplayRole.Pastor]: { bg: '#fbe3e0', fg: '#b3261e', dot: '#d1362b' },
+  [DisplayRole.Deacon]: { bg: '#fde2ef', fg: '#a3266d', dot: '#c93b8d' },
+  [DisplayRole.CoWorker]: { bg: '#dcf3ee', fg: '#157866', dot: '#22a087' },
+  [DisplayRole.Leader]: { bg: '#fce7d4', fg: '#b5650f', dot: '#e0862b' },
+  [DisplayRole.AssistantLeader]: { bg: '#faf0c6', fg: '#8a6a0d', dot: '#d4a715' },
+  [DisplayRole.InternLeader]: { bg: '#d7f0df', fg: '#1f7a44', dot: '#2f9e5b' },
+  [DisplayRole.CoreMember]: { bg: '#dae8fb', fg: '#1d5fb8', dot: '#2f7ad1' },
+  [DisplayRole.RegularMember]: { bg: '#e5e8ec', fg: '#4a5560', dot: '#7c8894' },
+  [DisplayRole.NewMember]: { bg: '#eae1f8', fg: '#6b3fa0', dot: '#8b5cc7' },
+  [DisplayRole.Visitor]: { bg: '#ece9e6', fg: '#7a736e', dot: '#b0a49b' },
+  [DisplayRole.Ungrouped]: { bg: '#f0eeec', fg: '#9a938f', dot: '#c3bbb6' },
 };
 
 /** Inline background/color for a role badge (design roleTag). */
 export function roleTagStyle(role: string): { background: string; color: string } {
-  const t = ROLE_TAG[role] ?? ROLE_TAG['未分组'];
+  const t = ROLE_TAG[role] ?? ROLE_TAG[DisplayRole.Ungrouped];
   return { background: t.bg, color: t.fg };
 }
 
-/** Dot colour for a role (design roleDot) — also used by the 身份分布 chart. */
+/** Dot colour for a role (design roleDot) — also used by the identity chart. */
 export function roleDot(role: string): string {
-  return (ROLE_TAG[role] ?? ROLE_TAG['未分组']).dot;
+  return (ROLE_TAG[role] ?? ROLE_TAG[DisplayRole.Ungrouped]).dot;
 }
 
-export const MEMBER_STATUS_LABELS: Record<MemberStatus, string> = {
-  [MemberStatus.Active]: '在册',
-  [MemberStatus.Inactive]: '停止聚会',
-};
+export const MEMBER_STATUS_OPTIONS: MemberStatus[] = [
+  MemberStatus.Active,
+  MemberStatus.Inactive,
+];
 
-export function memberStatusLabel(status: string): string {
-  return MEMBER_STATUS_LABELS[status as MemberStatus] ?? status;
+export function memberStatusKey(status: string): MessageKey {
+  return `memberStatus.${status}` as MessageKey;
 }
 
 export function memberStatusClass(status: string): string {
@@ -193,31 +201,27 @@ export function memberStatusClass(status: string): string {
   return 'b-gray';
 }
 
-export const GENDER_LABELS: Record<string, string> = {
-  [Gender.Male]: '男',
-  [Gender.Female]: '女',
-  [Gender.Other]: '其他',
-};
+export const GENDER_OPTIONS: Gender[] = [Gender.Male, Gender.Female, Gender.Other];
+
+export function genderKey(gender: string): MessageKey {
+  return `gender.${gender}` as MessageKey;
+}
 
 /* -------------------------------------------------------------------------
  * Events & attendance
  * ---------------------------------------------------------------------- */
 
-export const EVENT_TYPE_LABELS: Record<string, string> = {
-  [EventType.Service]: '主日崇拜',
-  [EventType.Meeting]: '聚会',
-  [EventType.Prayer]: '祷告会',
-  [EventType.Fellowship]: '团契',
-  [EventType.Other]: '其他',
-};
-
-export const EVENT_TYPE_OPTIONS = [
+export const EVENT_TYPE_OPTIONS: EventType[] = [
   EventType.Service,
   EventType.Meeting,
   EventType.Prayer,
   EventType.Fellowship,
   EventType.Other,
 ];
+
+export function eventTypeKey(type: string): MessageKey {
+  return `eventType.${type}` as MessageKey;
+}
 
 export function eventBadgeClass(type: string): string {
   if (type === EventType.Service) return 'b-brand';
@@ -227,30 +231,50 @@ export function eventBadgeClass(type: string): string {
   return 'b-gray';
 }
 
-export const ATTENDANCE_LABELS: Record<string, string> = {
-  [AttendanceStatus.Present]: '出席',
-  [AttendanceStatus.Excused]: '请假',
-  [AttendanceStatus.Absent]: '缺席',
-};
+export const ATTENDANCE_OPTIONS: AttendanceStatus[] = [
+  AttendanceStatus.Present,
+  AttendanceStatus.Excused,
+  AttendanceStatus.Absent,
+];
+
+export function attendanceKey(status: string): MessageKey {
+  return `attendance.${status}` as MessageKey;
+}
 
 /* -------------------------------------------------------------------------
  * Trainings & enrollment
  * ---------------------------------------------------------------------- */
 
-export const TRAINING_CATEGORIES = ['门徒', '栽培', '事奉'];
+/**
+ * Category is a free-text column, so the three seeded values are stored as the
+ * original Chinese words. They are mapped to a dictionary key for display; any
+ * other value a church types in is shown verbatim.
+ */
+const TRAINING_CATEGORY_KEYS: Record<string, MessageKey> = {
+  门徒: 'trainingCategory.discipleship',
+  栽培: 'trainingCategory.nurture',
+  事奉: 'trainingCategory.service',
+};
+
+export const TRAINING_CATEGORIES = Object.keys(TRAINING_CATEGORY_KEYS);
+
+export function trainingCategoryLabel(
+  category: string | null,
+  t: (key: MessageKey) => string,
+): string {
+  if (!category) return '';
+  const key = TRAINING_CATEGORY_KEYS[category];
+  return key ? t(key) : category;
+}
 
 /** Training-category tag — the design uses the accent tone for all categories. */
 export function categoryBadgeClass(_cat: string | null): string {
   return 'b-accent';
 }
 
-export const ENROLLMENT_STATUS_LABELS: Record<string, string> = {
-  [EnrollmentStatus.Pending]: '待审核',
-  [EnrollmentStatus.Approved]: '已通过',
-  [EnrollmentStatus.InProgress]: '进行中',
-  [EnrollmentStatus.Completed]: '已完成',
-  [EnrollmentStatus.Dropped]: '已退出',
-};
+export function enrollmentStatusKey(status: string): MessageKey {
+  return `enrollment.${status}` as MessageKey;
+}
 
 export function enrollmentStatusClass(status: string): string {
   switch (status) {
@@ -270,11 +294,9 @@ export function enrollmentStatusClass(status: string): string {
  * Discipleship
  * ---------------------------------------------------------------------- */
 
-export const PAIR_STATUS_LABELS: Record<string, string> = {
-  [PairStatus.Active]: '进行中',
-  [PairStatus.Completed]: '已完成',
-  [PairStatus.Paused]: '已暂停',
-};
+export function pairStatusKey(status: string): MessageKey {
+  return `pairStatus.${status}` as MessageKey;
+}
 
 export function pairStatusClass(status: string): string {
   switch (status) {
@@ -291,31 +313,33 @@ export function pairStatusClass(status: string): string {
  * Accounts (用户管理)
  * ---------------------------------------------------------------------- */
 
-export const ACCOUNT_ROLE_ZH = ACCOUNT_ROLE_LABELS;
+export function accountRoleKey(role: AccountRole | string): MessageKey {
+  return `accountRole.${role}` as MessageKey;
+}
 
 /** What each permission role can do — shown in 用户管理 for clarity. */
-export const ACCOUNT_ROLE_PERMISSIONS: Record<AccountRole, string[]> = {
+export const ACCOUNT_ROLE_PERMISSION_KEYS: Record<AccountRole, MessageKey[]> = {
   [AccountRole.SuperAdmin]: [
-    '全部权限',
-    '用户与权限管理',
-    '系统设置',
-    '所有牧养模块的增 / 删 / 改 / 查',
+    'accountRole.perm.super_admin.1',
+    'accountRole.perm.super_admin.2',
+    'accountRole.perm.super_admin.3',
+    'accountRole.perm.super_admin.4',
   ],
   [AccountRole.Admin]: [
-    '成员 / 小组 / 聚会 / 培训 / 门训 的增 / 删 / 改 / 查',
-    '在小组管理中分配身份',
-    '不可管理登录账户与权限',
+    'accountRole.perm.admin.1',
+    'accountRole.perm.admin.2',
+    'accountRole.perm.admin.3',
   ],
   [AccountRole.Coworker]: [
-    '点名 / 培训出席 / 门训进度',
-    '编辑成员基本资料',
-    '不可删除记录',
-    '不可管理账户或更改身份分配',
+    'accountRole.perm.coworker.1',
+    'accountRole.perm.coworker.2',
+    'accountRole.perm.coworker.3',
+    'accountRole.perm.coworker.4',
   ],
-  [AccountRole.ReadOnly]: ['仅查看所有数据', '不可进行任何修改'],
+  [AccountRole.ReadOnly]: ['accountRole.perm.readonly.1', 'accountRole.perm.readonly.2'],
 };
 
-export const ACCOUNT_ROLE_OPTIONS = [
+export const ACCOUNT_ROLE_OPTIONS: AccountRole[] = [
   AccountRole.SuperAdmin,
   AccountRole.Admin,
   AccountRole.Coworker,
@@ -335,8 +359,8 @@ export function accountRoleClass(role: string): string {
   }
 }
 
-export function accountStatusLabel(status: string): string {
-  return status === AccountStatus.Active ? '启用' : '停用';
+export function accountStatusKey(status: string): MessageKey {
+  return status === AccountStatus.Active ? 'accountStatus.active' : 'accountStatus.disabled';
 }
 
 export function accountStatusClass(status: string): string {
@@ -349,7 +373,12 @@ export function accountStatusClass(status: string): string {
 
 export function initialOf(name: string | null | undefined): string {
   if (!name) return '?';
-  return name.trim().slice(-2);
+  const trimmed = name.trim();
+  if (!trimmed) return '?';
+  // CJK names read best as the last two characters; Latin ones as the initial.
+  return /[\u3400-\u9fff]/.test(trimmed)
+    ? trimmed.slice(-2)
+    : trimmed.slice(0, 1).toUpperCase();
 }
 
 export function formatDate(value: string | null | undefined): string {
@@ -365,7 +394,7 @@ export function formatDateTime(value: string | null | undefined): string {
   if (!value) return '—';
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return String(value);
-  const date = `${d.getMonth() + 1}月${d.getDate()}日`;
+  const date = `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   const time = `${String(d.getHours()).padStart(2, '0')}:${String(
     d.getMinutes(),
   ).padStart(2, '0')}`;

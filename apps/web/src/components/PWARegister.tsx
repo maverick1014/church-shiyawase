@@ -4,7 +4,7 @@ import { useEffect } from 'react';
 
 /**
  * Registers the service worker so the app is installable on mobile
- * ("添加到主屏幕"). Renders nothing; mounted once in the root layout.
+ * (Add to Home Screen). Renders nothing; mounted once in the root layout.
  */
 export function PWARegister() {
   useEffect(() => {

@@ -7,6 +7,7 @@ import {
   signSession,
   verifyPassword,
 } from '@/lib/server/auth';
+import { LANGUAGES, normalizeLanguage } from '@tog/shared';
 
 /**
  * The whole REST API, ported from the NestJS app into a single Cloudflare
@@ -74,17 +75,17 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
   let hallScope: string | null = null;
   if (!isPublicForm) {
     const session = await getSession(req);
-    if (!session) throw new HttpError(401, '未登录');
+    if (!session) throw new HttpError(401, 'Not signed in');
     hallScope = session.hall ?? null;
     // Login accounts (emails, roles, sign-in history) are super_admin-only —
     // for reads as well as writes (rule G2), so the account list never leaks.
     if (r0 === 'accounts' && session.role !== 'super_admin')
-      throw new HttpError(403, '仅超级管理员可管理登录账户');
+      throw new HttpError(403, 'Only a super admin may manage login accounts');
     if (method !== 'GET') {
       // Permission matrix enforcement.
-      if (session.role === 'readonly') throw new HttpError(403, '只读账户无法修改');
+      if (session.role === 'readonly') throw new HttpError(403, 'A read-only account cannot make changes');
       if (method === 'DELETE' && !['super_admin', 'admin'].includes(session.role))
-        throw new HttpError(403, '当前角色无删除权限');
+        throw new HttpError(403, 'This role may not delete records');
     }
   }
 
@@ -100,7 +101,7 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
   /** Reject an update that would move a record out of the caller's hall. */
   const assertHallWritable = (dto: Record<string, unknown>) => {
     if (hallScope && 'hall_id' in dto && dto.hall_id !== hallScope)
-      throw new HttpError(403, '无法将资料移至其他堂会');
+      throw new HttpError(403, 'Cannot move this record to another congregation');
   };
 
   /**
@@ -113,7 +114,7 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
     const row = unwrap<{ hall_id: string | null }>(
       await db.from(table).select('hall_id').eq('id', id).single(),
     );
-    if (row.hall_id !== hallScope) throw new HttpError(403, '无权修改其他堂会的资料');
+    if (row.hall_id !== hallScope) throw new HttpError(403, 'No permission to modify another congregation\u2019s records');
   };
 
   // ---- Halls (堂会) ----------------------------------------------------------
@@ -158,9 +159,9 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
     } else if (r2 === 'avatar' && method === 'POST') {
       const form = await req.formData();
       const file = form.get('file');
-      if (!(file instanceof File)) throw new HttpError(400, '缺少文件');
-      if (!(file.type || '').startsWith('image/')) throw new HttpError(400, '仅支持图片文件');
-      if (file.size > 5 * 1024 * 1024) throw new HttpError(400, '图片不可超过 5MB');
+      if (!(file instanceof File)) throw new HttpError(400, 'No file uploaded');
+      if (!(file.type || '').startsWith('image/')) throw new HttpError(400, 'Only image files are supported');
+      if (file.size > 5 * 1024 * 1024) throw new HttpError(400, 'The image must be 5MB or smaller');
       const ext = (file.name.split('.').pop() || 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
       const path = `${r1}/${Date.now()}.${ext}`;
       const bytes = new Uint8Array(await file.arrayBuffer());
@@ -705,7 +706,7 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
       // Super-admin resets an account's password (gate already restricts
       // non-GET /accounts to super_admin). No current-password needed.
       const pw = String((await body()).password ?? '');
-      if (pw.length < 8) throw new HttpError(400, '密码至少 8 位');
+      if (pw.length < 8) throw new HttpError(400, 'The password must be at least 8 characters');
       unwrap(
         await db
           .from('app_users')
@@ -975,9 +976,9 @@ async function authRoute(
       password_hash: string | null;
       member: { id: string; full_name: string } | null;
     } | null;
-    if (!user || user.status !== 'active') throw new HttpError(401, '账户不存在或已停用');
+    if (!user || user.status !== 'active') throw new HttpError(401, 'The account does not exist or has been disabled');
     const ok = await verifyPassword(dto.password ?? '', user.password_hash);
-    if (!ok) throw new HttpError(401, '邮箱或密码错误');
+    if (!ok) throw new HttpError(401, 'Incorrect email or password');
     await db
       .from('app_users')
       .update({ last_sign_in_at: new Date().toISOString() })
@@ -1000,21 +1001,34 @@ async function authRoute(
   }
   if (p[1] === 'me' && method === 'GET') {
     const s = await getSession(req);
-    if (!s) throw new HttpError(401, '未登录');
-    return json({ id: s.sub, role: s.role, member: s.member, hall: s.hall ?? null, name: s.name });
+    if (!s) throw new HttpError(401, 'Not signed in');
+    // The interface language is read live rather than baked into the session
+    // cookie, so changing it in 用户管理 takes effect on the next page load
+    // instead of only after signing out and back in.
+    const row = (
+      await db.from('app_users').select('language').eq('id', s.sub).maybeSingle()
+    ).data as { language: string | null } | null;
+    return json({
+      id: s.sub,
+      role: s.role,
+      member: s.member,
+      hall: s.hall ?? null,
+      name: s.name,
+      language: normalizeLanguage(row?.language),
+    });
   }
   // Self-service password change — any logged-in user, verifies the old password.
   if (p[1] === 'password' && method === 'POST') {
     const s = await getSession(req);
-    if (!s) throw new HttpError(401, '未登录');
+    if (!s) throw new HttpError(401, 'Not signed in');
     const dto = (await req.json().catch(() => ({}))) as { current?: string; password?: string };
     const next = String(dto.password ?? '');
-    if (next.length < 8) throw new HttpError(400, '新密码至少 8 位');
+    if (next.length < 8) throw new HttpError(400, 'The new password must be at least 8 characters');
     const cur = unwrap(
       await db.from('app_users').select('password_hash').eq('id', s.sub).single(),
     ) as { password_hash: string | null };
     if (!(await verifyPassword(dto.current ?? '', cur.password_hash)))
-      throw new HttpError(401, '当前密码不正确');
+      throw new HttpError(401, 'The current password is incorrect');
     unwrap(
       await db
         .from('app_users')
@@ -1042,7 +1056,7 @@ async function accountWrite(
 ): Promise<Record<string, unknown>> {
   const { password, email: _email, ...rest } = body;
   if (typeof password === 'string' && password.length > 0) {
-    if (password.length < 8) throw new HttpError(400, '密码至少 8 位');
+    if (password.length < 8) throw new HttpError(400, 'The password must be at least 8 characters');
     rest.password_hash = await hashPassword(password);
   }
   const memberId = (rest.member_id as string | undefined) ?? opts.existingMemberId;
@@ -1050,8 +1064,15 @@ async function accountWrite(
     const member = unwrap(
       await db.from('members').select('email').eq('id', memberId).single<{ email: string | null }>(),
     );
-    if (!member.email) throw new HttpError(400, '该成员尚未填写邮箱，请先在成员资料中补上邮箱');
+    if (!member.email) throw new HttpError(400, 'This member has no email yet \u2014 add one to their profile first');
     rest.email = member.email;
+  }
+  // Only the three supported interface languages may be stored, so a stale
+  // client (or a hand-rolled request) can never park an account on a language
+  // the app has no dictionary for.
+  if (rest.language !== undefined) {
+    if (!(LANGUAGES as readonly string[]).includes(String(rest.language)))
+      throw new HttpError(400, `Unsupported language: ${String(rest.language)}`);
   }
   return rest;
 }

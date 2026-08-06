@@ -54,38 +54,59 @@ export const LEADERSHIP_POSITIONS: GroupPosition[] = [
   GroupPosition.InternLeader,
 ];
 
-export const GROUP_POSITION_LABELS: Record<GroupPosition, { en: string; zh: string }> = {
-  [GroupPosition.Leader]: { en: 'Group Leader', zh: '小组长' },
-  [GroupPosition.AssistantLeader]: { en: 'Assistant Leader', zh: '副组长' },
-  [GroupPosition.InternLeader]: { en: 'Intern Leader', zh: '实习组长' },
-  [GroupPosition.CoreMember]: { en: 'Core Member', zh: '核心成员' },
-  [GroupPosition.RegularMember]: { en: 'Regular Member', zh: '普通成员' },
-  [GroupPosition.NewMember]: { en: 'New Member', zh: '新成员' },
-};
+/**
+ * The single rank shown for a member in the directory, badges and charts. It is
+ * a language-independent code (never a translated label) so it can key colour
+ * palettes, filters and sort orders without breaking when the UI language
+ * changes — the label comes from the i18n dictionary at render time.
+ */
+export enum DisplayRole {
+  Pastor = 'pastor',
+  Deacon = 'deacon',
+  CoWorker = 'co_worker',
+  Leader = 'leader',
+  AssistantLeader = 'assistant_leader',
+  InternLeader = 'intern_leader',
+  CoreMember = 'core_member',
+  RegularMember = 'regular_member',
+  NewMember = 'new_member',
+  Visitor = 'visitor',
+  Ungrouped = 'ungrouped',
+}
 
 /** Full display order for the ranks (church-wide roles first, then group positions). */
-export const DISPLAY_ROLE_ORDER: string[] = [
-  '牧师',
-  '执事',
-  '同工',
-  '小组长',
-  '副组长',
-  '实习组长',
-  '核心成员',
-  '普通成员',
-  '新成员',
+export const DISPLAY_ROLE_ORDER: DisplayRole[] = [
+  DisplayRole.Pastor,
+  DisplayRole.Deacon,
+  DisplayRole.CoWorker,
+  DisplayRole.Leader,
+  DisplayRole.AssistantLeader,
+  DisplayRole.InternLeader,
+  DisplayRole.CoreMember,
+  DisplayRole.RegularMember,
+  DisplayRole.NewMember,
 ];
 
+/** A group position maps 1:1 onto the display role of the same rank. */
+const POSITION_DISPLAY_ROLE: Record<GroupPosition, DisplayRole> = {
+  [GroupPosition.Leader]: DisplayRole.Leader,
+  [GroupPosition.AssistantLeader]: DisplayRole.AssistantLeader,
+  [GroupPosition.InternLeader]: DisplayRole.InternLeader,
+  [GroupPosition.CoreMember]: DisplayRole.CoreMember,
+  [GroupPosition.RegularMember]: DisplayRole.RegularMember,
+  [GroupPosition.NewMember]: DisplayRole.NewMember,
+};
+
 /** The role shown in the directory: the church-wide role if set, else the group position. */
-export function displayRoleZh(m: {
+export function displayRole(m: {
   church_role: ChurchRole;
   group_position: GroupPosition | null;
-}): string {
-  if (m.church_role === ChurchRole.Pastor) return '牧师';
-  if (m.church_role === ChurchRole.Deacon) return '执事';
-  if (m.church_role === ChurchRole.CoWorker) return '同工';
-  if (m.group_position) return GROUP_POSITION_LABELS[m.group_position].zh;
-  return '未分组';
+}): DisplayRole {
+  if (m.church_role === ChurchRole.Pastor) return DisplayRole.Pastor;
+  if (m.church_role === ChurchRole.Deacon) return DisplayRole.Deacon;
+  if (m.church_role === ChurchRole.CoWorker) return DisplayRole.CoWorker;
+  if (m.group_position) return POSITION_DISPLAY_ROLE[m.group_position];
+  return DisplayRole.Ungrouped;
 }
 
 /** Only a core member may be promoted to a leadership position. */
@@ -363,16 +384,25 @@ export enum AccountRole {
   ReadOnly = 'readonly', // 只读
 }
 
-export const ACCOUNT_ROLE_LABELS: Record<AccountRole, string> = {
-  [AccountRole.SuperAdmin]: '超级管理员',
-  [AccountRole.Admin]: '管理员',
-  [AccountRole.Coworker]: '同工',
-  [AccountRole.ReadOnly]: '只读',
-};
-
 export enum AccountStatus {
   Active = 'active',
   Disabled = 'disabled',
+}
+
+/**
+ * Interface languages. English is the default and the fallback: it is the base
+ * dictionary every other language is type-checked against.
+ */
+export const LANGUAGES = ['en', 'zh', 'ms'] as const;
+export type Language = (typeof LANGUAGES)[number];
+export const DEFAULT_LANGUAGE: Language = 'en';
+
+/** Coerce a stored/browser language tag (`zh-CN`, `en-US`, …) to a supported one. */
+export function normalizeLanguage(value: string | null | undefined): Language {
+  const base = String(value ?? '').toLowerCase().split(/[-_]/)[0];
+  return (LANGUAGES as readonly string[]).includes(base)
+    ? (base as Language)
+    : DEFAULT_LANGUAGE;
 }
 
 /** A login account, tied one-to-one to a member profile. */
@@ -385,7 +415,8 @@ export interface AppUser {
   hall_id: string | null;
   status: AccountStatus;
   two_factor: boolean;
-  language: string;
+  /** Interface language for this account — 'en' | 'zh' | 'ms'. */
+  language: Language;
   notify_discipleship: boolean;
   notify_donation: boolean;
   notify_weekly: boolean;

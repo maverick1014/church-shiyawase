@@ -1,32 +1,41 @@
 import { describe, it, expect } from 'vitest';
 import {
-  displayRoleZh,
+  displayRole,
   canPromoteToLeadership,
   ChurchRole,
+  DisplayRole,
   GroupPosition,
 } from '@tog/shared';
 
-describe('displayRoleZh', () => {
-  it('returns 牧师 for a pastor', () => {
-    expect(displayRoleZh({ church_role: ChurchRole.Pastor, group_position: null })).toBe('牧师');
+describe('displayRole', () => {
+  it('returns the pastor code for a pastor', () => {
+    expect(displayRole({ church_role: ChurchRole.Pastor, group_position: null })).toBe(
+      DisplayRole.Pastor,
+    );
   });
 
-  it('returns 执事 for a deacon', () => {
-    expect(displayRoleZh({ church_role: ChurchRole.Deacon, group_position: null })).toBe('执事');
+  it('returns the deacon code for a deacon', () => {
+    expect(displayRole({ church_role: ChurchRole.Deacon, group_position: null })).toBe(
+      DisplayRole.Deacon,
+    );
   });
 
-  it('returns 同工 for a co-worker', () => {
-    expect(displayRoleZh({ church_role: ChurchRole.CoWorker, group_position: null })).toBe('同工');
+  it('returns the co-worker code for a co-worker', () => {
+    expect(displayRole({ church_role: ChurchRole.CoWorker, group_position: null })).toBe(
+      DisplayRole.CoWorker,
+    );
   });
 
-  it('returns the group position label for a member with a position', () => {
+  it('falls back to the group position for a plain member', () => {
     expect(
-      displayRoleZh({ church_role: ChurchRole.Member, group_position: GroupPosition.Leader }),
-    ).toBe('小组长');
+      displayRole({ church_role: ChurchRole.Member, group_position: GroupPosition.Leader }),
+    ).toBe(DisplayRole.Leader);
   });
 
-  it('returns 未分组 for a member with no position', () => {
-    expect(displayRoleZh({ church_role: ChurchRole.Member, group_position: null })).toBe('未分组');
+  it('returns ungrouped for a member with no position', () => {
+    expect(displayRole({ church_role: ChurchRole.Member, group_position: null })).toBe(
+      DisplayRole.Ungrouped,
+    );
   });
 });
 

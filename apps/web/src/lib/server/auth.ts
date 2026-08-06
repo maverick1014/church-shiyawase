@@ -30,7 +30,7 @@ function fromB64url(str: string) {
 
 function keyMaterial(): string {
   const k = process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.SUPABASE_ANON_KEY ?? '';
-  if (!k) throw new HttpError(500, '缺少会话签名密钥');
+  if (!k) throw new HttpError(500, 'Missing session signing key');
   return `tog-session::${k}`;
 }
 

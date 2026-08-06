@@ -21,17 +21,19 @@ import {
 import { can } from '@/lib/perms';
 import { GroupRow, MemberRow } from '@/lib/types';
 import {
-  GROUP_HEALTH_LABELS,
   groupHealthClass,
+  groupHealthKey,
   groupHealthStatus,
-  meetingScheduleZh,
-  WEEKDAY_LABELS,
+  meetingSchedule,
+  weekdayKey,
   WEEKDAY_OPTIONS,
 } from '@/lib/labels';
+import { useT } from '@/lib/i18n';
 import { GroupPosition, Weekday } from '@tog/shared';
 
 export default function GroupsPage() {
   const router = useRouter();
+  const t = useT();
   const toast = useToast();
   const perms = can(useMe().role);
   // Only worth a column when the account can actually see more than one hall.
@@ -45,15 +47,15 @@ export default function GroupsPage() {
 
   usePageChrome(
     {
-      title: '小组管理',
-      subtitle: '全部小组一览 · 点击查看详情',
+      title: t('groups.title'),
+      subtitle: t('groups.subtitle'),
       action: perms.write ? (
         <button className="btn" onClick={() => setAddOpen(true)}>
-          ＋ 新增小组
+          {t('groups.add')}
         </button>
       ) : undefined,
     },
-    [perms.write],
+    [perms.write, t],
   );
 
   // Leader + member counts + health status derived once from the
@@ -72,17 +74,17 @@ export default function GroupsPage() {
         hallName: g.hall?.name ?? null,
         tags: g.tags ?? [],
         meetingDay: g.meeting_day,
-        schedule: meetingScheduleZh(g),
+        schedule: meetingSchedule(g, t),
         leaderName: leader?.full_name ?? null,
         memberCount: inGroup.length,
         newMemberCount,
         status: groupHealthStatus(inGroup.length, newMemberCount),
       };
     });
-  }, [groups.data, members.data]);
+  }, [groups.data, members.data, t]);
 
   // Distinct tags across every group, for both the filter dropdown and the
-  // "＋ 新增小组" tag-suggestion autocomplete.
+  // add-group tag-suggestion autocomplete.
   const allTags = useMemo(() => {
     const set = new Set<string>();
     (groups.data ?? []).forEach((g) => (g.tags ?? []).forEach((t) => set.add(t)));
@@ -127,20 +129,20 @@ export default function GroupsPage() {
       <ErrorBanner message={groups.error || members.error} />
 
       <div className="filter-bar">
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="🔍 搜索小组 / 组长…" />
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t('groups.searchPlaceholder')} />
         <select value={tagFilter} onChange={(e) => setTagFilter(e.target.value)}>
-          <option value="all">全部标签</option>
-          {allTags.map((t) => (
-            <option key={t} value={t}>{t}</option>
+          <option value="all">{t('groups.filter.tag')}</option>
+          {allTags.map((tag) => (
+            <option key={tag} value={tag}>{tag}</option>
           ))}
         </select>
         <select
           value={weekdayFilter}
           onChange={(e) => setWeekdayFilter(e.target.value as Weekday | 'all')}
         >
-          <option value="all">全部星期</option>
+          <option value="all">{t('groups.filter.weekday')}</option>
           {WEEKDAY_OPTIONS.map((d) => (
-            <option key={d} value={d}>{WEEKDAY_LABELS[d]}</option>
+            <option key={d} value={d}>{t(weekdayKey(d))}</option>
           ))}
         </select>
       </div>
@@ -151,17 +153,17 @@ export default function GroupsPage() {
           <table className="table-fixed">
             <thead>
               <tr>
-                {/* 小组名称 / 组长 / 聚会时间地点 share the width equally;
-                    组员人数 / 新成员 / 状态 stay narrow utility columns. */}
-                <SortTh sortKey="name" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>小组名称</SortTh>
+                {/* Name / leader / schedule share the width equally; member
+                    count, new-member count and status stay narrow. */}
+                <SortTh sortKey="name" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('groups.col.name')}</SortTh>
                 {!hallLocked && (
-                  <SortTh sortKey="hall" activeKey={sortKey} dir={sortDir} onSort={toggleSort} style={{ width: 96 }}>堂会</SortTh>
+                  <SortTh sortKey="hall" activeKey={sortKey} dir={sortDir} onSort={toggleSort} style={{ width: 96 }}>{t('hall.label')}</SortTh>
                 )}
-                <SortTh sortKey="leader" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>组长</SortTh>
-                <SortTh sortKey="count" activeKey={sortKey} dir={sortDir} onSort={toggleSort} style={{ width: 88 }}>组员人数</SortTh>
-                <SortTh sortKey="new" activeKey={sortKey} dir={sortDir} onSort={toggleSort} style={{ width: 82 }}>新成员</SortTh>
-                <SortTh sortKey="status" activeKey={sortKey} dir={sortDir} onSort={toggleSort} style={{ width: 92 }}>状态</SortTh>
-                <th>聚会时间 / 地点</th>
+                <SortTh sortKey="leader" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('groups.col.leader')}</SortTh>
+                <SortTh sortKey="count" activeKey={sortKey} dir={sortDir} onSort={toggleSort} style={{ width: 88 }}>{t('groups.col.count')}</SortTh>
+                <SortTh sortKey="new" activeKey={sortKey} dir={sortDir} onSort={toggleSort} style={{ width: 82 }}>{t('groups.col.newCount')}</SortTh>
+                <SortTh sortKey="status" activeKey={sortKey} dir={sortDir} onSort={toggleSort} style={{ width: 92 }}>{t('groups.col.status')}</SortTh>
+                <th>{t('groups.col.schedule')}</th>
                 <th style={{ width: 52 }} />
               </tr>
             </thead>
@@ -172,9 +174,9 @@ export default function GroupsPage() {
                     <strong>{g.name}</strong>
                     {g.tags.length > 0 && (
                       <div className="flex gap-4 flex-wrap" style={{ marginTop: 4 }}>
-                        {g.tags.map((t) => (
-                          <span key={t} className="chip on" style={{ padding: '2px 8px', fontSize: 11, cursor: 'default' }}>
-                            {t}
+                        {g.tags.map((tag) => (
+                          <span key={tag} className="chip on" style={{ padding: '2px 8px', fontSize: 11, cursor: 'default' }}>
+                            {tag}
                           </span>
                         ))}
                       </div>
@@ -182,16 +184,16 @@ export default function GroupsPage() {
                   </td>
                   {!hallLocked && <td className="muted">{g.hallName ?? '—'}</td>}
                   <td>
-                    {g.leaderName ? <strong>{g.leaderName}</strong> : <span className="faint">空缺</span>}
+                    {g.leaderName ? <strong>{g.leaderName}</strong> : <span className="faint">{t('common.vacant')}</span>}
                   </td>
                   <td className="muted tnum">{g.memberCount}</td>
                   <td className="muted tnum">{g.newMemberCount}</td>
                   <td>
-                    <span className={`badge ${groupHealthClass(g.status)}`}>{GROUP_HEALTH_LABELS[g.status]}</span>
+                    <span className={`badge ${groupHealthClass(g.status)}`}>{t(groupHealthKey(g.status))}</span>
                   </td>
                   <td className="muted">{g.schedule || '—'}</td>
                   <td style={{ textAlign: 'right' }}>
-                    <RowChevron title="查看详情" onClick={() => router.push(`/groups/${g.id}`)} />
+                    <RowChevron title={t('groups.viewDetail')} onClick={() => router.push(`/groups/${g.id}`)} />
                   </td>
                 </tr>
               ))}
@@ -199,8 +201,8 @@ export default function GroupsPage() {
                 <tr>
                   <td colSpan={hallLocked ? 7 : 8} className="empty-inline">
                     {q.trim() || tagFilter !== 'all' || weekdayFilter !== 'all'
-                      ? '没有符合条件的小组。'
-                      : '尚无小组，点右上角「＋ 新增小组」创建。'}
+                      ? t('groups.empty')
+                      : t('groups.emptyNew')}
                   </td>
                 </tr>
               )}
@@ -216,19 +218,28 @@ export default function GroupsPage() {
             <div className="mtile-row1">
               <div style={{ minWidth: 0 }}>
                 <strong>{g.name}</strong>
-                <span className="muted" style={{ fontSize: 12.5 }}> · 组长 {g.leaderName ?? '空缺'}</span>
+                <span className="muted" style={{ fontSize: 12.5 }}>
+                  {' '}
+                  {t('groups.leaderInline', { name: g.leaderName ?? t('common.vacant') })}
+                </span>
               </div>
               <span className="mtile-cta"><ChevronRightIcon /></span>
             </div>
             <div className="mtile-line flex items-center gap-8 flex-wrap">
-              <span>{g.memberCount} 位组员（新成员 {g.newMemberCount}）{g.schedule ? ` · ${g.schedule}` : ''}</span>
-              <span className={`badge ${groupHealthClass(g.status)}`}>{GROUP_HEALTH_LABELS[g.status]}</span>
+              <span>
+                {t('groups.memberLine', {
+                  n: g.memberCount,
+                  newCount: g.newMemberCount,
+                  schedule: g.schedule ? ` · ${g.schedule}` : '',
+                })}
+              </span>
+              <span className={`badge ${groupHealthClass(g.status)}`}>{t(groupHealthKey(g.status))}</span>
             </div>
             {g.tags.length > 0 && (
               <div className="flex gap-4 flex-wrap" style={{ marginTop: 6 }}>
-                {g.tags.map((t) => (
-                  <span key={t} className="chip on" style={{ padding: '2px 8px', fontSize: 11, cursor: 'default' }}>
-                    {t}
+                {g.tags.map((tag) => (
+                  <span key={tag} className="chip on" style={{ padding: '2px 8px', fontSize: 11, cursor: 'default' }}>
+                    {tag}
                   </span>
                 ))}
               </div>
@@ -238,8 +249,8 @@ export default function GroupsPage() {
         {sorted.length === 0 && (
           <div className="empty-inline">
             {q.trim() || tagFilter !== 'all' || weekdayFilter !== 'all'
-              ? '没有符合条件的小组。'
-              : '尚无小组，点右上角「＋ 新增小组」创建。'}
+              ? t('groups.empty')
+              : t('groups.emptyNew')}
           </div>
         )}
       </div>
@@ -251,7 +262,7 @@ export default function GroupsPage() {
           onSaved={(id) => {
             setAddOpen(false);
             groups.reload();
-            toast('已新增小组');
+            toast(t('groups.toast.created'));
             router.push(`/groups/${id}`);
           }}
         />
@@ -269,6 +280,7 @@ function AddGroupModal({
   onClose: () => void;
   onSaved: (id: string) => void;
 }) {
+  const t = useT();
   const toast = useToast();
   const { halls, hallId } = useHallScope();
   const [name, setName] = useState('');
@@ -286,11 +298,11 @@ function AddGroupModal({
 
   const save = async () => {
     if (!name.trim()) {
-      setErr('请填写小组名称');
+      setErr(t('groups.err.name'));
       return;
     }
     if (!effectiveHallId) {
-      setErr('请选择堂会');
+      setErr(t('members.err.hall'));
       return;
     }
     setSaving(true);
@@ -315,41 +327,41 @@ function AddGroupModal({
   };
 
   return (
-    <Modal title="新增小组" onClose={onClose}>
+    <Modal title={t('groups.new.title')} onClose={onClose}>
       {err && <ErrorBanner message={err} />}
       <div className="form-row">
-        <Field label="小组名称">
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="例如：迦南小组" />
+        <Field label={t('groups.field.name')}>
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder={t('groups.namePlaceholder')} />
         </Field>
-        <Field label="堂会">
+        <Field label={t('hall.label')}>
           <HallSelect value={effectiveHallId} onChange={setHall} />
         </Field>
       </div>
-      <Field label="简介">
-        <input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="新家庭小组" />
+      <Field label={t('groups.field.desc')}>
+        <input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder={t('groups.descPlaceholder')} />
       </Field>
       <div className="form-row">
-        <Field label="聚会日">
+        <Field label={t('groups.field.day')}>
           <select value={meetingDay} onChange={(e) => setMeetingDay(e.target.value as Weekday | '')}>
-            <option value="">未定</option>
+            <option value="">{t('groups.dayUnset')}</option>
             {WEEKDAY_OPTIONS.map((d) => (
-              <option key={d} value={d}>{WEEKDAY_LABELS[d]}</option>
+              <option key={d} value={d}>{t(weekdayKey(d))}</option>
             ))}
           </select>
         </Field>
-        <Field label="聚会时间">
+        <Field label={t('groups.field.time')}>
           <input type="time" className={meetingTime ? undefined : 'date-empty'} value={meetingTime} onChange={(e) => setMeetingTime(e.target.value)} />
         </Field>
       </div>
-      <Field label="地点">
-        <input value={location} onChange={(e) => setLocation(e.target.value)} placeholder="Emily家" />
+      <Field label={t('groups.field.location')}>
+        <input value={location} onChange={(e) => setLocation(e.target.value)} placeholder={t('groups.locationPlaceholder')} />
       </Field>
-      <Field label="标签">
-        <TagsInput value={tags} onChange={setTags} suggestions={allTags} placeholder="例如：职青、晚上…" />
+      <Field label={t('groups.field.tags')}>
+        <TagsInput value={tags} onChange={setTags} suggestions={allTags} placeholder={t('groups.tagsPlaceholder')} />
       </Field>
       <div className="modal-actions">
-        <button className="btn ghost" onClick={onClose}>取消</button>
-        <button className="btn" onClick={save} disabled={saving}>{saving ? '保存中…' : '保存'}</button>
+        <button className="btn ghost" onClick={onClose}>{t('common.cancel')}</button>
+        <button className="btn" onClick={save} disabled={saving}>{saving ? t('common.saving') : t('common.save')}</button>
       </div>
     </Modal>
   );

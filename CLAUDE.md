@@ -1,8 +1,9 @@
 # TOG（主恩堂）Codebase Guide & Golden Rules
 
 Church-management app. Next.js 15 (App Router, React 19) + Supabase, deployed to
-Cloudflare Workers via OpenNext. All UI is Simplified Chinese; light theme only;
-mobile-first. The API is a single catch-all route handler at
+Cloudflare Workers via OpenNext. The UI ships in three languages (English /
+简体中文 / Bahasa Melayu, chosen per login account, English by default); light
+theme only; mobile-first. The API is a single catch-all route handler at
 `apps/web/src/app/api/[...path]/route.ts`; auth is a signed HMAC cookie
 (`lib/server/auth.ts`).
 
@@ -11,13 +12,14 @@ Run before every push: `npm run --workspace @tog/web -s build` (or in
 on unit tests + a post-deploy smoke test (`.github/workflows/deploy.yml`).
 
 Testing layers (in `apps/web`):
-- `npm test` — Vitest unit tests (labels, rules, perms).
+- `npm test` — Vitest unit tests (labels, rules, perms, i18n dictionaries).
 - `npm run test:api-e2e` — API end-to-end against the live Worker (auth, role
   matrix, full CRUD, public form).
 - `npm run test:ui-e2e` — **browser UI end-to-end**: drives the real site in
   Chromium and asserts each interaction's expected outcome (login, search,
-  filters, modals, weekly attendance, discipleship day-notes, a create→delete
-  member write-cycle). It runs a tiny in-process reverse proxy so the browser
+  filters, modals, weekly attendance, discipleship day-notes, an
+  interface-language round-trip, a create→delete member write-cycle). It
+  restores anything it changes. It runs a tiny in-process reverse proxy so the browser
   works even behind an egress proxy. `UI_E2E_PASSWORD` is required (never
   hardcode a real password); `UI_E2E_URL` / `UI_E2E_EMAIL` are optional. In this
   sandbox run it as:
@@ -98,8 +100,21 @@ Tables become list tiles on small screens (`.only-desktop` / `.only-mobile`
 helpers). Two-column layouts collapse to a single full-width column on tablet
 and below. Light theme only — no dark-mode branches or `data-theme` code.
 
-### G8 — Conventions
-- All user-facing strings are Simplified Chinese.
+### G8 — Every user-facing string comes from the dictionary
+- No literal user-facing text in a component — ever. Render it with
+  `useT()` from `lib/i18n` and a key that exists in **all three** dictionaries
+  (`lib/i18n/en.ts` is the base and the fallback; `zh.ts` / `ms.ts` are typed
+  against its key set, and `lib/__tests__/i18n.test.ts` fails the build on a
+  missing key, a blank translation, or a drifted `{placeholder}`).
+- Enum labels (roles, statuses, weekdays, categories…) live in the dictionary
+  too. `lib/labels.ts` returns **message keys**, never text; call sites do
+  `t(memberStatusKey(s))`. A label map that returns a translated string is a
+  finding.
+- Never key data structures — colour palettes, filter values, sort orders — by
+  a translated label. Use the stored code (e.g. `DisplayRole`), or the UI breaks
+  the moment the language changes.
+- The public pages (`/login`, `/d/[token]`, `/enroll/[id]`) have no session and
+  so render in the default language; API error messages are English.
 - Match surrounding code: functional components, hooks at top, shared `ui.tsx`
   building blocks, no new CSS frameworks.
 - Keep `docs/` and this file in sync when a rule or flow changes.
@@ -108,7 +123,7 @@ and below. Light theme only — no dark-mode branches or `data-theme` code.
 - Every single-line control — `input`, `select`, and `.btn` — is sized by the
   shared `--control-h` (small variants by `--control-h-sm`), never by ad-hoc
   per-element padding/height. A `<select>` placed next to a `<button>` (e.g. the
-  「选择成员…」+「＋添加成员」row) must line up in height; a control that doesn't
+  member-picker + add-member row) must line up in height; a control that doesn't
   use the token is a finding. Don't set custom `height`/vertical `padding` on a
   control to "fix" alignment — fix the token or the class.
 - `<select>` uses `appearance: none` with the shared custom chevron (drawn via
@@ -121,5 +136,5 @@ and below. Light theme only — no dark-mode branches or `data-theme` code.
 
 ## Reviewer output
 Report findings most-severe first. Correctness/security (G2, G3, G6) outrank
-CRUD gaps (G1) which outrank cleanup/altitude (G4, G5, G9). Every finding cites a
-concrete failure scenario and, where applicable, the golden-rule number.
+CRUD gaps (G1) which outrank cleanup/altitude (G4, G5, G8, G9). Every finding
+cites a concrete failure scenario and, where applicable, the golden-rule number.

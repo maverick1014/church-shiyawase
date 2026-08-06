@@ -9,16 +9,26 @@ import { Empty, ErrorBanner, Field, HallSelect, Loading, Modal, useConfirm, useT
 import { can } from '@/lib/perms';
 import { EventDetail, EventRow, MemberRow } from '@/lib/types';
 import {
-  ATTENDANCE_LABELS,
+  ATTENDANCE_OPTIONS,
+  attendanceKey,
   eventBadgeClass,
-  EVENT_TYPE_LABELS,
+  eventTypeKey,
   EVENT_TYPE_OPTIONS,
   formatDateTime,
 } from '@/lib/labels';
+import { useT } from '@/lib/i18n';
 import { AttendanceStatus, EventType, MemberStatus } from '@tog/shared';
+
+/** Tone class per attendance option — matches the seg-button palette. */
+const ATTENDANCE_TONE: Record<AttendanceStatus, string> = {
+  [AttendanceStatus.Present]: 'on-good',
+  [AttendanceStatus.Excused]: 'on-warn',
+  [AttendanceStatus.Absent]: 'on-crit',
+};
 
 export default function EventsPage() {
   const router = useRouter();
+  const t = useT();
   const toast = useToast();
   const confirm = useConfirm();
   const perms = can(useMe().role);
@@ -30,20 +40,20 @@ export default function EventsPage() {
 
   usePageChrome(
     {
-      title: '聚会与出席',
-      subtitle: '崇拜 · 祷告会 · 团契 · 逐一点名',
+      title: t('events.title'),
+      subtitle: t('events.subtitle'),
       action: perms.write ? (
         <>
           <button className="btn ghost" onClick={() => router.push('/events/recurring')}>
-            🔁 循环聚会
+            {t('events.recurring')}
           </button>
           <button className="btn" onClick={() => setAddOpen(true)}>
-            ＋ 新增聚会
+            {t('events.add')}
           </button>
         </>
       ) : undefined,
     },
-    [perms.write],
+    [perms.write, t],
   );
 
   const list = events.data ?? [];
@@ -52,16 +62,16 @@ export default function EventsPage() {
 
   const delEvent = async (e: EventRow): Promise<boolean> => {
     const ok = await confirm({
-      title: '删除聚会',
-      message: `删除「${e.title}」及其出席记录？`,
-      confirmText: '删除',
+      title: t('events.delete.title'),
+      message: t('events.delete.message', { name: e.title }),
+      confirmText: t('common.delete'),
       danger: true,
     });
     if (!ok) return false;
     try {
       await api.delete(`/events/${e.id}`);
       events.reload();
-      toast('已删除聚会');
+      toast(t('events.toast.deleted'));
       return true;
     } catch (err) {
       toast((err as Error).message, 'error');
@@ -82,9 +92,9 @@ export default function EventsPage() {
             <div className="card" key={e.id}>
               <div className="flex-between">
                 <span className={`badge ${eventBadgeClass(e.event_type)}`}>
-                  {EVENT_TYPE_LABELS[e.event_type] ?? e.event_type}
+                  {t(eventTypeKey(e.event_type))}
                 </span>
-                <span className="muted" style={{ fontSize: 12 }}>{upcoming ? '即将' : '已结束'}</span>
+                <span className="muted" style={{ fontSize: 12 }}>{upcoming ? t('events.upcoming') : t('events.past')}</span>
               </div>
               <h3 style={{ margin: '12px 0 2px', fontSize: 16 }} className="serif">{e.title}</h3>
               <div className="muted" style={{ fontSize: 12.5 }}>
@@ -94,16 +104,16 @@ export default function EventsPage() {
                 <span className="muted" style={{ fontSize: 12 }}>{e.description ?? ''}</span>
                 <div className="flex gap-6">
                   {perms.write && (
-                    <button className="btn ghost sm" onClick={() => setEditing(e)}>编辑</button>
+                    <button className="btn ghost sm" onClick={() => setEditing(e)}>{t('common.edit')}</button>
                   )}
-                  <button className="btn sm" onClick={() => setActiveId(e.id)}>点名</button>
+                  <button className="btn sm" onClick={() => setActiveId(e.id)}>{t('events.rollCall')}</button>
                 </div>
               </div>
             </div>
           );
         })}
       </div>
-      {sorted.length === 0 && <Empty>尚无聚会，点右上角「＋ 新增聚会」创建。</Empty>}
+      {sorted.length === 0 && <Empty>{t('events.empty')}</Empty>}
 
       {activeId && (
         <AttendancePanel
@@ -112,7 +122,7 @@ export default function EventsPage() {
           members={(members.data ?? []).filter((m) => m.status === MemberStatus.Active)}
           onClose={() => setActiveId(null)}
           onSaved={() => {
-            toast('已保存点名');
+            toast(t('events.toast.attendance'));
             setActiveId(null);
           }}
         />
@@ -129,7 +139,7 @@ export default function EventsPage() {
             setAddOpen(false);
             setEditing(null);
             events.reload();
-            toast(editing ? '已更新聚会' : '已新增聚会');
+            toast(editing ? t('events.toast.updated') : t('events.toast.created'));
           }}
           onDelete={
             editing && perms.delete
@@ -156,6 +166,7 @@ function AttendancePanel({
   onSaved: () => void;
 }) {
   const detail = useFetch<EventDetail>(`/events/${eventId}`);
+  const t = useT();
   const toast = useToast();
   const [marks, setMarks] = useState<Record<string, AttendanceStatus>>({});
   const [saving, setSaving] = useState(false);
@@ -195,12 +206,12 @@ function AttendancePanel({
       {err && <ErrorBanner message={err} />}
       <div className="flex-between" style={{ alignItems: 'flex-start' }}>
         <div>
-          <h3 className="serif" style={{ margin: 0, fontSize: 18 }}>{detail.data?.title ?? '出席点名'} · 出席点名</h3>
-          <div className="muted" style={{ fontSize: 12.5, marginTop: 2 }}>
-            逐一标记出席 / 请假 / 缺席，完成后一次保存
-          </div>
+          <h3 className="serif" style={{ margin: 0, fontSize: 18 }}>
+            {t('events.attendance.heading', { name: detail.data?.title ?? t('events.attendance.title') })}
+          </h3>
+          <div className="muted" style={{ fontSize: 12.5, marginTop: 2 }}>{t('events.attendance.sub')}</div>
         </div>
-        <button className="icon-btn" onClick={onClose} title="关闭">✕</button>
+        <button className="icon-btn" onClick={onClose} title={t('common.close')}>✕</button>
       </div>
 
       {detail.loading ? (
@@ -213,36 +224,27 @@ function AttendancePanel({
               <div key={m.id} className="flex-between" style={{ padding: '10px 4px', borderBottom: '1px solid var(--border)' }}>
                 <strong>{m.full_name}</strong>
                 <div className="seg">
-                  <button
-                    className={cur === AttendanceStatus.Present ? 'on-good' : ''}
-                    onClick={() => set(m.id, AttendanceStatus.Present)}
-                  >
-                    {ATTENDANCE_LABELS[AttendanceStatus.Present]}
-                  </button>
-                  <button
-                    className={cur === AttendanceStatus.Excused ? 'on-warn' : ''}
-                    onClick={() => set(m.id, AttendanceStatus.Excused)}
-                  >
-                    {ATTENDANCE_LABELS[AttendanceStatus.Excused]}
-                  </button>
-                  <button
-                    className={cur === AttendanceStatus.Absent ? 'on-crit' : ''}
-                    onClick={() => set(m.id, AttendanceStatus.Absent)}
-                  >
-                    {ATTENDANCE_LABELS[AttendanceStatus.Absent]}
-                  </button>
+                  {ATTENDANCE_OPTIONS.map((st) => (
+                    <button
+                      key={st}
+                      className={cur === st ? ATTENDANCE_TONE[st] : ''}
+                      onClick={() => set(m.id, st)}
+                    >
+                      {t(attendanceKey(st))}
+                    </button>
+                  ))}
                 </div>
               </div>
             );
           })}
-          {members.length === 0 && <div className="empty-inline">暂无在册成员可点名。</div>}
+          {members.length === 0 && <div className="empty-inline">{t('events.attendance.empty')}</div>}
         </div>
       )}
 
       <div className="modal-actions">
-        <button className="btn ghost" onClick={onClose}>关闭</button>
+        <button className="btn ghost" onClick={onClose}>{t('common.close')}</button>
         <button className="btn accent" onClick={save} disabled={saving || detail.loading}>
-          保存点名（{marked}）
+          {t('events.attendance.save', { n: marked })}
         </button>
       </div>
     </Modal>
@@ -267,6 +269,7 @@ function EventModal({
   onSaved: () => void;
   onDelete?: () => void;
 }) {
+  const t = useT();
   const toast = useToast();
   const { hallId } = useHallScope();
   const [form, setForm] = useState({
@@ -275,7 +278,7 @@ function EventModal({
     location: event?.location ?? '',
     starts_at: toLocalInput(event?.starts_at ?? null),
     // Editing keeps the event's own hall; creating defaults to the hall being
-    // viewed (and to 全堂 / 联合聚会 only when viewing 全部堂会).
+    // viewed (and to the all-halls / joint option only when viewing all halls).
     hall_id: event ? event.hall_id : hallId || null,
   });
   const [saving, setSaving] = useState(false);
@@ -283,7 +286,7 @@ function EventModal({
 
   const save = async () => {
     if (!form.title.trim() || !form.starts_at) {
-      setErr('请填写标题与开始时间');
+      setErr(t('events.err.required'));
       return;
     }
     setSaving(true);
@@ -308,33 +311,33 @@ function EventModal({
   };
 
   return (
-    <Modal title={event ? '编辑聚会' : '新增聚会'} onClose={onClose}>
+    <Modal title={event ? t('events.edit.title') : t('events.new.title')} onClose={onClose}>
       {err && <ErrorBanner message={err} />}
-      <Field label="标题">
-        <input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="例如：周三祷告会" />
+      <Field label={t('events.field.title')}>
+        <input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder={t('events.titlePlaceholder')} />
       </Field>
       <div className="form-row">
-        <Field label="类型">
+        <Field label={t('events.field.type')}>
           <select value={form.event_type} onChange={(e) => setForm({ ...form, event_type: e.target.value as EventType })}>
-            {EVENT_TYPE_OPTIONS.map((t) => (
-              <option key={t} value={t}>{EVENT_TYPE_LABELS[t]}</option>
+            {EVENT_TYPE_OPTIONS.map((et) => (
+              <option key={et} value={et}>{t(eventTypeKey(et))}</option>
             ))}
           </select>
         </Field>
-        <Field label="地点">
-          <input value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} placeholder="大堂 / 副堂" />
+        <Field label={t('events.field.location')}>
+          <input value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} placeholder={t('events.locationPlaceholder')} />
         </Field>
       </div>
       <div className="form-row">
-        <Field label="开始时间">
+        <Field label={t('events.field.startsAt')}>
           <input type="datetime-local" className={form.starts_at ? undefined : 'date-empty'} value={form.starts_at} onChange={(e) => setForm({ ...form, starts_at: e.target.value })} />
         </Field>
-        <Field label="堂会">
+        <Field label={t('hall.label')}>
           <HallSelect
             value={form.hall_id}
             onChange={(id) => setForm({ ...form, hall_id: id })}
             allowAll
-            allLabel="全堂 / 联合聚会"
+            allLabel={t('hall.allOpenEvent')}
           />
         </Field>
       </div>
@@ -345,11 +348,11 @@ function EventModal({
             style={{ marginRight: 'auto' }}
             onClick={onDelete}
           >
-            删除聚会
+            {t('events.delete')}
           </button>
         )}
-        <button className="btn ghost" onClick={onClose}>取消</button>
-        <button className="btn" onClick={save} disabled={saving}>{saving ? '保存中…' : '保存'}</button>
+        <button className="btn ghost" onClick={onClose}>{t('common.cancel')}</button>
+        <button className="btn" onClick={save} disabled={saving}>{saving ? t('common.saving') : t('common.save')}</button>
       </div>
     </Modal>
   );

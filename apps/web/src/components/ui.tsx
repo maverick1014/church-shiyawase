@@ -9,15 +9,17 @@ import {
   useRef,
   useState,
 } from 'react';
-import { initialOf, roleDot, roleTagStyle } from '@/lib/labels';
+import { initialOf, roleDot, roleKey, roleTagStyle } from '@/lib/labels';
 import { useHallScope } from '@/lib/hall';
+import { useT } from '@/lib/i18n';
 
 /* -------------------------------------------------------------------------
  * State helpers
  * ---------------------------------------------------------------------- */
 
 export function Loading() {
-  return <div className="loading">加载中…</div>;
+  const t = useT();
+  return <div className="loading">{t('common.loading')}</div>;
 }
 
 export function ErrorBanner({ message }: { message: string | null }) {
@@ -67,12 +69,17 @@ export function Badge({
   );
 }
 
-/** Derived-identity badge using the design's per-role tag palette + dot. */
+/**
+ * Derived-identity badge using the design's per-role tag palette + dot. Takes
+ * the DisplayRole *code*, not a label, so the colour survives a language switch
+ * and the wording comes from the dictionary.
+ */
 export function RoleBadge({ role }: { role: string }) {
+  const t = useT();
   return (
     <span className="badge" style={roleTagStyle(role)}>
       <i className="dot" style={{ background: roleDot(role) }} />
-      {role}
+      {t(roleKey(role))}
     </span>
   );
 }
@@ -162,6 +169,7 @@ export function Modal({
   children: ReactNode;
   size?: 'wide' | 'narrow';
 }) {
+  const t = useT();
   return (
     // Clicking the backdrop is deliberately a no-op — an accidental click
     // outside the dialog must never discard an in-progress edit. Every modal
@@ -172,7 +180,7 @@ export function Modal({
         {title && (
           <div className="flex-between" style={{ alignItems: 'flex-start', marginBottom: 16 }}>
             <h3 style={{ margin: 0 }}>{title}</h3>
-            <button className="icon-btn" style={{ flexShrink: 0 }} onClick={onClose} title="关闭">✕</button>
+            <button className="icon-btn" style={{ flexShrink: 0 }} onClick={onClose} title={t('common.close')}>✕</button>
           </div>
         )}
         {children}
@@ -249,14 +257,16 @@ export function RowChevron({ title, onClick }: { title: string; onClick?: () => 
 export function ExportButton({
   onClick,
   disabled,
-  title = '导出 Excel',
+  title,
 }: {
   onClick: () => void;
   disabled?: boolean;
   title?: string;
 }) {
+  const t = useT();
+  const label = title ?? t('common.export');
   return (
-    <button className="btn ghost" onClick={onClick} disabled={disabled} title={title} aria-label={title}>
+    <button className="btn ghost" onClick={onClick} disabled={disabled} title={label} aria-label={label}>
       <DownloadIcon />
     </button>
   );
@@ -337,10 +347,11 @@ export function HallSelect({
   allLabel?: string;
 }) {
   const { halls, locked } = useHallScope();
+  const t = useT();
   return (
     <select value={value ?? ''} onChange={(e) => onChange(e.target.value || null)}>
-      {allowAll && !locked && <option value="">{allLabel ?? '全堂开放'}</option>}
-      {!allowAll && !value && <option value="">请选择堂会…</option>}
+      {allowAll && !locked && <option value="">{allLabel ?? t('hall.allOpen')}</option>}
+      {!allowAll && !value && <option value="">{t('hall.choose')}</option>}
       {halls.map((h) => (
         <option key={h.id} value={h.id}>{h.name}</option>
       ))}
@@ -366,6 +377,7 @@ export function TagsInput({
   suggestions?: string[];
   placeholder?: string;
 }) {
+  const tr = useT();
   const [draft, setDraft] = useState('');
   const [listId] = useState(() => `tags-suggest-${tagsInputId++}`);
 
@@ -385,7 +397,7 @@ export function TagsInput({
               <button
                 type="button"
                 onClick={() => onChange(value.filter((x) => x !== t))}
-                aria-label={`移除标签 ${t}`}
+                aria-label={tr('common.removeTag', { name: t })}
                 style={{
                   background: 'none',
                   border: 'none',
@@ -413,7 +425,7 @@ export function TagsInput({
           }
         }}
         list={suggestions?.length ? listId : undefined}
-        placeholder={placeholder ?? '输入标签后按 Enter…'}
+        placeholder={placeholder ?? tr('common.tagsPlaceholder')}
       />
       {suggestions && suggestions.length > 0 && (
         <datalist id={listId}>
@@ -474,6 +486,7 @@ export function PasswordInput({
   autoComplete,
   autoFocus,
   name,
+  required,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -481,8 +494,11 @@ export function PasswordInput({
   autoComplete?: string;
   autoFocus?: boolean;
   name?: string;
+  required?: boolean;
 }) {
+  const t = useT();
   const [show, setShow] = useState(false);
+  const toggleLabel = show ? t('common.hidePassword') : t('common.showPassword');
   return (
     <div className="pw-field">
       <input
@@ -493,13 +509,14 @@ export function PasswordInput({
         placeholder={placeholder}
         autoComplete={autoComplete}
         autoFocus={autoFocus}
+        required={required}
       />
       <button
         type="button"
         className="pw-toggle"
         onClick={() => setShow((s) => !s)}
-        aria-label={show ? '隐藏密码' : '显示密码'}
-        title={show ? '隐藏密码' : '显示密码'}
+        aria-label={toggleLabel}
+        title={toggleLabel}
       >
         {show ? '🙈' : '👁'}
       </button>
@@ -522,6 +539,7 @@ type ConfirmOpts = {
 const ConfirmContext = createContext<(o: ConfirmOpts) => Promise<boolean>>(() => Promise.resolve(false));
 
 export function ConfirmProvider({ children }: { children: ReactNode }) {
+  const t = useT();
   const [state, setState] = useState<
     (ConfirmOpts & { resolve: (v: boolean) => void }) | null
   >(null);
@@ -547,7 +565,7 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
             </div>
             <div className="modal-actions">
               <button className="btn ghost" onClick={() => close(false)}>
-                {state.cancelText ?? '取消'}
+                {state.cancelText ?? t('common.cancel')}
               </button>
               <button
                 className="btn"
@@ -559,7 +577,7 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
                 onClick={() => close(true)}
                 autoFocus
               >
-                {state.confirmText ?? '确定'}
+                {state.confirmText ?? t('common.confirm')}
               </button>
             </div>
           </div>
@@ -581,9 +599,9 @@ export type ToastVariant = 'success' | 'error';
 type ToastItem = { id: number; message: string; variant: ToastVariant };
 
 // The callback takes an optional variant so every call site can report both
-// outcomes — `toast('已保存')` (success, the default) or
-// `toast('保存失败：…', 'error')`. Toasts stack top-right (top-centre on
-// mobile) and auto-dismiss, so a burst of actions never clobbers itself.
+// outcomes — `toast(t('group.toast.saved'))` (success, the default) or
+// `toast(msg, 'error')`. Toasts stack top-right (top-centre on mobile) and
+// auto-dismiss, so a burst of actions never clobbers itself.
 const ToastContext = createContext<(message: string, variant?: ToastVariant) => void>(() => {});
 
 export function ToastProvider({ children }: { children: ReactNode }) {
