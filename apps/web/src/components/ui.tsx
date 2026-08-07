@@ -292,6 +292,48 @@ export function PageBar({ filters, actions }: { filters?: ReactNode; actions?: R
 }
 
 /**
+ * The one header for a detail page: avatar + name + badges on the left, that
+ * record's actions on the right. Member detail and account detail used to
+ * build this shape by hand, differently — account detail let its identity
+ * column shrink to nothing (`flex: 1; min-width: 0`), so at phone width the
+ * name broke mid-word and the action button overlapped the badges instead of
+ * wrapping under them. The identity column here keeps a real flex-basis, so
+ * the actions drop to their own row when they no longer fit.
+ */
+export function EntityHeader({
+  avatar,
+  title,
+  badges,
+  sub,
+  below,
+  actions,
+}: {
+  avatar: ReactNode;
+  title: ReactNode;
+  badges?: ReactNode;
+  sub?: ReactNode;
+  below?: ReactNode;
+  actions?: ReactNode;
+}) {
+  return (
+    <div className="entity-header">
+      <div className="entity-header-id">
+        {avatar}
+        <div style={{ minWidth: 0 }}>
+          <div className="flex items-center gap-10 flex-wrap">
+            <h2 style={{ margin: 0, fontSize: 21 }} className="serif">{title}</h2>
+            {badges}
+          </div>
+          {sub && <div className="muted" style={{ fontSize: 12.5, marginTop: 3 }}>{sub}</div>}
+          {below}
+        </div>
+      </div>
+      {actions && <div className="entity-header-actions">{actions}</div>}
+    </div>
+  );
+}
+
+/**
  * Reference material that would otherwise push the real content down the page
  * (e.g. the permission matrix in 用户管理). Opens on hover and on click, so it
  * works on both a desktop pointer and a touch screen.

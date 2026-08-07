@@ -780,6 +780,31 @@ th.sortable:hover {
   }
 }
 
+/* The detail-page header (EntityHeader). The identity column keeps a real
+   flex-basis rather than `min-width: 0`, so once the actions no longer fit
+   beside it they wrap to their own row instead of squeezing the name to a
+   couple of characters and overlapping the badges. */
+.entity-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.entity-header-id {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1 1 260px;
+  min-width: 0;
+}
+.entity-header-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 /* ==========================================================================
    Forms
    ========================================================================== */

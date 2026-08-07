@@ -9,6 +9,7 @@ import { usePageChrome, useMe } from '@/components/AppShell';
 import {
   Avatar,
   ChevronRightIcon,
+  EntityHeader,
   ErrorBanner,
   Field,
   HallSelect,
@@ -356,24 +357,24 @@ function AccountDetail({
       {err && <ErrorBanner message={err} />}
 
       <div className="card">
-        <div className="flex items-center gap-12 flex-wrap">
-          <Avatar name={account.member?.full_name ?? null} size="lg" />
-          <div className="grow" style={{ minWidth: 0 }}>
-            <div className="flex items-center gap-10 flex-wrap">
-              <h2 style={{ margin: 0, fontSize: 20 }} className="serif">{account.member?.full_name}</h2>
+        <EntityHeader
+          avatar={<Avatar name={account.member?.full_name ?? null} size="lg" />}
+          title={account.member?.full_name}
+          badges={
+            <>
               <span className={`badge ${accountRoleClass(role)}`}>{t(accountRoleKey(role))}</span>
               {account.member && <RoleBadge role={churchDisplayRole(account.member.church_role)} />}
-            </div>
-            <div className="muted" style={{ fontSize: 12.5, marginTop: 3 }}>
-              {t('settings.linkedTo', { email: account.email })}
-            </div>
-          </div>
-          {account.member && (
-            <button className="btn ghost" onClick={() => router.push(`/members/${account.member!.id}`)}>
-              {t('settings.viewMemberProfile')}
-            </button>
-          )}
-        </div>
+            </>
+          }
+          sub={t('settings.linkedTo', { email: account.email })}
+          actions={
+            account.member && (
+              <button className="btn ghost" onClick={() => router.push(`/members/${account.member!.id}`)}>
+                {t('settings.viewMemberProfile')}
+              </button>
+            )
+          }
+        />
 
         <div className="grid g2" style={{ marginTop: 18 }}>
           <Field label={t('settings.emailFromMember')}>
