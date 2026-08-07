@@ -137,7 +137,7 @@ async function main() {
     if (!loggedIn) throw new Error('login failed — aborting remaining checks');
     const sidebar = await page.locator('.sidebar').innerText();
     check(
-      'sidebar lists every module + User Management (super admin only)',
+      'sidebar lists every module + Users (super admin only)',
       ['Members', 'Life Groups', 'Events & Attendance', 'Trainings', 'Forty Days', 'Users']
         .every((label) => sidebar.includes(label)),
     );
@@ -325,9 +325,16 @@ async function main() {
       await page.locator('h1').first().waitFor({ timeout: 20000 });
       // At this (mobile) viewport a page's own buttons render in .content-actions.
       if ((await page.locator('.content-actions select').count()) > 0) strays.push(path);
-      // …and the switcher lives in the nav drawer instead.
-      if (expectSwitcher && (await page.locator('.sidebar .nav-hall select').count()) === 0) {
-        missingDrawerHall.push(path);
+      // …and the switcher lives in the nav drawer instead. It renders only once
+      // /api/halls has resolved, which is after the page's own h1, so wait for
+      // it rather than reading an empty drawer and calling it a regression.
+      if (expectSwitcher) {
+        const inDrawer = await page
+          .locator('.sidebar .nav-hall select')
+          .waitFor({ state: 'attached', timeout: 15000 })
+          .then(() => true)
+          .catch(() => false);
+        if (!inDrawer) missingDrawerHall.push(path);
       }
     }
     check('no page mixes the congregation switcher into its own action row',
