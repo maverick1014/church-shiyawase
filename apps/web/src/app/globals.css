@@ -765,6 +765,16 @@ th.sortable:hover {
   .page-bar-filters {
     flex: 0 0 auto;
   }
+  /* Search takes its own full-width row; the dropdowns below it share the
+     remaining rows evenly, so a phone gets a tidy grid instead of a ragged
+     content-sized wrap. */
+  .page-bar input {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+  .page-bar-filters select {
+    flex: 1 1 140px;
+  }
   .page-bar-actions {
     margin-left: 0;
   }
