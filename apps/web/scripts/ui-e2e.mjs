@@ -325,12 +325,20 @@ async function main() {
     const barShape = [];
     for (const path of LIST_PAGES) {
       await page.goto(`${BASE}${path}`, { waitUntil: 'domcontentloaded' });
-      await page.locator('h1').first().waitFor({ timeout: 20000 });
+      // The h1 belongs to the shell and renders immediately, while the page
+      // body is still <Loading />. Waiting on it would count zero page bars
+      // everywhere — wait for the bar itself.
+      const barReady = await page
+        .locator('.page-bar')
+        .first()
+        .waitFor({ state: 'attached', timeout: 20000 })
+        .then(() => true)
+        .catch(() => false);
       // Every list page's top row is one shared PageBar: filters left, the
       // page's own buttons right. A select in the actions half means a filter
       // leaked into the button group (or the switcher was rendered by a page).
       if ((await page.locator('.page-bar-actions select').count()) > 0) strays.push(path);
-      const bars = await page.locator('.page-bar').count();
+      const bars = barReady ? await page.locator('.page-bar').count() : 0;
       if (bars !== 1) noBar.push(`${path} (${bars})`);
       // Actions must be the last child of the bar so they land on the right
       // (desktop) / at the bottom (stacked mobile).
