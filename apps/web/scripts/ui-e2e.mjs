@@ -137,8 +137,8 @@ async function main() {
     if (!loggedIn) throw new Error('login failed — aborting remaining checks');
     const sidebar = await page.locator('.sidebar').innerText();
     check(
-      'sidebar lists every module + User Management (super admin only)',
-      ['Members', 'Life Groups', 'Events & Attendance', 'Trainings', 'Forty Days', 'User Management']
+      'sidebar lists every module + Users (super admin only)',
+      ['Members', 'Life Groups', 'Events & Attendance', 'Trainings', 'Forty Days', 'Users']
         .every((label) => sidebar.includes(label)),
     );
     await shot('01-dashboard');
@@ -155,9 +155,10 @@ async function main() {
     check('the search box filters the list live', total > 0 && (await page.locator('.mtile').count()) < total, `${total} → filtered`);
     await page.fill('input[placeholder*="Search"]', '');
     await w(300);
-    // Identity + group are <select> filters. Scope to .filter-bar — the topbar
-    // hall switcher is also a <select> and comes first in the DOM.
-    const filters = page.locator('.filter-bar select');
+    // Identity + group are <select> filters. Scope to the page bar's filter
+    // half — the shell hall switcher is also a <select> and comes first in
+    // the DOM.
+    const filters = page.locator('.page-bar-filters select');
     // The value is the language-independent DisplayRole code, not a label.
     await filters.first().selectOption('pastor');
     await w(500);
@@ -290,7 +291,7 @@ async function main() {
     // topbar copy, which is display:none at this viewport and never "appears".
     await page.locator('button:visible:has-text("New account")').first().waitFor({ timeout: 20000 });
     const settingsBody = await page.locator('body').innerText();
-    check('user management loads (not the login page)', settingsBody.includes('New account'));
+    check('the user list loads (not the login page)', settingsBody.includes('New account'));
     // Permission roles now live behind an info icon rather than an always-open card.
     await page.locator('button[aria-label="Permission roles"]').first().click();
     await w(300);
@@ -305,6 +306,69 @@ async function main() {
     await page.locator('button:has-text("Save account settings")').waitFor({ timeout: 10000 });
     check('an account detail page opens', true);
     await shot('08-settings');
+
+    /* -- chrome layout is the same on every list page --------------------- */
+    // The bug this guards: the congregation switcher used to sit in the same
+    // stretch-to-fill row as each page's own buttons, so the top of every list
+    // page wrapped differently depending on how many buttons it happened to
+    // have. The switcher belongs to the shell, not the page.
+    mod('page chrome consistency');
+    // The switcher only renders for an account that can actually see more than
+    // one congregation, so only demand the drawer copy when one is expected.
+    const halls = await (await ctx.request.get(`${BASE}/api/halls`)).json();
+    const expectSwitcher = Array.isArray(halls) && halls.length > 1;
+
+    const LIST_PAGES = ['/members', '/groups', '/events', '/trainings', '/discipleship', '/settings'];
+    const strays = [];
+    const missingDrawerHall = [];
+    const noBar = [];
+    const barShape = [];
+    for (const path of LIST_PAGES) {
+      await page.goto(`${BASE}${path}`, { waitUntil: 'domcontentloaded' });
+      // The h1 belongs to the shell and renders immediately, while the page
+      // body is still <Loading />. Waiting on it would count zero page bars
+      // everywhere — wait for the bar itself.
+      const barReady = await page
+        .locator('.page-bar')
+        .first()
+        .waitFor({ state: 'attached', timeout: 20000 })
+        .then(() => true)
+        .catch(() => false);
+      // Every list page's top row is one shared PageBar: filters left, the
+      // page's own buttons right. A select in the actions half means a filter
+      // leaked into the button group (or the switcher was rendered by a page).
+      if ((await page.locator('.page-bar-actions select').count()) > 0) strays.push(path);
+      const bars = barReady ? await page.locator('.page-bar').count() : 0;
+      if (bars !== 1) noBar.push(`${path} (${bars})`);
+      // Actions must be the last child of the bar so they land on the right
+      // (desktop) / at the bottom (stacked mobile).
+      const actionsLast = await page
+        .locator('.page-bar > :last-child')
+        .evaluate((el) => el.classList.contains('page-bar-actions'))
+        .catch(() => false);
+      const hasActions = (await page.locator('.page-bar-actions').count()) > 0;
+      if (hasActions && !actionsLast) barShape.push(path);
+      // …and the switcher lives in the nav drawer instead. It renders only once
+      // /api/halls has resolved, which is after the page's own h1, so wait for
+      // it rather than reading an empty drawer and calling it a regression.
+      if (expectSwitcher) {
+        const inDrawer = await page
+          .locator('.sidebar .nav-hall select')
+          .waitFor({ state: 'attached', timeout: 15000 })
+          .then(() => true)
+          .catch(() => false);
+        if (!inDrawer) missingDrawerHall.push(path);
+      }
+    }
+    check('no page mixes a dropdown into its own action row',
+      strays.length === 0, strays.join(', ') || 'all clean');
+    check('every list page has exactly one shared page bar',
+      noBar.length === 0, noBar.join(', ') || `1 on each of ${LIST_PAGES.length}`);
+    check('the action group is the last thing in the page bar',
+      barShape.length === 0, barShape.join(', ') || 'right-aligned everywhere');
+    check('the congregation switcher sits in the nav drawer on mobile',
+      missingDrawerHall.length === 0,
+      expectSwitcher ? missingDrawerHall.join(', ') || 'present on every page' : 'single congregation — n/a');
 
     /* -- interface language ----------------------------------------------- */
     mod('interface language');

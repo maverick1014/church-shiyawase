@@ -26,6 +26,11 @@ Testing layers (in `apps/web`):
   `NODE_USE_ENV_PROXY=1 PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-browsers/chromium-1194/chrome-linux/chrome UI_E2E_PASSWORD=… npm run test:ui-e2e`.
   When you add/rename a page or a key interaction, add a matching check to
   `scripts/ui-e2e.mjs`.
+- `npm run ui:shots` — **screenshot sweep**: captures every list page at a phone
+  and a desktop viewport into `$OUT` (default `/tmp/shots`; `WIDE=1` for
+  desktop). ui-e2e proves the pages *work*; it cannot see that two pages lay
+  their header out differently. After any layout change, run this and **look at
+  the images** — a green ui-e2e is not evidence the UI is consistent.
 
 ---
 
@@ -94,6 +99,37 @@ Prefer `useFetch` + `useMemo` over manual effect/loading bookkeeping.
 - Passwords: PBKDF2 hash server-side only, min 8 chars, never stored/logged in
   plaintext; password fields use `PasswordInput` (show/hide) with the right
   `autoComplete`.
+
+### G7a — One page-chrome shape for every page
+The header is **title only** (no subtitles). Every list page's top row is one
+shared `<PageBar filters actions />`: the page's filters on the left, **all of
+its buttons in the right corner**, collapsing to a stacked filters-then-actions
+column below 640px. A page never renders a second bar, never puts a `<select>`
+in the actions half, and never gives an action an ad-hoc width — page actions
+are content-sized like every other control. Filter order inside the bar is
+search → dropdowns → export/info.
+
+Shell-level controls (the congregation switcher) belong to the shell, not to a
+page: top right of the header on desktop, in the nav drawer above 首页 on
+phones. They use the same `--control-h` as every other control — no `sm`
+variant, no inline width.
+List tables size their columns to their own content (`table-layout: auto` +
+`white-space: nowrap` on cells). Never hand-type a column width: one tuned to
+two CJK glyphs clips the moment the same label is English.
+
+### G6a — Every date and time is Malaysia time
+The church is in one place, so a 10:00 service reads 10:00 on every screen.
+All date/time work goes through `lib/time.ts` (`churchParts`,
+`churchInstant`, `startOfChurchDay`, `addChurchDays`, `churchDayOfWeek`,
+`churchDateKey`, `toChurchInput` / `fromChurchInput`, `endOfChurchDate`).
+Never call `getHours` / `setHours` / `getFullYear` / `getMonth` / `getDate` /
+`getTimezoneOffset` on a `Date` in app code — they read the *runtime's* zone,
+which is UTC inside the Worker and the viewer's own zone in the browser, so
+the same row rendered two different times. A `datetime-local` value is a bare
+wall-clock reading and always means Malaysia. A stored `DATE` covers its whole
+Malaysian day — compare against `endOfChurchDate`, not `new Date(dateOnly)`,
+or it expires at 08:00 that morning. Unit tests must pass under a non-Malaysia
+`TZ` (`TZ=America/New_York npm test`).
 
 ### G7 — Mobile-first & theme
 Tables become list tiles on small screens (`.only-desktop` / `.only-mobile`

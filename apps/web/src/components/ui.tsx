@@ -251,8 +251,8 @@ export function RowChevron({ title, onClick }: { title: string; onClick?: () => 
 
 /**
  * The one export control. Icon-only (the label added nothing next to a column
- * of 导出-something buttons) and full control height, so it lines up with the
- * dropdowns it sits beside in a `.filter-bar`.
+ * of export-something buttons) and full control height, so it lines up with
+ * the dropdowns it sits beside in a `PageBar`.
  */
 export function ExportButton({
   onClick,
@@ -269,6 +269,67 @@ export function ExportButton({
     <button className="btn ghost" onClick={onClick} disabled={disabled} title={label} aria-label={label}>
       <DownloadIcon />
     </button>
+  );
+}
+
+/**
+ * The one bar at the top of a list page: the page's filters on the left, its
+ * own action buttons on the right — the same row on every page, at every
+ * width. Page actions used to be handed to the shell via `usePageChrome`,
+ * which rendered them in a separate stretch-to-fill row, so the top of each
+ * list came out a different shape depending on how many buttons it had.
+ *
+ * Either half may be omitted; the actions stay in the right corner regardless.
+ */
+export function PageBar({ filters, actions }: { filters?: ReactNode; actions?: ReactNode }) {
+  if (!filters && !actions) return null;
+  return (
+    <div className="page-bar">
+      <div className="page-bar-filters">{filters}</div>
+      {actions && <div className="page-bar-actions">{actions}</div>}
+    </div>
+  );
+}
+
+/**
+ * The one header for a detail page: avatar + name + badges on the left, that
+ * record's actions on the right. Member detail and account detail used to
+ * build this shape by hand, differently — account detail let its identity
+ * column shrink to nothing (`flex: 1; min-width: 0`), so at phone width the
+ * name broke mid-word and the action button overlapped the badges instead of
+ * wrapping under them. The identity column here keeps a real flex-basis, so
+ * the actions drop to their own row when they no longer fit.
+ */
+export function EntityHeader({
+  avatar,
+  title,
+  badges,
+  sub,
+  below,
+  actions,
+}: {
+  avatar: ReactNode;
+  title: ReactNode;
+  badges?: ReactNode;
+  sub?: ReactNode;
+  below?: ReactNode;
+  actions?: ReactNode;
+}) {
+  return (
+    <div className="entity-header">
+      <div className="entity-header-id">
+        {avatar}
+        <div style={{ minWidth: 0 }}>
+          <div className="flex items-center gap-10 flex-wrap">
+            <h2 style={{ margin: 0, fontSize: 21 }} className="serif">{title}</h2>
+            {badges}
+          </div>
+          {sub && <div className="muted" style={{ fontSize: 12.5, marginTop: 3 }}>{sub}</div>}
+          {below}
+        </div>
+      </div>
+      {actions && <div className="entity-header-actions">{actions}</div>}
+    </div>
   );
 }
 
@@ -449,6 +510,7 @@ export function SortTh({
   dir,
   onSort,
   align,
+  className,
   style,
 }: {
   children: ReactNode;
@@ -457,12 +519,14 @@ export function SortTh({
   dir: 'asc' | 'desc';
   onSort: (key: string) => void;
   align?: 'right' | 'center';
+  /** Extra classes for the header cell. Widths are auto — don't set one. */
+  className?: string;
   style?: React.CSSProperties;
 }) {
   const active = activeKey === sortKey;
   return (
     <th
-      className="sortable"
+      className={`sortable ${className ?? ''}`}
       style={{ ...(align ? { textAlign: align } : undefined), ...style }}
       onClick={() => onSort(sortKey)}
       aria-sort={active ? (dir === 'asc' ? 'ascending' : 'descending') : 'none'}

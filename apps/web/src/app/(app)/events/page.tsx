@@ -1,11 +1,11 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useFetch } from '@/lib/hooks';
 import { api } from '@/lib/api';
 import { usePageChrome, useMe, useHallScope } from '@/components/AppShell';
-import { Empty, ErrorBanner, Field, HallSelect, Loading, Modal, useConfirm, useToast } from '@/components/ui';
+import { Empty, ErrorBanner, Field, HallSelect, Loading, Modal, PageBar, useConfirm, useToast } from '@/components/ui';
 import { can } from '@/lib/perms';
 import { EventDetail, EventRow, MemberRow } from '@/lib/types';
 import {
@@ -16,6 +16,7 @@ import {
   EVENT_TYPE_OPTIONS,
   formatDateTime,
 } from '@/lib/labels';
+import { addChurchDays, fromChurchInput, startOfChurchDay, toChurchInput } from '@/lib/time';
 import { useT } from '@/lib/i18n';
 import { AttendanceStatus, EventType, MemberStatus } from '@tog/shared';
 
@@ -38,27 +39,34 @@ export default function EventsPage() {
   const [addOpen, setAddOpen] = useState(false);
   const [editing, setEditing] = useState<EventRow | null>(null);
 
-  usePageChrome(
-    {
-      title: t('events.title'),
-      subtitle: t('events.subtitle'),
-      action: perms.write ? (
-        <>
-          <button className="btn ghost" onClick={() => router.push('/events/recurring')}>
-            {t('events.recurring')}
-          </button>
-          <button className="btn" onClick={() => setAddOpen(true)}>
-            {t('events.add')}
-          </button>
-        </>
-      ) : undefined,
-    },
-    [perms.write, t],
-  );
+  usePageChrome({ title: t('events.title') }, [t]);
 
-  const list = events.data ?? [];
-  const now = new Date();
-  const sorted = [...list].sort((a, b) => +new Date(b.starts_at) - +new Date(a.starts_at));
+  // Same three-section shape as the training catalog, so both pages read the
+  // same way: what needs attention now, what is coming, what is done.
+  // "Today" is its own group because it is the one an admin actually acts on —
+  // it is the roll-call list for the day.
+  const { today, upcoming, past } = useMemo(() => {
+    // "Today" means today in Malaysia — setHours() would use the runtime's
+    // zone, so the Worker (UTC) put the 08:00-and-earlier services in the
+    // wrong bucket.
+    const startOfToday = startOfChurchDay();
+    const startOfTomorrow = addChurchDays(startOfToday, 1);
+
+    const td: EventRow[] = [];
+    const up: EventRow[] = [];
+    const pa: EventRow[] = [];
+    for (const e of events.data ?? []) {
+      const at = new Date(e.starts_at);
+      if (at >= startOfTomorrow) up.push(e);
+      else if (at >= startOfToday) td.push(e);
+      else pa.push(e);
+    }
+    const byTime = (a: EventRow, b: EventRow) => +new Date(a.starts_at) - +new Date(b.starts_at);
+    // Soonest first while it is still ahead; most recent first once it is over.
+    return { today: td.sort(byTime), upcoming: up.sort(byTime), past: pa.sort(byTime).reverse() };
+  }, [events.data]);
+
+  const total = today.length + upcoming.length + past.length;
 
   const delEvent = async (e: EventRow): Promise<boolean> => {
     const ok = await confirm({
@@ -79,41 +87,80 @@ export default function EventsPage() {
     }
   };
 
+  // One card shape for every section — same structure as a training card.
+  const renderCards = (items: EventRow[], faded?: boolean) => (
+    <div className="grid g3">
+      {items.map((e) => (
+        <div className="card" key={e.id} style={{ display: 'flex', flexDirection: 'column', opacity: faded ? 0.86 : 1 }}>
+          <div className="flex-between">
+            <span className={`badge ${eventBadgeClass(e.event_type)}`}>
+              {t(eventTypeKey(e.event_type))}
+            </span>
+            {e.hall?.name && (
+              <span className="muted" style={{ fontSize: 12 }}>{e.hall.name}</span>
+            )}
+          </div>
+          <h3 style={{ margin: '12px 0 2px', fontSize: 16 }} className="serif">{e.title}</h3>
+          <div className="muted" style={{ fontSize: 12.5 }}>
+            {formatDateTime(e.starts_at)}{e.location ? ` · ${e.location}` : ''}
+          </div>
+          <div className="grow" />
+          <div className="flex gap-8 mt-14">
+            <button className="btn sm grow" onClick={() => setActiveId(e.id)}>{t('events.rollCall')}</button>
+            {perms.write && (
+              <button className="btn ghost sm" onClick={() => setEditing(e)}>{t('common.edit')}</button>
+            )}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+
+  const section = (
+    dot: string,
+    title: string,
+    sub: string,
+    items: EventRow[],
+    empty: string,
+    faded?: boolean,
+  ) => (
+    <>
+      <div className="section-label mb-14" style={{ marginTop: 28 }}>
+        <span style={{ width: 8, height: 8, borderRadius: '50%', background: dot, display: 'inline-block' }} />
+        {title} <span className="faint" style={{ fontWeight: 400 }}>{sub}</span>
+      </div>
+      {items.length ? renderCards(items, faded) : <div className="empty">{empty}</div>}
+    </>
+  );
+
   if (events.initialLoading) return <Loading />;
 
   return (
     <>
       <ErrorBanner message={events.error} />
 
-      <div className="grid g3">
-        {sorted.map((e) => {
-          const upcoming = new Date(e.starts_at) >= now;
-          return (
-            <div className="card" key={e.id}>
-              <div className="flex-between">
-                <span className={`badge ${eventBadgeClass(e.event_type)}`}>
-                  {t(eventTypeKey(e.event_type))}
-                </span>
-                <span className="muted" style={{ fontSize: 12 }}>{upcoming ? t('events.upcoming') : t('events.past')}</span>
-              </div>
-              <h3 style={{ margin: '12px 0 2px', fontSize: 16 }} className="serif">{e.title}</h3>
-              <div className="muted" style={{ fontSize: 12.5 }}>
-                {formatDateTime(e.starts_at)}{e.location ? ` · ${e.location}` : ''}
-              </div>
-              <div className="flex-between mt-14">
-                <span className="muted" style={{ fontSize: 12 }}>{e.description ?? ''}</span>
-                <div className="flex gap-6">
-                  {perms.write && (
-                    <button className="btn ghost sm" onClick={() => setEditing(e)}>{t('common.edit')}</button>
-                  )}
-                  <button className="btn sm" onClick={() => setActiveId(e.id)}>{t('events.rollCall')}</button>
-                </div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-      {sorted.length === 0 && <Empty>{t('events.empty')}</Empty>}
+      {perms.write && (
+        <PageBar
+          actions={
+            <>
+              <button className="btn ghost" onClick={() => router.push('/events/recurring')}>
+                {t('events.recurring')}
+              </button>
+              <button className="btn" onClick={() => setAddOpen(true)}>{t('events.add')}</button>
+            </>
+          }
+        />
+      )}
+
+      {total === 0 ? (
+        <Empty>{t('events.empty')}</Empty>
+      ) : (
+        <>
+          {section('var(--brand)', t('events.today'), t('events.todaySub'), today, t('events.emptyToday'))}
+          {section('var(--good)', t('events.upcoming'), t('events.upcomingSub'), upcoming, t('events.emptyUpcoming'))}
+          {section('var(--faint)', t('events.past'), t('events.pastSub'), past, t('events.emptyPast'), true)}
+        </>
+      )}
 
       {activeId && (
         <AttendancePanel
@@ -251,13 +298,6 @@ function AttendancePanel({
   );
 }
 
-function toLocalInput(iso: string | null): string {
-  if (!iso) return '';
-  const d = new Date(iso);
-  const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
-  return local.toISOString().slice(0, 16);
-}
-
 function EventModal({
   event,
   onClose,
@@ -276,7 +316,7 @@ function EventModal({
     title: event?.title ?? '',
     event_type: (event?.event_type ?? EventType.Service) as EventType,
     location: event?.location ?? '',
-    starts_at: toLocalInput(event?.starts_at ?? null),
+    starts_at: toChurchInput(event?.starts_at),
     // Editing keeps the event's own hall; creating defaults to the hall being
     // viewed (and to the all-halls / joint option only when viewing all halls).
     hall_id: event ? event.hall_id : hallId || null,
@@ -296,7 +336,7 @@ function EventModal({
         title: form.title.trim(),
         event_type: form.event_type,
         location: form.location || null,
-        starts_at: new Date(form.starts_at).toISOString(),
+        starts_at: fromChurchInput(form.starts_at),
         hall_id: form.hall_id,
       };
       if (event) await api.patch(`/events/${event.id}`, payload);

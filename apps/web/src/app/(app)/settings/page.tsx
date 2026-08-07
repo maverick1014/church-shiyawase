@@ -9,12 +9,14 @@ import { usePageChrome, useMe } from '@/components/AppShell';
 import {
   Avatar,
   ChevronRightIcon,
+  EntityHeader,
   ErrorBanner,
   Field,
   HallSelect,
   InfoPopover,
   Loading,
   Modal,
+  PageBar,
   PasswordInput,
   RoleBadge,
   RowChevron,
@@ -52,23 +54,7 @@ export default function SettingsPage() {
   const [addOpen, setAddOpen] = useState(false);
   const [myPwOpen, setMyPwOpen] = useState(false);
 
-  usePageChrome(
-    {
-      title: t('settings.title'),
-      subtitle: t('settings.subtitle'),
-      action: (
-        <>
-          <button className="btn ghost" onClick={() => setMyPwOpen(true)}>
-            {t('settings.changeMyPassword')}
-          </button>
-          <button className="btn" onClick={() => setAddOpen(true)}>
-            {t('settings.add')}
-          </button>
-        </>
-      ),
-    },
-    [t],
-  );
+  usePageChrome({ title: t('settings.title') }, [t]);
 
   const list = accounts.data ?? [];
   const selected = list.find((a) => a.id === detailId) ?? null;
@@ -144,24 +130,32 @@ export default function SettingsPage() {
     <>
       <ErrorBanner message={accounts.error} />
 
-      {/* The permission matrix is reference material — behind an icon so it
-          doesn't push the account list itself below the fold. */}
-      <div className="filter-bar">
-        <span className="spacer" />
-        <InfoPopover label={t('settings.permissions')}>
-          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10 }}>{t('settings.permissions')}</div>
-          {ACCOUNT_ROLE_OPTIONS.map((ar) => (
-            <div key={ar} style={{ marginBottom: 12 }}>
-              <span className={`badge ${accountRoleClass(ar)}`}>{t(accountRoleKey(ar))}</span>
-              <ul style={{ margin: '7px 0 0', paddingLeft: 16, fontSize: 12, color: 'var(--muted)', lineHeight: 1.7 }}>
-                {ACCOUNT_ROLE_PERMISSION_KEYS[ar].map((k) => (
-                  <li key={k}>{t(k)}</li>
-                ))}
-              </ul>
-            </div>
-          ))}
-        </InfoPopover>
-      </div>
+      {/* The permission matrix is reference material, so it rides in the action
+          row behind an icon rather than pushing the account list down. There is
+          no search box: with a handful of accounts it would be furniture. */}
+      <PageBar
+        actions={
+          <>
+            <InfoPopover label={t('settings.permissions')}>
+              <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10 }}>{t('settings.permissions')}</div>
+              {ACCOUNT_ROLE_OPTIONS.map((ar) => (
+                <div key={ar} style={{ marginBottom: 12 }}>
+                  <span className={`badge ${accountRoleClass(ar)}`}>{t(accountRoleKey(ar))}</span>
+                  <ul style={{ margin: '7px 0 0', paddingLeft: 16, fontSize: 12, color: 'var(--muted)', lineHeight: 1.7 }}>
+                    {ACCOUNT_ROLE_PERMISSION_KEYS[ar].map((k) => (
+                      <li key={k}>{t(k)}</li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </InfoPopover>
+            <button className="btn ghost" onClick={() => setMyPwOpen(true)}>
+              {t('settings.changeMyPassword')}
+            </button>
+            <button className="btn" onClick={() => setAddOpen(true)}>{t('settings.add')}</button>
+          </>
+        }
+      />
 
       {/* Desktop — table */}
       <div className="card only-desktop" style={{ padding: 6 }}>
@@ -363,24 +357,24 @@ function AccountDetail({
       {err && <ErrorBanner message={err} />}
 
       <div className="card">
-        <div className="flex items-center gap-12 flex-wrap">
-          <Avatar name={account.member?.full_name ?? null} size="lg" />
-          <div className="grow" style={{ minWidth: 0 }}>
-            <div className="flex items-center gap-10 flex-wrap">
-              <h2 style={{ margin: 0, fontSize: 20 }} className="serif">{account.member?.full_name}</h2>
+        <EntityHeader
+          avatar={<Avatar name={account.member?.full_name ?? null} size="lg" />}
+          title={account.member?.full_name}
+          badges={
+            <>
               <span className={`badge ${accountRoleClass(role)}`}>{t(accountRoleKey(role))}</span>
               {account.member && <RoleBadge role={churchDisplayRole(account.member.church_role)} />}
-            </div>
-            <div className="muted" style={{ fontSize: 12.5, marginTop: 3 }}>
-              {t('settings.linkedTo', { email: account.email })}
-            </div>
-          </div>
-          {account.member && (
-            <button className="btn ghost" onClick={() => router.push(`/members/${account.member!.id}`)}>
-              {t('settings.viewMemberProfile')}
-            </button>
-          )}
-        </div>
+            </>
+          }
+          sub={t('settings.linkedTo', { email: account.email })}
+          actions={
+            account.member && (
+              <button className="btn ghost" onClick={() => router.push(`/members/${account.member!.id}`)}>
+                {t('settings.viewMemberProfile')}
+              </button>
+            )
+          }
+        />
 
         <div className="grid g2" style={{ marginTop: 18 }}>
           <Field label={t('settings.emailFromMember')}>

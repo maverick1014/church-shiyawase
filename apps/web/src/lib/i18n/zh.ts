@@ -43,7 +43,7 @@ export const zh: Messages = {
   'nav.events': '聚会与点名',
   'nav.trainings': '培训课程',
   'nav.discipleship': '四十天守望',
-  'nav.settings': '用户管理',
+  'nav.settings': '用户',
   'nav.menu': '菜单',
   'nav.accountMenu': '账户菜单',
   'nav.changePassword': '修改我的密码',
@@ -72,7 +72,6 @@ export const zh: Messages = {
 
   /* ---- members --------------------------------------------------------- */
   'members.title': '成员管理',
-  'members.subtitle': '点击成员即可查看并编辑其身份资料',
   'members.add': '＋ 新增成员',
   'members.searchPlaceholder': '🔍 搜索姓名…',
   'members.filter.role': '全部身份',
@@ -101,7 +100,6 @@ export const zh: Messages = {
 
   /* ---- member detail --------------------------------------------------- */
   'member.title': '成员详情',
-  'member.subtitle': '资料 · 培训记录 · 四十天守望',
   'member.back': '‹ 返回成员管理',
   'member.editProfile': '编辑资料',
   'member.uploadAvatar': '上传照片',
@@ -132,7 +130,6 @@ export const zh: Messages = {
 
   /* ---- groups ---------------------------------------------------------- */
   'groups.title': '小组管理',
-  'groups.subtitle': '全部小组 · 点击查看详情',
   'groups.add': '＋ 新增小组',
   'groups.searchPlaceholder': '🔍 搜索小组 / 组长…',
   'groups.filter.tag': '全部标签',
@@ -167,7 +164,6 @@ export const zh: Messages = {
 
   /* ---- group detail ---------------------------------------------------- */
   'group.title': '小组详情',
-  'group.subtitle': '资料 · 领袖 · 名单 · 每周出席',
   'group.back': '‹ 返回小组管理',
   'group.info': '小组资料 · 领袖',
   'group.triangle': '铁三角',
@@ -204,11 +200,17 @@ export const zh: Messages = {
 
   /* ---- events ---------------------------------------------------------- */
   'events.title': '聚会与点名',
-  'events.subtitle': '崇拜 · 祷告会 · 团契 · 点名',
   'events.add': '＋ 新增聚会',
   'events.recurring': '🔁 循环聚会',
   'events.upcoming': '即将举行',
   'events.past': '已结束',
+  'events.today': '今天',
+  'events.todaySub': '· 今天举行',
+  'events.upcomingSub': '· 已排入日程',
+  'events.pastSub': '· 已经举行',
+  'events.emptyToday': '今天没有聚会。',
+  'events.emptyUpcoming': '还没有排入日程的聚会。',
+  'events.emptyPast': '没有已结束的聚会。',
   'events.rollCall': '点名',
   'events.empty': '还没有聚会，点击右上角「＋ 新增聚会」创建。',
   'events.new.title': '新增聚会',
@@ -235,7 +237,6 @@ export const zh: Messages = {
 
   /* ---- recurring events ------------------------------------------------ */
   'recurring.title': '循环聚会',
-  'recurring.subtitle': '固定时间的聚会自动排入日程',
   'recurring.add': '＋ 新增循环',
   'recurring.back': '‹ 返回聚会与点名',
   'recurring.hint': '💡 系统会自动把未来「提前天数」内的聚会排好（默认 35 天，约一个月）。若删除其中一场（例如公共假期），它不会再被生成；更改星期或时间只影响之后新排的聚会。',
@@ -269,7 +270,6 @@ export const zh: Messages = {
 
   /* ---- trainings ------------------------------------------------------- */
   'trainings.title': '培训课程',
-  'trainings.subtitle': '课程目录 · 报名审核 · 出席名单',
   'trainings.add': '＋ 新增课程',
   'trainings.active': '进行中的课程',
   'trainings.activeSub': '· 开放报名',
@@ -314,7 +314,6 @@ export const zh: Messages = {
   'disc.progress.linkCopied': '链接已复制',
   'disc.progress.direction': '带领 → 被带领',
   'disc.noProgram': '尚未建立守望计划，请先在数据库中创建 discipleship_programs 记录。',
-  'disc.intro': '✝ 四十天一对一守望：牧者先带领小组长，小组长再带领副组长，被带领过的人接续带下一位，直到人人都走过这段旅程。带领者每日填表更新，牧者可实时掌握全局。',
   'disc.chain': '培育链 · 接棒图',
   'disc.chainSub': '世代培育树 · 出师者自成起点 · 点标签筛选状态',
   'disc.fullscreenChip': '⛶ 全屏',
@@ -347,7 +346,6 @@ export const zh: Messages = {
 
   /* ---- training detail ------------------------------------------------- */
   'training.title': '课程详情',
-  'training.subtitle': '课堂 · 报名审核 · 出席名单',
   'training.back': '‹ 返回课程目录',
   'training.enrollLink': '🔗 报名链接',
   'training.enrollLinkTitle': '复制自助报名链接以分享',
@@ -402,7 +400,6 @@ export const zh: Messages = {
 
   /* ---- discipleship ---------------------------------------------------- */
   'disc.title': '四十天守望',
-  'disc.subtitle': '一对一门训 · 生命传承 · 每日表单',
   'disc.add': '＋ 新增配对',
   'disc.filter.active': '进行中',
   'disc.filter.done': '已完成',
@@ -428,8 +425,7 @@ export const zh: Messages = {
   'disc.progress.completed': '已完成',
 
   /* ---- settings -------------------------------------------------------- */
-  'settings.title': '用户管理',
-  'settings.subtitle': '登录账户 · 权限角色 · 安全与偏好',
+  'settings.title': '用户',
   'settings.add': '＋ 新建账户',
   'settings.changeMyPassword': '修改我的密码',
   'settings.permissions': '权限角色说明',
@@ -492,7 +488,6 @@ export const zh: Messages = {
 
   /* ---- dashboard ------------------------------------------------------- */
   'dash.title': '总览',
-  'dash.subtitle': '一眼掌握教会整体概况',
   'dash.kpi.members': '成员总数',
   'dash.kpi.active': '在册',
   'dash.kpi.events': '即将举行的聚会',

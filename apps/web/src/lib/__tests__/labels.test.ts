@@ -5,6 +5,8 @@ import {
   categoryBadgeClass,
   enrollmentStatusClass,
   memberStatusKey,
+  formatDate,
+  formatDateTime,
   formatMoney,
   initialOf,
   groupHealthStatus,
@@ -105,5 +107,24 @@ describe('formatting helpers', () => {
   it('initialOf returns ? for null or blank', () => {
     expect(initialOf(null)).toBe('?');
     expect(initialOf('   ')).toBe('?');
+  });
+});
+
+describe('date labels', () => {
+  it('render in Malaysia time, not the runtime zone', () => {
+    // The 10:00 Sunday service, stored as the UTC instant it happens at.
+    expect(formatDateTime('2026-08-09T02:00:00Z')).toBe('08-09 10:00');
+    // Late-evening UTC is already the next day in Malaysia.
+    expect(formatDate('2026-08-08T17:30:00Z')).toBe('2026-08-09');
+  });
+
+  it('keep a stored DATE on its own day', () => {
+    expect(formatDate('2026-08-31')).toBe('2026-08-31');
+  });
+
+  it('fall back rather than crash on empty or malformed values', () => {
+    expect(formatDate(null)).toBe('\u2014');
+    expect(formatDateTime(undefined)).toBe('\u2014');
+    expect(formatDate('nonsense')).toBe('nonsense');
   });
 });

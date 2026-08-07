@@ -6,7 +6,7 @@ import { useFetch } from '@/lib/hooks';
 import { useSortableRows } from '@/lib/sort';
 import { api } from '@/lib/api';
 import { usePageChrome, useMe } from '@/components/AppShell';
-import { Avatar, ErrorBanner, Field, HallSelect, Loading, Modal, ProgressBar, RoleBadge, SortTh, useConfirm, useToast } from '@/components/ui';
+import { Avatar, EntityHeader, ErrorBanner, Field, HallSelect, Loading, Modal, ProgressBar, RoleBadge, SortTh, useConfirm, useToast } from '@/components/ui';
 import { PairProgressModal } from '@/components/PairProgressModal';
 import { can } from '@/lib/perms';
 import { EnrollmentRow, GroupDetail, GroupRow, MemberRow, PairRow } from '@/lib/types';
@@ -66,7 +66,7 @@ export default function MemberDetailPage() {
       { key: 'course', dir: 'asc' },
     );
 
-  usePageChrome({ title: tr('member.title'), subtitle: tr('member.subtitle') }, [id, tr]);
+  usePageChrome({ title: tr('member.title') }, [id, tr]);
 
   const onPickAvatar = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -114,18 +114,18 @@ export default function MemberDetailPage() {
       </button>
 
       <div className="card">
-        <div className="flex-between flex-wrap">
-          <div className="flex items-center gap-12">
-            <Avatar name={m.full_name} url={m.avatar_url} size="passport" />
-            <div>
-              <div className="flex items-center gap-10 flex-wrap">
-                <h2 style={{ margin: 0, fontSize: 22 }} className="serif">{m.full_name}</h2>
-                <RoleBadge role={role} />
-              </div>
-              <div className="muted" style={{ fontSize: 12.5, marginTop: 3 }}>
-                {m.chinese_name ? `${m.chinese_name} · ` : ''}
-                {m.group?.name ?? tr('members.filter.ungrouped')}
-              </div>
+        <EntityHeader
+          avatar={<Avatar name={m.full_name} url={m.avatar_url} size="passport" />}
+          title={m.full_name}
+          badges={<RoleBadge role={role} />}
+          sub={
+            <>
+              {m.chinese_name ? `${m.chinese_name} · ` : ''}
+              {m.group?.name ?? tr('members.filter.ungrouped')}
+            </>
+          }
+          below={
+            <>
               {perms.write && (
                 <button
                   className="btn ghost sm"
@@ -147,9 +147,10 @@ export default function MemberDetailPage() {
                 onChange={onPickAvatar}
                 style={{ display: 'none' }}
               />
-            </div>
-          </div>
-          <div className="flex gap-8">
+            </>
+          }
+          actions={
+            <>
             {perms.write && <button className="btn" onClick={() => setEditOpen(true)}>{tr('member.editProfile')}</button>}
             {perms.delete && (
               <button
@@ -174,8 +175,9 @@ export default function MemberDetailPage() {
                 {tr('common.delete')}
               </button>
             )}
-          </div>
-        </div>
+            </>
+          }
+        />
 
         <div className="grid g4" style={{ marginTop: 18 }}>
           {facts.map((f) => (

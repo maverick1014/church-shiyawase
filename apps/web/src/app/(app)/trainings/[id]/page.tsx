@@ -20,6 +20,7 @@ import {
   roleKey,
   trainingCategoryLabel,
 } from '@/lib/labels';
+import { fromChurchInput, toChurchInput } from '@/lib/time';
 import { useT } from '@/lib/i18n';
 import { EnrollmentStatus } from '@tog/shared';
 import { TrainingModal } from '@/components/TrainingModal';
@@ -50,7 +51,7 @@ export default function TrainingDetailPage() {
       { key: 'name', dir: 'asc' },
     );
 
-  usePageChrome({ title: tr('training.title'), subtitle: tr('training.subtitle') }, [id, tr]);
+  usePageChrome({ title: tr('training.title') }, [id, tr]);
 
   if (detail.initialLoading) return <Loading />;
   if (detail.error || !detail.data)
@@ -424,13 +425,6 @@ export default function TrainingDetailPage() {
   );
 }
 
-function toLocalInput(iso: string | null): string {
-  if (!iso) return '';
-  const d = new Date(iso);
-  const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
-  return local.toISOString().slice(0, 16);
-}
-
 function SessionModal({
   trainingId,
   session,
@@ -449,7 +443,7 @@ function SessionModal({
   const [form, setForm] = useState({
     session_number: session?.session_number ?? nextNumber,
     title: session?.title ?? '',
-    scheduled_at: toLocalInput(session?.scheduled_at ?? null),
+    scheduled_at: toChurchInput(session?.scheduled_at ?? null),
     location: session?.location ?? '',
   });
   const [saving, setSaving] = useState(false);
@@ -462,7 +456,7 @@ function SessionModal({
       const payload = {
         session_number: Number(form.session_number),
         title: form.title || null,
-        scheduled_at: form.scheduled_at ? new Date(form.scheduled_at).toISOString() : null,
+        scheduled_at: fromChurchInput(form.scheduled_at),
         location: form.location || null,
       };
       if (session) await api.patch(`/trainings/sessions/${session.id}`, payload);

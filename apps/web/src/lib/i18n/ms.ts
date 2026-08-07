@@ -43,7 +43,7 @@ export const ms: Messages = {
   'nav.events': 'Perjumpaan & Kehadiran',
   'nav.trainings': 'Latihan',
   'nav.discipleship': 'Empat Puluh Hari',
-  'nav.settings': 'Pengurusan Pengguna',
+  'nav.settings': 'Pengguna',
   'nav.menu': 'Menu',
   'nav.accountMenu': 'Menu akaun',
   'nav.changePassword': 'Tukar kata laluan saya',
@@ -72,7 +72,6 @@ export const ms: Messages = {
 
   /* ---- members --------------------------------------------------------- */
   'members.title': 'Ahli',
-  'members.subtitle': 'Ketik seorang ahli untuk melihat dan menyunting maklumatnya',
   'members.add': '＋ Tambah ahli',
   'members.searchPlaceholder': '🔍 Cari nama…',
   'members.filter.role': 'Semua identiti',
@@ -101,7 +100,6 @@ export const ms: Messages = {
 
   /* ---- member detail --------------------------------------------------- */
   'member.title': 'Butiran ahli',
-  'member.subtitle': 'Profil · Rekod latihan · Empat Puluh Hari',
   'member.back': '‹ Kembali ke senarai ahli',
   'member.editProfile': 'Sunting profil',
   'member.uploadAvatar': 'Muat naik gambar',
@@ -132,7 +130,6 @@ export const ms: Messages = {
 
   /* ---- groups ---------------------------------------------------------- */
   'groups.title': 'Kumpulan Sel',
-  'groups.subtitle': 'Semua kumpulan · ketik untuk butiran',
   'groups.add': '＋ Tambah kumpulan',
   'groups.searchPlaceholder': '🔍 Cari kumpulan / ketua…',
   'groups.filter.tag': 'Semua tag',
@@ -167,7 +164,6 @@ export const ms: Messages = {
 
   /* ---- group detail ---------------------------------------------------- */
   'group.title': 'Butiran kumpulan',
-  'group.subtitle': 'Profil · Kepimpinan · Senarai ahli · Kehadiran mingguan',
   'group.back': '‹ Kembali ke kumpulan',
   'group.info': 'Profil kumpulan · Kepimpinan',
   'group.triangle': 'Trio kepimpinan',
@@ -204,11 +200,17 @@ export const ms: Messages = {
 
   /* ---- events ---------------------------------------------------------- */
   'events.title': 'Perjumpaan & Kehadiran',
-  'events.subtitle': 'Kebaktian · doa · persekutuan · kehadiran',
   'events.add': '＋ Tambah perjumpaan',
   'events.recurring': '🔁 Berulang',
   'events.upcoming': 'Akan datang',
   'events.past': 'Lepas',
+  'events.today': 'Hari ini',
+  'events.todaySub': '· berlangsung hari ini',
+  'events.upcomingSub': '· dijadualkan',
+  'events.pastSub': '· sudah diadakan',
+  'events.emptyToday': 'Tiada perjumpaan hari ini.',
+  'events.emptyUpcoming': 'Belum ada yang dijadualkan.',
+  'events.emptyPast': 'Tiada perjumpaan lepas.',
   'events.rollCall': 'Ambil kehadiran',
   'events.empty': 'Belum ada perjumpaan — guna “＋ Tambah perjumpaan” di kanan atas.',
   'events.new.title': 'Tambah perjumpaan',
@@ -235,7 +237,6 @@ export const ms: Messages = {
 
   /* ---- recurring events ------------------------------------------------ */
   'recurring.title': 'Perjumpaan berulang',
-  'recurring.subtitle': 'Perjumpaan bermasa tetap mengisi kalendar secara automatik',
   'recurring.add': '＋ Tambah ulangan',
   'recurring.back': '‹ Kembali ke perjumpaan',
   'recurring.hint': '💡 Perjumpaan dijadualkan automatik untuk “hari jangkaan” yang berikutnya (35 hari secara lalai, lebih kurang sebulan). Jika anda memadam satu kejadian (contohnya cuti umum) ia tidak akan kembali, dan menukar hari atau masa hanya memberi kesan kepada jadual baharu.',
@@ -269,7 +270,6 @@ export const ms: Messages = {
 
   /* ---- trainings ------------------------------------------------------- */
   'trainings.title': 'Latihan',
-  'trainings.subtitle': 'Katalog · semakan pendaftaran · senarai kehadiran',
   'trainings.add': '＋ Tambah kursus',
   'trainings.active': 'Kursus aktif',
   'trainings.activeSub': '· pendaftaran dibuka',
@@ -314,7 +314,6 @@ export const ms: Messages = {
   'disc.progress.linkCopied': 'Pautan disalin',
   'disc.progress.direction': 'mentor → yang dimuridkan',
   'disc.noProgram': 'Belum ada program pemuridan — cipta baris discipleship_programs dahulu.',
-  'disc.intro': '✝ Pemuridan satu-dengan-satu empat puluh hari: pastor memuridkan ketua kumpulan, mereka memuridkan penolong mereka, dan sesiapa yang telah dimuridkan akan memuridkan orang seterusnya — sehingga semua orang melalui perjalanan ini. Mentor mengisi borang setiap hari, jadi pastor sentiasa nampak gambaran penuh.',
   'disc.chain': 'Rantaian pemuridan · peta',
   'disc.chainSub': 'Pokok antara generasi · graduan menjadi titik mula baharu · ketik tag untuk menapis',
   'disc.fullscreenChip': '⛶ Skrin penuh',
@@ -347,7 +346,6 @@ export const ms: Messages = {
 
   /* ---- training detail ------------------------------------------------- */
   'training.title': 'Butiran latihan',
-  'training.subtitle': 'Sesi · semakan pendaftaran · senarai kehadiran',
   'training.back': '‹ Kembali ke katalog',
   'training.enrollLink': '🔗 Pautan pendaftaran',
   'training.enrollLinkTitle': 'Salin pautan pendaftaran sendiri untuk dikongsi',
@@ -402,7 +400,6 @@ export const ms: Messages = {
 
   /* ---- discipleship ---------------------------------------------------- */
   'disc.title': 'Empat Puluh Hari',
-  'disc.subtitle': 'Pemuridan satu-dengan-satu · penurunan · borang harian',
   'disc.add': '＋ Tambah pasangan',
   'disc.filter.active': 'Sedang berjalan',
   'disc.filter.done': 'Selesai',
@@ -428,8 +425,7 @@ export const ms: Messages = {
   'disc.progress.completed': 'Selesai',
 
   /* ---- settings -------------------------------------------------------- */
-  'settings.title': 'Pengurusan Pengguna',
-  'settings.subtitle': 'Akaun log masuk · peranan kebenaran · keselamatan & keutamaan',
+  'settings.title': 'Pengguna',
   'settings.add': '＋ Akaun baharu',
   'settings.changeMyPassword': 'Tukar kata laluan saya',
   'settings.permissions': 'Peranan kebenaran',
@@ -441,7 +437,7 @@ export const ms: Messages = {
   'settings.empty': 'Belum ada akaun.',
   'settings.manageAccount': 'Urus akaun',
   'settings.neverSignedIn': 'Tidak pernah log masuk',
-  'settings.onlySuperAdmin': 'Hanya super admin boleh membuka pengurusan pengguna.',
+  'settings.onlySuperAdmin': 'Hanya super admin boleh membuka senarai pengguna.',
   'settings.back': '‹ Kembali ke akaun',
   'settings.emailFromMember': 'E-mel log masuk (daripada profil ahli)',
   'settings.hallHint': '💡 Apabila terhad kepada satu kongregasi, akaun ini hanya dapat melihat dan mengurus ahli, kumpulan, perjumpaan dan latihan kongregasi tersebut. “Semua kongregasi” bermakna tanpa had.',
@@ -492,7 +488,6 @@ export const ms: Messages = {
 
   /* ---- dashboard ------------------------------------------------------- */
   'dash.title': 'Papan Pemuka',
-  'dash.subtitle': 'Gambaran keseluruhan gereja sekilas pandang',
   'dash.kpi.members': 'Jumlah ahli',
   'dash.kpi.active': 'Aktif',
   'dash.kpi.events': 'Perjumpaan akan datang',

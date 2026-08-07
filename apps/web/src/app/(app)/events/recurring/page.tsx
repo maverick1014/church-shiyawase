@@ -13,6 +13,7 @@ import {
   HallSelect,
   Loading,
   Modal,
+  PageBar,
   SortTh,
   useConfirm,
   useToast,
@@ -28,6 +29,7 @@ import {
   weekdayKey,
   WEEKDAY_OPTIONS,
 } from '@/lib/labels';
+import { churchDayOfWeek, churchInstant, churchParts } from '@/lib/time';
 import { useT } from '@/lib/i18n';
 import { EventType, Weekday } from '@tog/shared';
 
@@ -36,15 +38,22 @@ function nextOccurrence(weekday: Weekday, time: string): Date {
   const WEEKDAY_INDEX: Record<string, number> = {
     sunday: 0, monday: 1, tuesday: 2, wednesday: 3, thursday: 4, friday: 5, saturday: 6,
   };
+  // All of this is Malaysia time: which day it is now, which weekday that is,
+  // and what the rule's start_time means. Using the runtime's zone put the
+  // Worker (UTC) a day out for anything scheduled before 08:00.
   const now = new Date();
-  const d = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const p = churchParts(now);
+  const todayIdx = churchDayOfWeek(now);
   const target = WEEKDAY_INDEX[weekday] ?? 0;
-  d.setDate(d.getDate() + ((target - d.getDay() + 7) % 7));
   const [h, m] = time.split(':').map(Number);
-  d.setHours(h || 0, m || 0, 0, 0);
+  let day = p.day + ((target - todayIdx + 7) % 7);
+  let at = churchInstant(p.year, p.month, day, h || 0, m || 0);
   // Today but already past → next week.
-  if (d.getTime() < now.getTime()) d.setDate(d.getDate() + 7);
-  return d;
+  if (at.getTime() < now.getTime()) {
+    day += 7;
+    at = churchInstant(p.year, p.month, day, h || 0, m || 0);
+  }
+  return at;
 }
 
 export default function RecurringEventsPage() {
@@ -58,16 +67,7 @@ export default function RecurringEventsPage() {
   const [addOpen, setAddOpen] = useState(false);
   const [editing, setEditing] = useState<RecurringEventRow | null>(null);
 
-  usePageChrome(
-    {
-      title: t('recurring.title'),
-      subtitle: t('recurring.subtitle'),
-      action: perms.write ? (
-        <button className="btn" onClick={() => setAddOpen(true)}>{t('recurring.add')}</button>
-      ) : undefined,
-    },
-    [perms.write, t],
-  );
+  usePageChrome({ title: t('recurring.title') }, [t]);
 
   const rows = useMemo(
     () =>
@@ -136,6 +136,12 @@ export default function RecurringEventsPage() {
 
       <ErrorBanner message={rules.error} />
 
+      {perms.write && (
+        <PageBar
+          actions={<button className="btn" onClick={() => setAddOpen(true)}>{t('recurring.add')}</button>}
+        />
+      )}
+
       <div className="hint mb-16">{t('recurring.hint')}</div>
 
       {/* Desktop — table */}
@@ -145,15 +151,15 @@ export default function RecurringEventsPage() {
             <thead>
               <tr>
                 <SortTh sortKey="title" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('recurring.col.name')}</SortTh>
-                <SortTh sortKey="type" activeKey={sortKey} dir={sortDir} onSort={toggleSort} style={{ width: 110 }}>{t('recurring.col.type')}</SortTh>
-                <SortTh sortKey="when" activeKey={sortKey} dir={sortDir} onSort={toggleSort} style={{ width: 130 }}>{t('recurring.col.when')}</SortTh>
+                <SortTh sortKey="type" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('recurring.col.type')}</SortTh>
+                <SortTh sortKey="when" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('recurring.col.when')}</SortTh>
                 {!hallLocked && (
-                  <SortTh sortKey="hall" activeKey={sortKey} dir={sortDir} onSort={toggleSort} style={{ width: 100 }}>{t('hall.label')}</SortTh>
+                  <SortTh sortKey="hall" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('hall.label')}</SortTh>
                 )}
                 <th>{t('recurring.col.location')}</th>
-                <SortTh sortKey="next" activeKey={sortKey} dir={sortDir} onSort={toggleSort} style={{ width: 116 }}>{t('recurring.col.next')}</SortTh>
-                <SortTh sortKey="active" activeKey={sortKey} dir={sortDir} onSort={toggleSort} style={{ width: 84 }}>{t('recurring.col.status')}</SortTh>
-                <th style={{ width: 128 }} />
+                <SortTh sortKey="next" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('recurring.col.next')}</SortTh>
+                <SortTh sortKey="active" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('recurring.col.status')}</SortTh>
+                <th />
               </tr>
             </thead>
             <tbody>

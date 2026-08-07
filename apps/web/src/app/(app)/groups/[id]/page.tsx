@@ -19,6 +19,7 @@ import {
   weekdayKey,
   WEEKDAY_OPTIONS,
 } from '@/lib/labels';
+import { churchParts } from '@/lib/time';
 import { useLang, useT } from '@/lib/i18n';
 import { AttendanceStatus, GroupPosition, LEADERSHIP_POSITIONS, Weekday } from '@tog/shared';
 
@@ -33,7 +34,7 @@ export default function GroupDetailPage() {
   const members = useFetch<MemberRow[]>('/members');
   const allGroups = useFetch<GroupRow[]>('/groups');
 
-  usePageChrome({ title: t('group.title'), subtitle: t('group.subtitle') }, [id, t]);
+  usePageChrome({ title: t('group.title') }, [id, t]);
 
   const refreshAll = () => {
     detail.reload();
@@ -379,15 +380,18 @@ function GroupPanel({
 /** The Sundays of a given month — the fixed weeks for that year/month combo. */
 function weeksOfMonth(year: number, month1to12: number) {
   const out: { no: number; date: string; day: number }[] = [];
-  const d = new Date(year, month1to12 - 1, 1);
-  while (d.getDay() !== 0) d.setDate(d.getDate() + 1); // first Sunday
+  // Pure calendar arithmetic in UTC — these are date labels, not instants, so
+  // they must not depend on the runtime's zone the way the rest of the app's
+  // date handling no longer does (lib/time.ts).
+  const d = new Date(Date.UTC(year, month1to12 - 1, 1));
+  while (d.getUTCDay() !== 0) d.setUTCDate(d.getUTCDate() + 1); // first Sunday
   let n = 1;
-  while (d.getMonth() === month1to12 - 1) {
-    const date = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(
-      d.getDate(),
+  while (d.getUTCMonth() === month1to12 - 1) {
+    const date = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(
+      d.getUTCDate(),
     ).padStart(2, '0')}`;
-    out.push({ no: n, date, day: d.getDate() });
-    d.setDate(d.getDate() + 7);
+    out.push({ no: n, date, day: d.getUTCDate() });
+    d.setUTCDate(d.getUTCDate() + 7);
     n++;
   }
   return out;
@@ -402,16 +406,18 @@ function WeeklyAttendance({ groupId }: { groupId: string }) {
     `/groups/${groupId}/attendance`,
   );
 
-  const now = new Date();
-  const [year, setYear] = useState(now.getFullYear());
-  const [month, setMonth] = useState(now.getMonth() + 1);
+  // Which month "now" is defaults to Malaysia's calendar, not the runtime's —
+  // on a UTC Worker the first 8 hours of a new month still read as the old one.
+  const nowParts = churchParts(new Date());
+  const [year, setYear] = useState(nowParts.year);
+  const [month, setMonth] = useState(nowParts.month);
 
   // Weeks are fixed by the year+month (each Sunday of that month) — not editable.
   const weeks = useMemo(() => weeksOfMonth(year, month), [year, month]);
 
   // Year options: this year, last year, plus any year that already has records.
   const years = useMemo(() => {
-    const set = new Set<number>([now.getFullYear(), now.getFullYear() - 1]);
+    const set = new Set<number>([nowParts.year, nowParts.year - 1]);
     (data?.meetings ?? []).forEach((m) => set.add(Number(m.meeting_date.slice(0, 4))));
     return [...set].filter((y) => y > 0).sort((a, b) => b - a);
     // eslint-disable-next-line react-hooks/exhaustive-deps
