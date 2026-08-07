@@ -310,12 +310,6 @@ button {
   width: 100%;
 }
 
-/* On desktop the page actions live in the topbar; on phones/tablets they move
-   into the content instead (see the ≤820px rules) so the header stays clean. */
-.content-actions {
-  display: none;
-}
-
 /* The drawer's congregation switcher — the phone counterpart of the one at the
    top right of the header. Shown only where .topbar-actions is hidden. */
 .nav-hall {
@@ -324,6 +318,9 @@ button {
 }
 .nav-hall select {
   width: 100%;
+}
+.topbar-actions select {
+  width: auto;
 }
 
 .scrim {
@@ -719,29 +716,58 @@ th.sortable:hover {
   cursor: default;
 }
 
-/* Filter row above a list. Inside a form a control fills its Field; here it
-   should be only as wide as its own content, so the row reads as a set of
-   chips rather than a grid of equal boxes. Every control keeps the standard
-   --control-h, so dropdowns, the search box and the export button line up. */
-.filter-bar {
+/* The one bar at the top of a list page: filters on the left, the page's own
+   action buttons on the right. Every page uses this same row, so the top of
+   every list reads identically — the page actions used to live in a separate
+   stretch-to-fill row above it, which is why no two pages lined up.
+   Inside a form a control fills its Field; here it is only as wide as its own
+   content, so the row reads as a set of chips rather than a grid of equal
+   boxes. Every control keeps the standard --control-h, so the dropdowns, the
+   search box and the buttons all line up. */
+.page-bar {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   margin-bottom: 16px;
 }
-.filter-bar > input,
-.filter-bar > select,
-.filter-bar > .btn {
+.page-bar-filters,
+.page-bar-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.page-bar-filters {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+/* Right corner, always — even when the page has no filters at all. */
+.page-bar-actions {
+  margin-left: auto;
+  justify-content: flex-end;
+}
+.page-bar input,
+.page-bar select,
+.page-bar .btn {
   width: auto;
 }
-.filter-bar > input {
+.page-bar input {
   min-width: 200px;
   flex: 0 1 240px;
 }
-/* Pushes what follows to the right edge of the row (e.g. the export button). */
-.filter-bar > .spacer {
-  flex: 1 1 auto;
+/* Narrow: the two halves stack instead of squeezing, filters then actions,
+   with the actions still against the right edge. */
+@media (max-width: 640px) {
+  .page-bar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .page-bar-filters {
+    flex: 0 0 auto;
+  }
+  .page-bar-actions {
+    margin-left: 0;
+  }
 }
 
 /* ==========================================================================
@@ -1296,26 +1322,12 @@ td.empty-inline {
   .topbar {
     padding: 14px 16px 12px;
   }
-  /* The header stays title-only on phones; the action buttons render at the top
-     of the content instead, where there's room for full labels. */
+  /* The header carries only the title on phones; the congregation switcher
+     moves into the nav drawer (a page's own buttons are in its .page-bar and
+     are unaffected). */
   .topbar-actions {
     display: none;
   }
-  .content-actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    margin-bottom: 16px;
-  }
-  /* Sized by their own labels, like every control in a .filter-bar. Letting
-     them grow made the row's shape depend on how many buttons a page happened
-     to have, so no two list pages lined up. */
-  .content-actions > * {
-    flex: 0 1 auto;
-  }
-  /* Paired with `.topbar-actions { display: none }` above: the congregation
-     switcher leaves the header at exactly the width where the header's actions
-     do, and reappears in the nav drawer. */
   .nav-hall {
     display: block;
   }

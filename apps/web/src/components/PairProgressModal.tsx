@@ -12,13 +12,19 @@ import { ErrorBanner, Loading, Modal, useToast } from './ui';
  * pair detail (and the pair list for the lineage chain) so any page can open
  * it with just a pairId — no shared page navigation required. Each day cell is
  * clickable so a pastor / leader can read that day's remark and follow up.
+ *
+ * Deleting a pair lives here rather than in the list row: it sits behind an
+ * extra tap, away from the links a user opens every day. Callers pass
+ * `onDelete` only when the role may delete; without it the button is absent.
  */
 export function PairProgressModal({
   pairId,
   onClose,
+  onDelete,
 }: {
   pairId: string;
   onClose: () => void;
+  onDelete?: () => void;
 }) {
   const t = useT();
   const toast = useToast();
@@ -171,6 +177,11 @@ export function PairProgressModal({
               {t('disc.progress.openForm')}
             </button>
           </div>
+          {onDelete && (
+            <div className="flex mt-14" style={{ justifyContent: 'flex-end' }}>
+              <button className="btn danger" onClick={onDelete}>{t('common.delete')}</button>
+            </div>
+          )}
         </>
       )}
     </Modal>

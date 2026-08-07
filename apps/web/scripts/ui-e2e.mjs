@@ -155,9 +155,10 @@ async function main() {
     check('the search box filters the list live', total > 0 && (await page.locator('.mtile').count()) < total, `${total} → filtered`);
     await page.fill('input[placeholder*="Search"]', '');
     await w(300);
-    // Identity + group are <select> filters. Scope to .filter-bar — the topbar
-    // hall switcher is also a <select> and comes first in the DOM.
-    const filters = page.locator('.filter-bar select');
+    // Identity + group are <select> filters. Scope to the page bar's filter
+    // half — the shell hall switcher is also a <select> and comes first in
+    // the DOM.
+    const filters = page.locator('.page-bar-filters select');
     // The value is the language-independent DisplayRole code, not a label.
     await filters.first().selectOption('pastor');
     await w(500);
@@ -320,11 +321,25 @@ async function main() {
     const LIST_PAGES = ['/members', '/groups', '/events', '/trainings', '/discipleship', '/settings'];
     const strays = [];
     const missingDrawerHall = [];
+    const noBar = [];
+    const barShape = [];
     for (const path of LIST_PAGES) {
       await page.goto(`${BASE}${path}`, { waitUntil: 'domcontentloaded' });
       await page.locator('h1').first().waitFor({ timeout: 20000 });
-      // At this (mobile) viewport a page's own buttons render in .content-actions.
-      if ((await page.locator('.content-actions select').count()) > 0) strays.push(path);
+      // Every list page's top row is one shared PageBar: filters left, the
+      // page's own buttons right. A select in the actions half means a filter
+      // leaked into the button group (or the switcher was rendered by a page).
+      if ((await page.locator('.page-bar-actions select').count()) > 0) strays.push(path);
+      const bars = await page.locator('.page-bar').count();
+      if (bars !== 1) noBar.push(`${path} (${bars})`);
+      // Actions must be the last child of the bar so they land on the right
+      // (desktop) / at the bottom (stacked mobile).
+      const actionsLast = await page
+        .locator('.page-bar > :last-child')
+        .evaluate((el) => el.classList.contains('page-bar-actions'))
+        .catch(() => false);
+      const hasActions = (await page.locator('.page-bar-actions').count()) > 0;
+      if (hasActions && !actionsLast) barShape.push(path);
       // …and the switcher lives in the nav drawer instead. It renders only once
       // /api/halls has resolved, which is after the page's own h1, so wait for
       // it rather than reading an empty drawer and calling it a regression.
@@ -337,8 +352,12 @@ async function main() {
         if (!inDrawer) missingDrawerHall.push(path);
       }
     }
-    check('no page mixes the congregation switcher into its own action row',
+    check('no page mixes a dropdown into its own action row',
       strays.length === 0, strays.join(', ') || 'all clean');
+    check('every list page has exactly one shared page bar',
+      noBar.length === 0, noBar.join(', ') || `1 on each of ${LIST_PAGES.length}`);
+    check('the action group is the last thing in the page bar',
+      barShape.length === 0, barShape.join(', ') || 'right-aligned everywhere');
     check('the congregation switcher sits in the nav drawer on mobile',
       missingDrawerHall.length === 0,
       expectSwitcher ? missingDrawerHall.join(', ') || 'present on every page' : 'single congregation — n/a');

@@ -15,6 +15,7 @@ import {
   InfoPopover,
   Loading,
   Modal,
+  PageBar,
   PasswordInput,
   RoleBadge,
   RowChevron,
@@ -52,22 +53,7 @@ export default function SettingsPage() {
   const [addOpen, setAddOpen] = useState(false);
   const [myPwOpen, setMyPwOpen] = useState(false);
 
-  usePageChrome(
-    {
-      title: t('settings.title'),
-      action: (
-        <>
-          <button className="btn ghost" onClick={() => setMyPwOpen(true)}>
-            {t('settings.changeMyPassword')}
-          </button>
-          <button className="btn" onClick={() => setAddOpen(true)}>
-            {t('settings.add')}
-          </button>
-        </>
-      ),
-    },
-    [t],
-  );
+  usePageChrome({ title: t('settings.title') }, [t]);
 
   const list = accounts.data ?? [];
   const selected = list.find((a) => a.id === detailId) ?? null;
@@ -143,24 +129,32 @@ export default function SettingsPage() {
     <>
       <ErrorBanner message={accounts.error} />
 
-      {/* The permission matrix is reference material — behind an icon so it
-          doesn't push the account list itself below the fold. */}
-      <div className="filter-bar">
-        <span className="spacer" />
-        <InfoPopover label={t('settings.permissions')}>
-          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10 }}>{t('settings.permissions')}</div>
-          {ACCOUNT_ROLE_OPTIONS.map((ar) => (
-            <div key={ar} style={{ marginBottom: 12 }}>
-              <span className={`badge ${accountRoleClass(ar)}`}>{t(accountRoleKey(ar))}</span>
-              <ul style={{ margin: '7px 0 0', paddingLeft: 16, fontSize: 12, color: 'var(--muted)', lineHeight: 1.7 }}>
-                {ACCOUNT_ROLE_PERMISSION_KEYS[ar].map((k) => (
-                  <li key={k}>{t(k)}</li>
-                ))}
-              </ul>
-            </div>
-          ))}
-        </InfoPopover>
-      </div>
+      {/* The permission matrix is reference material, so it rides in the action
+          row behind an icon rather than pushing the account list down. There is
+          no search box: with a handful of accounts it would be furniture. */}
+      <PageBar
+        actions={
+          <>
+            <InfoPopover label={t('settings.permissions')}>
+              <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10 }}>{t('settings.permissions')}</div>
+              {ACCOUNT_ROLE_OPTIONS.map((ar) => (
+                <div key={ar} style={{ marginBottom: 12 }}>
+                  <span className={`badge ${accountRoleClass(ar)}`}>{t(accountRoleKey(ar))}</span>
+                  <ul style={{ margin: '7px 0 0', paddingLeft: 16, fontSize: 12, color: 'var(--muted)', lineHeight: 1.7 }}>
+                    {ACCOUNT_ROLE_PERMISSION_KEYS[ar].map((k) => (
+                      <li key={k}>{t(k)}</li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </InfoPopover>
+            <button className="btn ghost" onClick={() => setMyPwOpen(true)}>
+              {t('settings.changeMyPassword')}
+            </button>
+            <button className="btn" onClick={() => setAddOpen(true)}>{t('settings.add')}</button>
+          </>
+        }
+      />
 
       {/* Desktop — table */}
       <div className="card only-desktop" style={{ padding: 6 }}>

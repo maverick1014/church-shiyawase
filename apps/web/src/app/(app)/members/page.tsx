@@ -14,6 +14,7 @@ import {
   HallSelect,
   Loading,
   Modal,
+  PageBar,
   RoleBadge,
   RowChevron,
   SortTh,
@@ -53,17 +54,7 @@ export default function MembersPage() {
   const [groupFilter, setGroupFilter] = useState<string>('all');
   const [addOpen, setAddOpen] = useState(false);
 
-  usePageChrome(
-    {
-      title: t('members.title'),
-      action: perms.write ? (
-        <button className="btn" onClick={() => setAddOpen(true)}>
-          {t('members.add')}
-        </button>
-      ) : undefined,
-    },
-    [perms.write, t],
-  );
+  usePageChrome({ title: t('members.title') }, [t]);
 
   const members = data ?? [];
 
@@ -160,24 +151,34 @@ export default function MembersPage() {
     <>
       <ErrorBanner message={error} />
 
-      <div className="filter-bar">
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t('members.searchPlaceholder')} />
-        <select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}>
-          <option value="all">{t('members.filter.role')} ({counts.all})</option>
-          {MEMBER_ROLE_FILTERS.map((r) => (
-            <option key={r} value={r}>{t(roleKey(r))} ({counts[r] ?? 0})</option>
-          ))}
-        </select>
-        <select value={groupFilter} onChange={(e) => setGroupFilter(e.target.value)}>
-          <option value="all">{t('members.filter.group')}</option>
-          {groupOptions.groups.map((g) => (
-            <option key={g.id} value={g.id}>{g.name} ({g.count})</option>
-          ))}
-          <option value={UNASSIGNED}>{t('members.filter.ungrouped')} ({groupOptions.unassigned})</option>
-        </select>
-        <span className="spacer" />
-        <ExportButton onClick={exportMembers} disabled={sorted.length === 0} />
-      </div>
+      <PageBar
+        filters={
+          <>
+            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t('members.searchPlaceholder')} />
+            <select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}>
+              <option value="all">{t('members.filter.role')} ({counts.all})</option>
+              {MEMBER_ROLE_FILTERS.map((r) => (
+                <option key={r} value={r}>{t(roleKey(r))} ({counts[r] ?? 0})</option>
+              ))}
+            </select>
+            <select value={groupFilter} onChange={(e) => setGroupFilter(e.target.value)}>
+              <option value="all">{t('members.filter.group')}</option>
+              {groupOptions.groups.map((g) => (
+                <option key={g.id} value={g.id}>{g.name} ({g.count})</option>
+              ))}
+              <option value={UNASSIGNED}>{t('members.filter.ungrouped')} ({groupOptions.unassigned})</option>
+            </select>
+          </>
+        }
+        actions={
+          <>
+            <ExportButton onClick={exportMembers} disabled={sorted.length === 0} />
+            {perms.write && (
+              <button className="btn" onClick={() => setAddOpen(true)}>{t('members.add')}</button>
+            )}
+          </>
+        }
+      />
 
       {/* Desktop — table */}
       <div className="card only-desktop" style={{ padding: 6 }}>

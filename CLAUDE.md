@@ -101,13 +101,18 @@ Prefer `useFetch` + `useMemo` over manual effect/loading bookkeeping.
   `autoComplete`.
 
 ### G7a — One page-chrome shape for every page
-The header is **title only** (no subtitles). A page contributes *its own*
-actions via `usePageChrome({ action })` and nothing else — shell-level controls
-(the congregation switcher) live in the shell: top right of the header on
-desktop, in the nav drawer on phones. Never render a shell control into
-`.content-actions`, and never give a page action an ad-hoc width; page actions
-are content-sized like every control in a `.filter-bar`. Filters go in one
-`.filter-bar` per page, ordered search → filters → `.spacer` → export/info.
+The header is **title only** (no subtitles). Every list page's top row is one
+shared `<PageBar filters actions />`: the page's filters on the left, **all of
+its buttons in the right corner**, collapsing to a stacked filters-then-actions
+column below 640px. A page never renders a second bar, never puts a `<select>`
+in the actions half, and never gives an action an ad-hoc width — page actions
+are content-sized like every other control. Filter order inside the bar is
+search → dropdowns → export/info.
+
+Shell-level controls (the congregation switcher) belong to the shell, not to a
+page: top right of the header on desktop, in the nav drawer above 首页 on
+phones. They use the same `--control-h` as every other control — no `sm`
+variant, no inline width.
 List tables size their columns to their own content (`table-layout: auto` +
 `white-space: nowrap` on cells). Never hand-type a column width: one tuned to
 two CJK glyphs clips the moment the same label is English.

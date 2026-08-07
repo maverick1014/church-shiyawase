@@ -251,8 +251,8 @@ export function RowChevron({ title, onClick }: { title: string; onClick?: () => 
 
 /**
  * The one export control. Icon-only (the label added nothing next to a column
- * of 导出-something buttons) and full control height, so it lines up with the
- * dropdowns it sits beside in a `.filter-bar`.
+ * of export-something buttons) and full control height, so it lines up with
+ * the dropdowns it sits beside in a `PageBar`.
  */
 export function ExportButton({
   onClick,
@@ -269,6 +269,25 @@ export function ExportButton({
     <button className="btn ghost" onClick={onClick} disabled={disabled} title={label} aria-label={label}>
       <DownloadIcon />
     </button>
+  );
+}
+
+/**
+ * The one bar at the top of a list page: the page's filters on the left, its
+ * own action buttons on the right — the same row on every page, at every
+ * width. Page actions used to be handed to the shell via `usePageChrome`,
+ * which rendered them in a separate stretch-to-fill row, so the top of each
+ * list came out a different shape depending on how many buttons it had.
+ *
+ * Either half may be omitted; the actions stay in the right corner regardless.
+ */
+export function PageBar({ filters, actions }: { filters?: ReactNode; actions?: ReactNode }) {
+  if (!filters && !actions) return null;
+  return (
+    <div className="page-bar">
+      <div className="page-bar-filters">{filters}</div>
+      {actions && <div className="page-bar-actions">{actions}</div>}
+    </div>
   );
 }
 

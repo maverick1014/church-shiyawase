@@ -5,9 +5,10 @@ import { useFetch } from '@/lib/hooks';
 import { useSortableRows } from '@/lib/sort';
 import { api } from '@/lib/api';
 import { usePageChrome, useMe } from '@/components/AppShell';
-import { ErrorBanner, Field, Loading, Modal, SortTh, useConfirm, useToast } from '@/components/ui';
+import { ErrorBanner, ExportButton, Field, Loading, Modal, PageBar, SortTh, useConfirm, useToast } from '@/components/ui';
 import { PairProgressModal } from '@/components/PairProgressModal';
 import { can } from '@/lib/perms';
+import { exportRows } from '@/lib/export';
 import { MemberRow, OverviewRow, PairRow, ProgramRow } from '@/lib/types';
 import {
   memberRole,
@@ -49,19 +50,9 @@ export default function DiscipleshipPage() {
   const [fullscreen, setFullscreen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
 
-  usePageChrome(
-    {
-      title: t('disc.title'),
-      action: perms.write ? (
-        <button className="btn" onClick={() => setAddOpen(true)} disabled={!programId}>
-          {t('disc.add')}
-        </button>
-      ) : undefined,
-    },
-    [perms.write, programId, t],
-  );
+  usePageChrome({ title: t('disc.title') }, [t]);
 
-  const delPair = async (n: Node) => {
+  const delPair = async (n: Node): Promise<boolean> => {
     const ok = await confirm({
       title: t('disc.delete.title'),
       message: t('disc.delete.message', {
@@ -71,14 +62,16 @@ export default function DiscipleshipPage() {
       confirmText: t('common.delete'),
       danger: true,
     });
-    if (!ok) return;
+    if (!ok) return false;
     try {
       await api.delete(`/discipleship/pairs/${n.pair.id}`);
       pairs.reload();
       overview.reload();
       toast(t('disc.toast.deleted'));
+      return true;
     } catch (e) {
       toast((e as Error).message, 'error');
+      return false;
     }
   };
 
@@ -139,6 +132,20 @@ export default function DiscipleshipPage() {
       },
       { key: 'name', dir: 'asc' },
     );
+
+  const exportPairs = () => {
+    exportRows(
+      t('disc.title'),
+      t('disc.col.pair'),
+      sortedNodes.map((n) => ({
+        [t('export.trainee')]: n.pair.trainee?.full_name ?? '',
+        [t('export.mentor')]: n.pair.mentor?.full_name ?? '',
+        [t('export.days')]: `${n.days}/${n.total}`,
+        [t('export.progress')]: `${n.pct}%`,
+        [t('export.status')]: t(pairStatusKey(n.pair.status)),
+      })),
+    );
+  };
 
   const renderForest = (full = false) => (
     <div
@@ -222,13 +229,26 @@ export default function DiscipleshipPage() {
     <>
       <ErrorBanner message={pairs.error || overview.error} />
 
+      <PageBar
+        actions={
+          <>
+            <ExportButton onClick={exportPairs} disabled={nodes.length === 0} />
+            {perms.write && (
+              <button className="btn" onClick={() => setAddOpen(true)} disabled={!programId}>
+                {t('disc.add')}
+              </button>
+            )}
+          </>
+        }
+      />
+
       {/* Cascade / relay chart */}
+      <div className="section-label mb-14">
+        <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--brand)', display: 'inline-block' }} />
+        {t('disc.chain')}
+      </div>
       <div className="card">
         <div className="card-head">
-          <div>
-            <h3>{t('disc.chain')}</h3>
-            <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>{t('disc.chainSub')}</div>
-          </div>
           <div className="flex gap-6 flex-wrap">
             {(['active', 'done', 'pending'] as Filter[]).map((f) => (
               <button key={f} className={`chip ${filter === f ? 'on' : ''}`} onClick={() => setFilter(f)}>
@@ -265,14 +285,11 @@ export default function DiscipleshipPage() {
       </div>
 
       {/* Pastor overview */}
-      <div className="card mt-16">
-        <div className="card-head">
-          <div>
-            <h3>{t('disc.pastorOverview')}</h3>
-            <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>{t('disc.pastorOverviewSub')}</div>
-          </div>
-          <span className="badge b-good">{t('disc.live')}</span>
-        </div>
+      <div className="section-label mb-14" style={{ marginTop: 28 }}>
+        <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--good)', display: 'inline-block' }} />
+        {t('disc.pastorOverview')}
+      </div>
+      <div className="card">
         {/* Desktop — table */}
         <div className="table-wrap only-desktop">
           <table>
@@ -300,10 +317,7 @@ export default function DiscipleshipPage() {
                   <td><span className={`badge ${pairStatusClass(n.pair.status)}`}>{t(pairStatusKey(n.pair.status))}</span></td>
                   <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                     <button className="btn ghost sm" style={{ marginRight: 6 }} onClick={() => setPopup(n)}>{t('disc.progressBtn')}</button>
-                    <button className="btn ghost sm" style={{ color: 'var(--brand)', marginRight: 6 }} onClick={() => window.open(`/d/${n.pair.form_token}`, '_blank')}>{t('disc.form')}</button>
-                    {perms.delete && (
-                      <button className="btn danger sm" onClick={() => delPair(n)}>{t('common.delete')}</button>
-                    )}
+                    <button className="btn ghost sm" style={{ color: 'var(--brand)' }} onClick={() => window.open(`/d/${n.pair.form_token}`, '_blank')}>{t('disc.form')}</button>
                   </td>
                 </tr>
               ))}
@@ -333,17 +347,6 @@ export default function DiscipleshipPage() {
                   >
                     {t('disc.form')}
                   </button>
-                  {perms.delete && (
-                    <button
-                      className="tile-action crit"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        delPair(n);
-                      }}
-                    >
-                      {t('common.delete')}
-                    </button>
-                  )}
                 </div>
               </div>
               <div className="mtile-line" style={{ marginTop: 9 }}>
@@ -360,7 +363,19 @@ export default function DiscipleshipPage() {
       </div>
 
       {popup && (
-        <PairProgressModal pairId={popup.pair.id} onClose={() => setPopup(null)} />
+        <PairProgressModal
+          pairId={popup.pair.id}
+          onClose={() => setPopup(null)}
+          onDelete={
+            perms.delete
+              ? async () => {
+                  // Only close once the delete is confirmed — backing out of the
+                  // confirmation must leave the dialog where it was.
+                  if (await delPair(popup)) setPopup(null);
+                }
+              : undefined
+          }
+        />
       )}
 
       {fullscreen && (

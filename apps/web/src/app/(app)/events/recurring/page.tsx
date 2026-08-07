@@ -13,6 +13,7 @@ import {
   HallSelect,
   Loading,
   Modal,
+  PageBar,
   SortTh,
   useConfirm,
   useToast,
@@ -58,15 +59,7 @@ export default function RecurringEventsPage() {
   const [addOpen, setAddOpen] = useState(false);
   const [editing, setEditing] = useState<RecurringEventRow | null>(null);
 
-  usePageChrome(
-    {
-      title: t('recurring.title'),
-      action: perms.write ? (
-        <button className="btn" onClick={() => setAddOpen(true)}>{t('recurring.add')}</button>
-      ) : undefined,
-    },
-    [perms.write, t],
-  );
+  usePageChrome({ title: t('recurring.title') }, [t]);
 
   const rows = useMemo(
     () =>
@@ -134,6 +127,12 @@ export default function RecurringEventsPage() {
       <button className="back-btn" onClick={() => router.push('/events')}>{t('recurring.back')}</button>
 
       <ErrorBanner message={rules.error} />
+
+      {perms.write && (
+        <PageBar
+          actions={<button className="btn" onClick={() => setAddOpen(true)}>{t('recurring.add')}</button>}
+        />
+      )}
 
       <div className="hint mb-16">{t('recurring.hint')}</div>
 

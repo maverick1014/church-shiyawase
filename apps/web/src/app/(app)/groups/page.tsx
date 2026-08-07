@@ -9,16 +9,19 @@ import { usePageChrome, useMe, useHallScope } from '@/components/AppShell';
 import {
   ChevronRightIcon,
   ErrorBanner,
+  ExportButton,
   Field,
   HallSelect,
   Loading,
   Modal,
+  PageBar,
   RowChevron,
   SortTh,
   TagsInput,
   useToast,
 } from '@/components/ui';
 import { can } from '@/lib/perms';
+import { exportRows } from '@/lib/export';
 import { GroupRow, MemberRow } from '@/lib/types';
 import {
   groupHealthClass,
@@ -45,17 +48,7 @@ export default function GroupsPage() {
   const [tagFilter, setTagFilter] = useState('all');
   const [weekdayFilter, setWeekdayFilter] = useState<Weekday | 'all'>('all');
 
-  usePageChrome(
-    {
-      title: t('groups.title'),
-      action: perms.write ? (
-        <button className="btn" onClick={() => setAddOpen(true)}>
-          {t('groups.add')}
-        </button>
-      ) : undefined,
-    },
-    [perms.write, t],
-  );
+  usePageChrome({ title: t('groups.title') }, [t]);
 
   // Leader + member counts + health status derived once from the
   // already-fetched member list (G5: no extra request just to know who
@@ -121,30 +114,59 @@ export default function GroupsPage() {
     { key: 'name', dir: 'asc' },
   );
 
+  const exportGroups = () => {
+    exportRows(
+      t('groups.title'),
+      t('groups.col.name'),
+      sorted.map((g) => ({
+        [t('export.name')]: g.name,
+        [t('export.hall')]: g.hallName ?? '',
+        [t('export.leader')]: g.leaderName ?? t('common.vacant'),
+        [t('export.members')]: g.memberCount,
+        [t('export.newMembers')]: g.newMemberCount,
+        [t('export.status')]: t(groupHealthKey(g.status)),
+        [t('export.schedule')]: g.schedule,
+        [t('export.tags')]: g.tags.join(', '),
+      })),
+    );
+  };
+
   if (groups.initialLoading) return <Loading />;
 
   return (
     <>
       <ErrorBanner message={groups.error || members.error} />
 
-      <div className="filter-bar">
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t('groups.searchPlaceholder')} />
-        <select value={tagFilter} onChange={(e) => setTagFilter(e.target.value)}>
-          <option value="all">{t('groups.filter.tag')}</option>
-          {allTags.map((tag) => (
-            <option key={tag} value={tag}>{tag}</option>
-          ))}
-        </select>
-        <select
-          value={weekdayFilter}
-          onChange={(e) => setWeekdayFilter(e.target.value as Weekday | 'all')}
-        >
-          <option value="all">{t('groups.filter.weekday')}</option>
-          {WEEKDAY_OPTIONS.map((d) => (
-            <option key={d} value={d}>{t(weekdayKey(d))}</option>
-          ))}
-        </select>
-      </div>
+      <PageBar
+        filters={
+          <>
+            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t('groups.searchPlaceholder')} />
+            <select value={tagFilter} onChange={(e) => setTagFilter(e.target.value)}>
+              <option value="all">{t('groups.filter.tag')}</option>
+              {allTags.map((tag) => (
+                <option key={tag} value={tag}>{tag}</option>
+              ))}
+            </select>
+            <select
+              value={weekdayFilter}
+              onChange={(e) => setWeekdayFilter(e.target.value as Weekday | 'all')}
+            >
+              <option value="all">{t('groups.filter.weekday')}</option>
+              {WEEKDAY_OPTIONS.map((d) => (
+                <option key={d} value={d}>{t(weekdayKey(d))}</option>
+              ))}
+            </select>
+          </>
+        }
+        actions={
+          <>
+            <ExportButton onClick={exportGroups} disabled={sorted.length === 0} />
+            {perms.write && (
+              <button className="btn" onClick={() => setAddOpen(true)}>{t('groups.add')}</button>
+            )}
+          </>
+        }
+      />
 
       {/* Desktop — table */}
       <div className="card only-desktop" style={{ padding: 6 }}>

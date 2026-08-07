@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useFetch } from '@/lib/hooks';
 import { api } from '@/lib/api';
 import { usePageChrome, useMe, useHallScope } from '@/components/AppShell';
-import { Empty, ErrorBanner, Field, HallSelect, Loading, Modal, useConfirm, useToast } from '@/components/ui';
+import { Empty, ErrorBanner, Field, HallSelect, Loading, Modal, PageBar, useConfirm, useToast } from '@/components/ui';
 import { can } from '@/lib/perms';
 import { EventDetail, EventRow, MemberRow } from '@/lib/types';
 import {
@@ -38,22 +38,7 @@ export default function EventsPage() {
   const [addOpen, setAddOpen] = useState(false);
   const [editing, setEditing] = useState<EventRow | null>(null);
 
-  usePageChrome(
-    {
-      title: t('events.title'),
-      action: perms.write ? (
-        <>
-          <button className="btn ghost" onClick={() => router.push('/events/recurring')}>
-            {t('events.recurring')}
-          </button>
-          <button className="btn" onClick={() => setAddOpen(true)}>
-            {t('events.add')}
-          </button>
-        </>
-      ) : undefined,
-    },
-    [perms.write, t],
-  );
+  usePageChrome({ title: t('events.title') }, [t]);
 
   // Same three-section shape as the training catalog, so both pages read the
   // same way: what needs attention now, what is coming, what is done.
@@ -151,6 +136,19 @@ export default function EventsPage() {
   return (
     <>
       <ErrorBanner message={events.error} />
+
+      {perms.write && (
+        <PageBar
+          actions={
+            <>
+              <button className="btn ghost" onClick={() => router.push('/events/recurring')}>
+                {t('events.recurring')}
+              </button>
+              <button className="btn" onClick={() => setAddOpen(true)}>{t('events.add')}</button>
+            </>
+          }
+        />
+      )}
 
       {total === 0 ? (
         <Empty>{t('events.empty')}</Empty>

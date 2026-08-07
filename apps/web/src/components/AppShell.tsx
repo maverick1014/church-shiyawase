@@ -38,9 +38,10 @@ export function useMe(): Me {
 export { useHallScope } from '@/lib/hall';
 
 /* -------------------------------------------------------------------------
- * Page chrome context — pages set the topbar title / action.
+ * Page chrome context — a page sets the topbar title, nothing else. Its own
+ * buttons go in its `PageBar`, next to its filters (see components/ui.tsx).
  * ---------------------------------------------------------------------- */
-type Chrome = { title: string; action?: ReactNode };
+type Chrome = { title: string };
 const ChromeContext = createContext<(c: Chrome) => void>(() => {});
 
 export function usePageChrome(chrome: Chrome, deps: unknown[] = []) {
@@ -158,11 +159,9 @@ function Shell({
   const hallSwitcher =
     me && !me.hall && halls.length > 1 ? (
       <select
-        className="sm"
         value={hallId}
         onChange={(e) => setHallId(e.target.value)}
         title={t('hall.switchTitle')}
-        style={{ width: 'auto' }}
       >
         <option value="">{t('hall.all')}</option>
         {halls.map((h) => (
@@ -240,16 +239,12 @@ function Shell({
                 </button>
                 <h1>{chrome.title}</h1>
               </div>
-              {(chrome.action || hallSwitcher) && (
-                <div className="flex items-center gap-10 topbar-actions">
-                  {chrome.action}
-                  {hallSwitcher}
-                </div>
+              {hallSwitcher && (
+                <div className="flex items-center gap-10 topbar-actions">{hallSwitcher}</div>
               )}
             </div>
 
             <div className="content view-anim" key={pathname}>
-              {chrome.action && <div className="content-actions">{chrome.action}</div>}
               {children}
             </div>
           </div>
