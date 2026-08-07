@@ -15,6 +15,9 @@ import {
   displayRole,
 } from '@tog/shared';
 import type { MessageKey } from './i18n/en';
+import { churchParts } from './time';
+
+const pad2 = (n: number) => String(n).padStart(2, '0');
 
 /*
  * This module never returns a translated string — it returns the *key* the
@@ -381,24 +384,22 @@ export function initialOf(name: string | null | undefined): string {
     : trimmed.slice(0, 1).toUpperCase();
 }
 
+// Both read in Malaysia time (lib/time.ts), never the runtime's zone — the
+// Worker runs in UTC, so `getHours()` here rendered a 10:00 service as 02:00.
 export function formatDate(value: string | null | undefined): string {
   if (!value) return '—';
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return String(value);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(
-    d.getDate(),
-  ).padStart(2, '0')}`;
+  const p = churchParts(d);
+  return `${p.year}-${pad2(p.month)}-${pad2(p.day)}`;
 }
 
 export function formatDateTime(value: string | null | undefined): string {
   if (!value) return '—';
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return String(value);
-  const date = `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-  const time = `${String(d.getHours()).padStart(2, '0')}:${String(
-    d.getMinutes(),
-  ).padStart(2, '0')}`;
-  return `${date} ${time}`;
+  const p = churchParts(d);
+  return `${pad2(p.month)}-${pad2(p.day)} ${pad2(p.hour)}:${pad2(p.minute)}`;
 }
 
 export function formatMoney(value: number | string | null | undefined): string {

@@ -16,6 +16,7 @@ import {
   EVENT_TYPE_OPTIONS,
   formatDateTime,
 } from '@/lib/labels';
+import { addChurchDays, fromChurchInput, startOfChurchDay, toChurchInput } from '@/lib/time';
 import { useT } from '@/lib/i18n';
 import { AttendanceStatus, EventType, MemberStatus } from '@tog/shared';
 
@@ -45,10 +46,11 @@ export default function EventsPage() {
   // "Today" is its own group because it is the one an admin actually acts on —
   // it is the roll-call list for the day.
   const { today, upcoming, past } = useMemo(() => {
-    const startOfToday = new Date();
-    startOfToday.setHours(0, 0, 0, 0);
-    const startOfTomorrow = new Date(startOfToday);
-    startOfTomorrow.setDate(startOfTomorrow.getDate() + 1);
+    // "Today" means today in Malaysia — setHours() would use the runtime's
+    // zone, so the Worker (UTC) put the 08:00-and-earlier services in the
+    // wrong bucket.
+    const startOfToday = startOfChurchDay();
+    const startOfTomorrow = addChurchDays(startOfToday, 1);
 
     const td: EventRow[] = [];
     const up: EventRow[] = [];
@@ -296,13 +298,6 @@ function AttendancePanel({
   );
 }
 
-function toLocalInput(iso: string | null): string {
-  if (!iso) return '';
-  const d = new Date(iso);
-  const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
-  return local.toISOString().slice(0, 16);
-}
-
 function EventModal({
   event,
   onClose,
@@ -321,7 +316,7 @@ function EventModal({
     title: event?.title ?? '',
     event_type: (event?.event_type ?? EventType.Service) as EventType,
     location: event?.location ?? '',
-    starts_at: toLocalInput(event?.starts_at ?? null),
+    starts_at: toChurchInput(event?.starts_at),
     // Editing keeps the event's own hall; creating defaults to the hall being
     // viewed (and to the all-halls / joint option only when viewing all halls).
     hall_id: event ? event.hall_id : hallId || null,
@@ -341,7 +336,7 @@ function EventModal({
         title: form.title.trim(),
         event_type: form.event_type,
         location: form.location || null,
-        starts_at: new Date(form.starts_at).toISOString(),
+        starts_at: fromChurchInput(form.starts_at),
         hall_id: form.hall_id,
       };
       if (event) await api.patch(`/events/${event.id}`, payload);

@@ -3,6 +3,8 @@
  * on first use so it never weighs down the initial page bundle.
  */
 
+import { churchDateKey } from './time';
+
 function colWidths(
   headers: string[],
   cellLen: (h: string, i: number) => number,
@@ -13,7 +15,7 @@ function colWidths(
 }
 
 function download(wb: unknown, XLSX: typeof import('xlsx'), name: string): void {
-  const stamp = new Date().toISOString().slice(0, 10);
+  const stamp = churchDateKey();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   XLSX.writeFile(wb as any, `${name}_${stamp}.xlsx`);
 }

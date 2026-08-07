@@ -117,6 +117,20 @@ List tables size their columns to their own content (`table-layout: auto` +
 `white-space: nowrap` on cells). Never hand-type a column width: one tuned to
 two CJK glyphs clips the moment the same label is English.
 
+### G6a — Every date and time is Malaysia time
+The church is in one place, so a 10:00 service reads 10:00 on every screen.
+All date/time work goes through `lib/time.ts` (`churchParts`,
+`churchInstant`, `startOfChurchDay`, `addChurchDays`, `churchDayOfWeek`,
+`churchDateKey`, `toChurchInput` / `fromChurchInput`, `endOfChurchDate`).
+Never call `getHours` / `setHours` / `getFullYear` / `getMonth` / `getDate` /
+`getTimezoneOffset` on a `Date` in app code — they read the *runtime's* zone,
+which is UTC inside the Worker and the viewer's own zone in the browser, so
+the same row rendered two different times. A `datetime-local` value is a bare
+wall-clock reading and always means Malaysia. A stored `DATE` covers its whole
+Malaysian day — compare against `endOfChurchDate`, not `new Date(dateOnly)`,
+or it expires at 08:00 that morning. Unit tests must pass under a non-Malaysia
+`TZ` (`TZ=America/New_York npm test`).
+
 ### G7 — Mobile-first & theme
 Tables become list tiles on small screens (`.only-desktop` / `.only-mobile`
 helpers). Two-column layouts collapse to a single full-width column on tablet

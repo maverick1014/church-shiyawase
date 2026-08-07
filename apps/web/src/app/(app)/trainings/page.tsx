@@ -10,6 +10,7 @@ import { TrainingModal } from '@/components/TrainingModal';
 import { can } from '@/lib/perms';
 import { MemberRow, TrainingRow } from '@/lib/types';
 import { categoryBadgeClass, formatDate, trainingCategoryLabel } from '@/lib/labels';
+import { endOfChurchDate } from '@/lib/time';
 import { useT } from '@/lib/i18n';
 
 export default function TrainingsPage() {
@@ -31,7 +32,11 @@ export default function TrainingsPage() {
     const a: TrainingRow[] = [];
     const e: TrainingRow[] = [];
     for (const course of list) {
-      const isEnded = course.ends_on && new Date(course.ends_on) < now;
+      // ends_on is a DATE and covers its whole Malaysian day — comparing
+      // against new Date(ends_on) retired the course at 08:00 that morning,
+      // because a bare date parses as UTC midnight.
+      const endsAfter = endOfChurchDate(course.ends_on);
+      const isEnded = !!endsAfter && endsAfter <= now;
       if (isEnded || !course.is_enrollable) e.push(course);
       else a.push(course);
     }

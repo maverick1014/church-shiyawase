@@ -7,6 +7,7 @@ import {
   signSession,
   verifyPassword,
 } from '@/lib/server/auth';
+import { CHURCH_TZ_OFFSET, churchParts } from '@/lib/time';
 import { LANGUAGES, normalizeLanguage } from '@tog/shared';
 
 /**
@@ -747,7 +748,6 @@ async function upsertProgress(
   );
 }
 
-const CHURCH_TZ_OFFSET = '+08:00'; // Malaysia/Singapore time
 const WEEKDAY_INDEX: Record<string, number> = {
   sunday: 0,
   monday: 1,
@@ -794,10 +794,9 @@ async function ensureRecurringEvents(db: ReturnType<typeof getDb>) {
   }>;
   if (rules.length === 0) return;
 
-  const nowLocal = new Date(Date.now() + 8 * 3600 * 1000);
-  const todayLocal = new Date(
-    Date.UTC(nowLocal.getUTCFullYear(), nowLocal.getUTCMonth(), nowLocal.getUTCDate()),
-  );
+  // Malaysia's calendar date, via the same helper the UI reads with.
+  const nowParts = churchParts(new Date());
+  const todayLocal = new Date(Date.UTC(nowParts.year, nowParts.month - 1, nowParts.day));
 
   // Every date a rule still owes, within its own lookahead window.
   const wanted: Array<{ rule: (typeof rules)[number]; date: string; startsAt: string }> = [];
