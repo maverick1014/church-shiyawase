@@ -26,6 +26,10 @@ export default function DashboardPage() {
   const members = useFetch<MemberRow[]>('/members');
   const events = useFetch<EventRow[]>('/events');
   const programs = useFetch<ProgramRow[]>('/discipleship/programs');
+  // The 守望 KPI reads the FIRST 守望模块 — the church runs one, and the
+  // dashboard deliberately carries no module picker (that lives on
+  // /discipleship). If a second module is ever added, this tile needs a
+  // decision — sum every module, or say which one it is counting.
   const firstProgram = programs.data?.[0]?.id;
   const overview = useFetch<OverviewRow[]>(
     firstProgram ? `/discipleship/programs/${firstProgram}/overview` : null,

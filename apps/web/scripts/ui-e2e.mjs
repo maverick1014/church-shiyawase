@@ -221,6 +221,17 @@ async function main() {
       .delete(`${BASE}/api${path}`)
       .then((r) => r.ok())
       .catch(() => false);
+  /**
+   * Take a row off the sweep list. Used when it is genuinely gone — either the
+   * API delete below confirmed it, or a module deleted it THROUGH THE UI, which
+   * is the whole point of that check. Leaving it on the list would make the
+   * final sweep try to delete a row that no longer exists and report a
+   * "COULD NOT DELETE" leftover that was in fact cleaned up.
+   */
+  const forget = (path) => {
+    const i = leftovers.findIndex((f) => f.path === path);
+    if (i >= 0) leftovers.splice(i, 1);
+  };
   /** Register a created row; returns a remover that is safe to call twice. */
   const disposable = (label, path) => {
     leftovers.push({ label, path });
@@ -229,8 +240,7 @@ async function main() {
       // Forget it only once the row is really deleted — a delete that failed
       // has to stay on the list so main()'s sweep tries it again.
       if (!(await apiDelete(path))) return;
-      const i = leftovers.findIndex((f) => f.path === path);
-      if (i >= 0) leftovers.splice(i, 1);
+      forget(path);
     };
   };
 
@@ -591,6 +601,95 @@ async function main() {
       check('✕ closes the dialog', (await page.locator('.modal').count()) === 0);
     } finally {
       await fxPair.remove();
+    }
+
+    /* -- forty days · modules --------------------------------------------- */
+    // A 守望模块 (discipleship_programs row) is the definition a pair hangs
+    // off — its name and how many days the pair follows. It had no UI at all,
+    // so when the church's single row was deleted during a data cleanup the
+    // whole feature went dark and only raw SQL could bring it back. This
+    // module drives the create → see → edit → delete cycle through the
+    // dialogs, on a throwaway module of its own: the church's real one is only
+    // ever read, never edited and never deleted (deleting a module cascades to
+    // every pair under it and all of their daily records).
+    mod('forty days · module management');
+    const moduleName = fixtureName('MODULE');
+    /** `{ path, remove }` once the module exists; null until then. */
+    let fxModule = null;
+    const openModules = async () => {
+      await page.locator('button:visible:has-text("Modules")').first().click();
+      await page.locator('.modal').waitFor({ timeout: 8000 });
+    };
+    /** The list dialog's row for one module — Edit / Delete live on it. */
+    const moduleRow = () => page.locator('.modal .flex.items-center', { hasText: moduleName });
+    try {
+      await page.goto(`${BASE}/discipleship`, { waitUntil: 'domcontentloaded' });
+      const modulesBtn = page.locator('button:visible:has-text("Modules")');
+      await modulesBtn.first().waitFor({ timeout: 20000 });
+      check('the forty-days page offers a module manager', (await modulesBtn.count()) > 0);
+
+      await openModules();
+      check('the module dialog offers a create button',
+        (await page.locator('.modal button:has-text("New module")').count()) > 0);
+      await page.locator('.modal button:has-text("New module")').first().click();
+      await page.locator('.modal input').first().waitFor({ timeout: 8000 });
+      await page.locator('.modal input').first().fill(moduleName);
+      // name · description · total days — the length is the third field.
+      await page.locator('.modal input').nth(2).fill('9');
+      await page.locator('.modal button:has-text("Save")').first().click();
+      await w(1500);
+      check('creating a module adds it to the module list', (await moduleRow().count()) === 1);
+
+      // Register it for cleanup the moment the server confirms it exists, so a
+      // failure below can never leave a stray module on the live database.
+      const created = (await apiGet('/discipleship/programs')).find((p) => p.name === moduleName);
+      check('the created module is stored with the length that was typed',
+        !!created && created.total_days === 9, String(created?.total_days));
+      if (created) {
+        const path = `/discipleship/programs/${created.id}`;
+        fxModule = { path, remove: disposable(`discipleship module ${moduleName}`, path) };
+      }
+
+      // Close the dialog: with two or more modules the page grows a selector,
+      // and it belongs in the filters half of the page bar, never the actions.
+      await page.locator('.modal button:has-text("Close")').first().click();
+      await w(600);
+      const selectorOptions = await page.locator('.page-bar-filters select option').allInnerTexts();
+      check('a second module makes the page bar offer a module selector',
+        selectorOptions.includes(moduleName), selectorOptions.join(' | ').slice(0, 120));
+      check('the selector is not mixed into the action row',
+        (await page.locator('.page-bar-actions select').count()) === 0);
+
+      // Edit: change the length and confirm the change actually persisted.
+      await openModules();
+      await moduleRow().locator('button:has-text("Edit")').first().click();
+      await page.locator('.modal input').first().waitFor({ timeout: 8000 });
+      check('the edit form opens on that module',
+        (await page.locator('.modal input').first().inputValue()) === moduleName);
+      await page.locator('.modal input').nth(2).fill('15');
+      await page.locator('.modal button:has-text("Save")').first().click();
+      await w(1500);
+      const edited = (await apiGet('/discipleship/programs')).find((p) => p.name === moduleName);
+      check('editing a module saves its new length', edited?.total_days === 15, String(edited?.total_days));
+
+      // Delete: the confirmation must spell out what goes with it (rule G3).
+      await moduleRow().locator('button:has-text("Delete")').first().click();
+      await page.locator('.modal-backdrop').last().waitFor({ timeout: 8000 });
+      const confirmText = await page.locator('.modal-backdrop').last().innerText();
+      check('deleting a module asks first, and says what it destroys',
+        confirmText.includes(moduleName) && /cannot be undone/i.test(confirmText),
+        confirmText.replace(/\s+/g, ' ').slice(0, 140));
+      await page.locator('.modal-backdrop').last().locator('button:has-text("Delete")').last().click();
+      await w(1500);
+      const afterDelete = await apiGet('/discipleship/programs');
+      const gone = !afterDelete.some((p) => p.name === moduleName);
+      check('deleting a module removes it', gone);
+      // Deleted through the UI — take it off the sweep list so the run does not
+      // report a leftover it already cleaned up.
+      if (gone && fxModule) { forget(fxModule.path); fxModule = null; }
+      check('the church’s own module is untouched', afterDelete.length >= 1, `${afterDelete.length} left`);
+    } finally {
+      if (fxModule) await fxModule.remove();
     }
 
     /* -- user management -------------------------------------------------- */

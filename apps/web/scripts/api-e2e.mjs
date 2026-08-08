@@ -209,10 +209,28 @@ async function main() {
     ok('delete training → 200', (await req('DELETE', `/api/trainings/${trId}`, H)).status === 200);
   }
 
-  // ---- Discipleship pair CRUD + public form -------------------------------
-  const programs = (await req('GET', '/api/discipleship/programs', H)).json;
-  const programId = programs?.[0]?.id;
-  ok('has a discipleship program', !!programId);
+  // ---- Discipleship module CRUD + pair CRUD + public form ------------------
+  // 守望模块 (discipleship_programs) are creatable from the UI now, so this
+  // block brings its OWN module and works on that — the same create → use →
+  // delete shape as the training block above. The church's real module is
+  // never touched: deleting one cascades to every pair under it and to all of
+  // their daily records.
+  const programsBefore = (await req('GET', '/api/discipleship/programs', H)).json;
+  ok('discipleship modules list is an array', Array.isArray(programsBefore), JSON.stringify(programsBefore).slice(0, 120));
+  const mkProg = await req('POST', '/api/discipleship/programs', { ...H, body: { name: `E2E模块-${Date.now()}`, description: 'api-e2e fixture', total_days: 7 } });
+  ok('create discipleship module → 200 + id', mkProg.status === 200 && mkProg.json?.id, `status ${mkProg.status} ${JSON.stringify(mkProg.json).slice(0, 120)}`);
+  const programId = mkProg.json?.id;
+  if (programId) {
+    ok('created module keeps its total_days', mkProg.json?.total_days === 7, String(mkProg.json?.total_days));
+    const readProg = await req('GET', `/api/discipleship/programs/${programId}`, H);
+    ok('read module by id → 200', readProg.status === 200 && readProg.json?.id === programId, `status ${readProg.status}`);
+    const patchProg = await req('PATCH', `/api/discipleship/programs/${programId}`, { ...H, body: { name: `E2E模块改-${Date.now()}`, total_days: 12 } });
+    ok('update module → 200 + new total_days', patchProg.status === 200 && patchProg.json?.total_days === 12, `status ${patchProg.status} ${patchProg.json?.total_days}`);
+    // total_days >= 1 is a DB check constraint; the UI validates it too, but
+    // the server must refuse a hand-rolled request all the same.
+    const badDays = await req('PATCH', `/api/discipleship/programs/${programId}`, { ...H, body: { total_days: 0 } });
+    ok('module with total_days < 1 → rejected', badDays.status >= 400, `status ${badDays.status}`);
+  }
   // The trainee must not already be paired (unique program_id+trainee_id).
   const existingPairs = (await req('GET', '/api/discipleship/pairs', H)).json || [];
   const usedTrainees = new Set(existingPairs.map((p) => p.trainee_id));
@@ -229,6 +247,12 @@ async function main() {
       ok('public form submit progress → 200', prog.status === 200, `status ${prog.status}`);
     }
     if (mkPair.json?.id) ok('delete pair → 200', (await req('DELETE', `/api/discipleship/pairs/${mkPair.json.id}`, H)).status === 200);
+  }
+  if (programId) {
+    ok('delete module → 200', (await req('DELETE', `/api/discipleship/programs/${programId}`, H)).status === 200);
+    const after = (await req('GET', '/api/discipleship/programs', H)).json;
+    ok('the deleted module is gone from the list', Array.isArray(after) && !after.some((p) => p.id === programId));
+    ok('the church’s own modules survive', Array.isArray(after) && (programsBefore || []).every((p) => after.some((q) => q.id === p.id)));
   }
 
   // ---- Accounts CRUD + password (super_admin) -----------------------------

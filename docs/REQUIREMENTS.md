@@ -58,7 +58,8 @@
   成员身份分布条形图、近八周奉献趋势 sparkline、即将到来的聚会（前 4）、门训进度关注（进
   度最低前 5）。
 - 无任何写操作；所有登录角色可见。数据来自 `/members`、`/events`、`/donations`、
-  `/discipleship/programs` 及首个计划的 `/overview`。
+  `/discipleship/programs` 及**首个模块**的 `/overview`（仪表盘不带模块选择器，模块选择在
+  `/discipleship`）。
 
 ### 3.2 成员目录 `/members` 与成员详情 `/members/[id]`（成员目录）
 
@@ -156,9 +157,20 @@
 
 ### 3.7 四十天守望 `/discipleship`（门训接棒）
 
-- 依赖首个 `discipleship_programs` 记录（`programId`）。⚠ **缺口**：若无计划，页面提示
-  「请先在数据库中创建 discipleship_programs 记录」——**UI 无法创建 / 编辑 / 删除计划**
-  （API 有 `GET/POST /discipleship/programs`，但页面未暴露新建计划入口）。
+- **守望模块（modules，DB 仍称 `discipleship_programs`）**：模块定义名称、说明与总天数，
+  配对经 `program_id` 挂在某个模块下。用户界面与三份词典一律称「模块 / module / modul」；
+  数据库表名、字段名、API 路径（`/discipleship/programs`、`program_id`）保持不变。
+  - **C / U / D**：页面动作区「模块」按钮打开模块列表弹窗（仅 `perms.write` 可见），内含
+    「＋ 新建模块」与逐行「编辑」（`perms.write`）/「删除」（`perms.delete`）。表单字段：
+    名称（必填）、说明、总天数（必填，整数 ≥ 1，前端校验 + 服务端 `check (total_days >= 1)`）。
+    编辑已有配对的模块时，表单会以实际配对数提示「改天数会重算所有配对的完成百分比」。
+    删除走共享 `useConfirm({ danger: true })`，并写明连带删除的配对数与最多多少天的每日记录
+    （`discipleship_pairs.program_id` 与 `discipleship_progress.pair_id` 均为 `on delete cascade`）。
+  - **选择器**：只有一个模块时页面与从前完全一致（无选择器）；两个及以上时，`PageBar`
+    **筛选区**出现模块下拉，切换即同时切换配对列表、接棒图、牧者总览与进度弹窗。不做持久化，
+    默认第一个模块。
+  - **空态**：一个模块都没有时，页面提示新建模块并直接提供「＋ 新建模块」（只读账户则提示
+    联系管理员）——删掉最后一个模块后仍可从 UI 恢复，不必再改数据库。
 - **C 新增配对**（「＋ 新增配对」，仅 `perms.write`，须已有 programId）：选带领者 + 被带领
   者（已在配对中的被带领者不显示；不能自配）。系统按带领者已有配对自动串接 `parent_pair_id`
   形成接棒链。
@@ -371,8 +383,10 @@
 **US-37：作为同工（非管理员），我在门训看不到「删除」。**
 - 总览行 / 瓦片显示「进度 / 🔗 表单」但不显示「删除」。
 
-**US-38：作为超管，我希望能在 UI 创建守望计划与变更配对状态，但当前不支持（已知缺口）。**
-- 现状：无计划时页面要求「在数据库中创建」；UI 无新建计划入口，也无配对状态（暂停 / 完成）变更控件。
+**US-38：作为超管，我想在 UI 里新建 / 编辑 / 删除守望模块，让四十天守望不再依赖手写 SQL。**
+- `/discipleship` 动作区「模块」→ 模块列表弹窗：「＋ 新建模块」、逐行「编辑」/「删除」。
+- 删除前确认框写明会连带删除多少对配对与最多多少天的每日记录；删光后空态引导重新新建。
+- 仍是缺口：配对状态（暂停 / 完成）无 UI 变更控件（见「已知缺口」第 6 条）。
 
 ### 用户管理（超管专属）
 
@@ -507,19 +521,15 @@
    `completed_at`、`progress=100`）/ `dropped` 及 `DELETE /trainings/enrollments/[id]`；UI 仅
    `pending→approved`，无拒绝 / 移除报名 / 标记完成 / 退出。
 
-6. **（G1）门训计划（programs）无 UI 管理。** 页面在无计划时要求「在数据库中创建
-   discipleship_programs」；`GET/POST /discipleship/programs` 存在但页面未暴露创建 / 编辑 /
-   删除计划的入口。
-
-7. **（G1）门训配对缺 U。** API 有 `PATCH /discipleship/pairs/[id]`（可改 status 为 paused /
+6. **（G1）门训配对缺 U。** API 有 `PATCH /discipleship/pairs/[id]`（可改 status 为 paused /
    completed），UI 无配对编辑 / 状态变更控件；配对状态实际只能停留在默认值。
 
-8. **（G1 · 轻微）应用内无守望进度录入控件。** 进度只能经公开表单写入；牧者 / 管理员在应用
+7. **（G1 · 轻微）应用内无守望进度录入控件。** 进度只能经公开表单写入；牧者 / 管理员在应用
    内无法直接为某天打勾（须复制链接到表单页）。若这是刻意设计（仅带领者填表），应在 `docs/`
    明确记录。
 
-9. **（轻微 · 文案）小组每周出席空态写「点『＋ 添加本周』」，实际按钮为「＋ 添加一周」。** 非功能
+8. **（轻微 · 文案）小组每周出席空态写「点『＋ 添加本周』」，实际按钮为「＋ 添加一周」。** 非功能
    缺陷，但违反 G8 用户可见字符串一致性。会议 `note` 字段 API 支持但 UI 从不采集。
 
-10. **（轻微）成员牧师身份（church_role=pastor）无法在 UI 设定。** 新增仅置 `member`，编辑不含
-    church_role；牧师身份只能经数据库写入。若为刻意（牧师身份由后台维护）应文档化。
+9. **（轻微）成员牧师身份（church_role=pastor）无法在 UI 设定。** 新增仅置 `member`，编辑不含
+   church_role；牧师身份只能经数据库写入。若为刻意（牧师身份由后台维护）应文档化。

@@ -18,8 +18,8 @@ Testing layers (in `apps/web`):
 - `npm run test:ui-e2e` — **browser UI end-to-end**: drives the real site in
   Chromium and asserts each interaction's expected outcome (login, search,
   filters, modals, weekly attendance, discipleship day-notes, an
-  interface-language round-trip, a create→delete member write-cycle). It
-  restores anything it changes. It runs a tiny in-process reverse proxy so the browser
+  interface-language round-trip, a 守望模块 create→edit→delete cycle, a
+  create→delete member write-cycle). It restores anything it changes. It runs a tiny in-process reverse proxy so the browser
   works even behind an egress proxy. `UI_E2E_PASSWORD` is required (never
   hardcode a real password); `UI_E2E_URL` / `UI_E2E_EMAIL` are optional. In this
   sandbox run it as:
@@ -49,8 +49,8 @@ These are hard requirements for this codebase. A change that breaks one is a
 review finding, not a preference. Cite the rule number in the finding.
 
 ### G1 — CRUD completeness on every management page
-Every entity page (成员、小组、聚会、培训、四十天守望配对、账户) must offer the
-full set its users need: **Create, Read, Update, Delete**. If the API supports an
+Every entity page (成员、小组、聚会、培训、四十天守望模块与配对、账户) must offer
+the full set its users need: **Create, Read, Update, Delete**. If the API supports an
 operation, the UI must expose it (or the omission must be a deliberate,
 documented decision). A page that can only create + list is incomplete.
 
@@ -171,6 +171,13 @@ and below. Light theme only — no dark-mode branches or `data-theme` code.
   the moment the language changes.
 - The public pages (`/login`, `/d/[token]`, `/enroll/[id]`) have no session and
   so render in the default language; API error messages are English.
+- A user-facing rename stops at the API boundary. The 四十天守望 **模块 /
+  module** is `discipleship_programs` in the database: the table, its columns,
+  `program_id` and `/api/discipleship/programs` all keep the "program" name,
+  while every dictionary key (`disc.module.*`) and everything on screen says
+  module. Renaming the wire too would be a migration's worth of churn for
+  nothing visible — but the boundary must stay in one place (the page's fetch),
+  not smeared through the file.
 - Match surrounding code: functional components, hooks at top, shared `ui.tsx`
   building blocks, no new CSS frameworks.
 - Keep `docs/` and this file in sync when a rule or flow changes.

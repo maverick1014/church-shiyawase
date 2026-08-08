@@ -637,8 +637,29 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
           .order('percent_complete', { ascending: false });
         if (hallFilter) query = query.eq('hall_id', hallFilter);
         return json(unwrap(await query));
-      } else if (!r3 && method === 'GET') {
-        return json(unwrap(await db.from('discipleship_programs').select('*').eq('id', r2).single()));
+      } else if (!r3) {
+        // A 守望模块 (discipleship_programs row) carries NO hall column — it is
+        // church-wide configuration, like a training session or an enrollment,
+        // so none of the hall helpers apply here. Access control is entirely
+        // the gate at the top of dispatch(): `readonly` cannot write at all,
+        // and DELETE is super_admin/admin only.
+        if (method === 'GET') {
+          return json(unwrap(await db.from('discipleship_programs').select('*').eq('id', r2).single()));
+        }
+        if (method === 'PATCH') {
+          return json(
+            unwrap(await db.from('discipleship_programs').update(await body()).eq('id', r2).select().single()),
+          );
+        }
+        if (method === 'DELETE') {
+          // This CASCADES: discipleship_pairs.program_id is `on delete
+          // cascade` and discipleship_progress.pair_id cascades from there, so
+          // every pair under the module and all their daily entries go with
+          // it. The 四十天守望 page names that blast radius (how many pairs,
+          // how many days of records) in its confirmation before calling this.
+          unwrap(await db.from('discipleship_programs').delete().eq('id', r2).select().single());
+          return json({ id: r2 });
+        }
       }
     } else if (r1 === 'pairs') {
       if (!r2) {
