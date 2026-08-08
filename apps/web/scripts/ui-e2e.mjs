@@ -25,10 +25,16 @@
  *   UI_E2E_PASSWORD  login password (REQUIRED — never hardcode a real password)
  *   UI_E2E_DIRECT    "1" → browser hits the target directly (no mirror)
  *   UI_E2E_SHOTS     dir → write a screenshot per module (debugging)
+ *   UI_E2E_EXPECT_BUILD  the only build this run may assert against; waits for
+ *                        /api/version to report it, and skips (exit 0) if a
+ *                        newer deploy got there first. CI sets this; unset
+ *                        locally means "test whatever is live".
+ *   UI_E2E_ROLLOUT_TIMEOUT_MS  how long to wait for that build (default 240s)
  *   PLAYWRIGHT_CHROMIUM_PATH  explicit Chromium binary (needed in the sandbox)
  *
- * Exits 0 if every check passes, 1 otherwise. Self-cleaning: the one write it
- * performs (create a throwaway member) is deleted again, with an API fallback.
+ * Exits 0 if every check passes (or the run was superseded), 1 if a check
+ * failed. Self-cleaning: the one write it performs (create a throwaway member)
+ * is deleted again, with an API fallback.
  */
 import { createServer } from 'node:http';
 import { chromium } from '@playwright/test';
@@ -38,7 +44,8 @@ const EMAIL = process.env.UI_E2E_EMAIL || 'john@grace.org';
 const PASSWORD = process.env.UI_E2E_PASSWORD;
 const DIRECT = process.env.UI_E2E_DIRECT === '1';
 
-if (!PASSWORD) {
+function requirePassword() {
+  if (PASSWORD) return;
   console.error('UI_E2E_PASSWORD is required (the login password). Set it in the environment — e.g.\n' +
     '  UI_E2E_PASSWORD=… npm run test:ui-e2e\n' +
     'Optionally set UI_E2E_EMAIL (default john@grace.org) and UI_E2E_URL.');
@@ -46,6 +53,56 @@ if (!PASSWORD) {
 }
 const SHOTS = process.env.UI_E2E_SHOTS || '';
 const CHROMIUM = process.env.PLAYWRIGHT_CHROMIUM_PATH || undefined;
+const EXPECT_BUILD = process.env.UI_E2E_EXPECT_BUILD || '';
+// Overridable so the superseded path can be exercised in seconds, not minutes.
+const ROLLOUT_TIMEOUT_MS = Number(process.env.UI_E2E_ROLLOUT_TIMEOUT_MS || 240_000);
+
+/**
+ * This script only means anything against the build it was checked out from.
+ * Point yesterday's script at today's site and every selector that moved shows
+ * up as a "failure" that is really just version skew — which is exactly what
+ * happened here: for days, every automatic post-deploy run was red while every
+ * manual run was green, because the automatic ones ran main's script against a
+ * feature branch's deploy.
+ *
+ * So when the caller says which build it expects (CI does; a human running it
+ * by hand does not), wait for the Worker to actually be serving that build.
+ * Cloudflare propagates over several seconds and edge nodes disagree while it
+ * does, so poll rather than sample once.
+ *
+ * Returns 'ok', or 'superseded' when a *different* build is live and staying
+ * live — that means a newer deploy overtook this run, and there is nothing
+ * here worth asserting. That is not a test failure and must not be reported
+ * as one.
+ */
+async function waitForRollout({ timeoutMs = ROLLOUT_TIMEOUT_MS, everyMs = 3_000 } = {}) {
+  if (!EXPECT_BUILD) return 'ok';
+  const started = Date.now();
+  let seen = '?';
+  for (;;) {
+    try {
+      const r = await fetch(`${TARGET}/api/version?_=${Date.now()}`);
+      const body = await r.json().catch(() => null);
+      seen = body?.build ?? `? (${r.status})`;
+      if (body?.build === EXPECT_BUILD) {
+        const waited = Math.round((Date.now() - started) / 1000);
+        if (waited > everyMs / 1000) console.log(`  (waited ${waited}s for build ${EXPECT_BUILD.slice(0, 7)})\n`);
+        return 'ok';
+      }
+    } catch {
+      // Transient — keep polling until the deadline.
+    }
+    if (Date.now() - started > timeoutMs) {
+      console.log(
+        `\nSKIPPED: expected build ${EXPECT_BUILD.slice(0, 7)} but the site is serving ${String(seen).slice(0, 7)}.\n` +
+          'A newer deploy has superseded this run, so its script no longer matches the live site.\n' +
+          'Not running the checks — a mismatch here would be version skew, not a regression.\n',
+      );
+      return 'superseded';
+    }
+    await new Promise((r2) => setTimeout(r2, everyMs));
+  }
+}
 
 /* ------------------------------------------------------------------ mirror */
 let server = null;
@@ -94,6 +151,13 @@ function check(name, ok, detail = '') {
 async function main() {
   const BASE = DIRECT ? TARGET : await startMirror();
   console.log(`UI E2E → ${TARGET}${DIRECT ? '' : `  (via mirror ${BASE})`}\n`);
+
+  // Never assert against a build this script wasn't written for.
+  if ((await waitForRollout()) === 'superseded') {
+    server?.close();
+    process.exit(0);
+  }
+  requirePassword();
 
   const browser = await chromium.launch({ executablePath: CHROMIUM, args: ['--no-sandbox'] });
   const ctx = await browser.newContext({ viewport: { width: 402, height: 880 }, deviceScaleFactor: 2 });

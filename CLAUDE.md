@@ -26,6 +26,15 @@ Testing layers (in `apps/web`):
   `NODE_USE_ENV_PROXY=1 PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-browsers/chromium-1194/chrome-linux/chrome UI_E2E_PASSWORD=… npm run test:ui-e2e`.
   When you add/rename a page or a key interaction, add a matching check to
   `scripts/ui-e2e.mjs`.
+  **This script is only valid against the build it was checked out from.** The
+  site has one shared URL, and `deploy.yml` only ever runs on feature branches,
+  so an old script pointed at a newer deploy reports moved selectors as
+  "failures". CI therefore pins the checkout to the deployed SHA
+  (`ref: github.event.workflow_run.head_sha`) and passes
+  `UI_E2E_EXPECT_BUILD`; the script waits for `/api/version` to report that
+  build and **skips with exit 0** if a newer deploy overtook it. Never "fix" a
+  red automatic run by loosening a selector before checking which build it
+  actually tested.
 - `npm run ui:shots` — **screenshot sweep**: captures every list page at a phone
   and a desktop viewport into `$OUT` (default `/tmp/shots`; `WIDE=1` for
   desktop). ui-e2e proves the pages *work*; it cannot see that two pages lay
