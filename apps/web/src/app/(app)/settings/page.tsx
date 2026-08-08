@@ -8,7 +8,7 @@ import { api } from '@/lib/api';
 import { usePageChrome, useMe } from '@/components/AppShell';
 import {
   Avatar,
-  BackButton,
+  BackBar,
   ChevronRightIcon,
   EntityHeader,
   ErrorBanner,
@@ -353,7 +353,19 @@ function AccountDetail({
 
   return (
     <div style={{ maxWidth: 720 }}>
-      <BackButton onClick={onBack} />
+      {/* "View member profile" leaves this record and so belongs with back,
+          not inside the record's own card. */}
+      <BackBar
+        onBack={onBack}
+        actions={
+          account.member && (
+            <button className="btn ghost" onClick={() => router.push(`/members/${account.member!.id}`)}>
+              {t('settings.viewMemberProfile')}
+              <ChevronRightIcon size={16} />
+            </button>
+          )
+        }
+      />
       {err && <ErrorBanner message={err} />}
 
       <div className="card">
@@ -367,13 +379,6 @@ function AccountDetail({
             </>
           }
           sub={t('settings.linkedTo', { email: account.email })}
-          actions={
-            account.member && (
-              <button className="btn ghost" onClick={() => router.push(`/members/${account.member!.id}`)}>
-                {t('settings.viewMemberProfile')}
-              </button>
-            )
-          }
         />
 
         <div className="grid g2" style={{ marginTop: 18 }}>

@@ -838,11 +838,13 @@ th.sortable:hover {
   .enrol-row {
     flex-wrap: wrap;
   }
+  /* Name + role share the first line with the progress bar — the bar belongs
+     next to the person it describes. Only the buttons drop below. */
   .enrol-row > :first-child {
-    flex: 1 1 100%;
+    flex: 1 1 auto;
   }
   .enrol-row .row-actions {
-    flex: 1 1 auto;
+    flex: 1 1 100%;
   }
 }
 
@@ -1394,6 +1396,23 @@ td.empty-inline {
 .back-btn {
   margin-bottom: 14px;
   padding-left: 11px;
+}
+/* Back on the left, the page's own actions in the right corner — the same
+   split as .page-bar, so a detail page reads like a list page. */
+.back-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.back-bar-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-left: auto;
+  margin-bottom: 14px;
 }
 
 /* ==========================================================================

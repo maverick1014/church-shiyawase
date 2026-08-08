@@ -227,6 +227,28 @@ export function ChevronLeftIcon({ size = 18 }: { size?: number }) {
   );
 }
 
+export function RepeatIcon({ size = 16 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M17 2l4 4-4 4" />
+      <path d="M3 11V9a4 4 0 0 1 4-4h14" />
+      <path d="M7 22l-4-4 4-4" />
+      <path d="M21 13v2a4 4 0 0 1-4 4H3" />
+    </svg>
+  );
+}
+
+export function LinkIcon({ size = 16 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.5 1.5" />
+      <path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7L12 19" />
+    </svg>
+  );
+}
+
 export function DownloadIcon({ size = 17 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -295,6 +317,22 @@ export function BackButton({ onClick }: { onClick: () => void }) {
       <ChevronLeftIcon size={16} />
       {t('common.back')}
     </button>
+  );
+}
+
+/**
+ * A detail page's top row: back on the left, that record's page-level actions
+ * in the right corner — the same left/right split as `PageBar`, so a detail
+ * page and a list page read the same way. Use this instead of a bare
+ * `BackButton` whenever the page has an action that belongs beside back
+ * rather than inside the record's card.
+ */
+export function BackBar({ onBack, actions }: { onBack: () => void; actions?: ReactNode }) {
+  return (
+    <div className="back-bar">
+      <BackButton onClick={onBack} />
+      {actions && <div className="back-bar-actions">{actions}</div>}
+    </div>
   );
 }
 

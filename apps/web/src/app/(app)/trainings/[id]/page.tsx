@@ -6,7 +6,7 @@ import { useFetch } from '@/lib/hooks';
 import { useSortableRows } from '@/lib/sort';
 import { api } from '@/lib/api';
 import { usePageChrome, useMe } from '@/components/AppShell';
-import { BackButton, ErrorBanner, ExportButton, Field, Loading, Modal, SortTh, useConfirm, useToast } from '@/components/ui';
+import { BackButton, ErrorBanner, ExportButton, Field, LinkIcon, Loading, Modal, SortTh, useConfirm, useToast } from '@/components/ui';
 import { can } from '@/lib/perms';
 import { exportMatrix } from '@/lib/export';
 import { EnrollmentRow, MemberRow, NamelistResponse, SessionRow, TrainingDetail } from '@/lib/types';
@@ -223,6 +223,7 @@ export default function TrainingDetailPage() {
           <div className="flex gap-8">
             {t.is_enrollable && (
               <button className="btn ghost" onClick={copyEnrollLink} title={tr('training.enrollLinkTitle')}>
+                <LinkIcon />
                 {tr('training.enrollLink')}
               </button>
             )}

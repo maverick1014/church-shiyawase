@@ -199,7 +199,7 @@ export const ms: Messages = {
   /* ---- events ---------------------------------------------------------- */
   'events.title': 'Perjumpaan & Kehadiran',
   'events.add': '＋ Tambah perjumpaan',
-  'events.recurring': '🔁 Berulang',
+  'events.recurring': 'Berulang',
   'events.upcoming': 'Akan datang',
   'events.past': 'Lepas',
   'events.today': 'Hari ini',
@@ -343,7 +343,7 @@ export const ms: Messages = {
 
   /* ---- training detail ------------------------------------------------- */
   'training.title': 'Butiran latihan',
-  'training.enrollLink': '🔗 Pautan pendaftaran',
+  'training.enrollLink': 'Pautan pendaftaran',
   'training.enrollLinkTitle': 'Salin pautan pendaftaran sendiri untuk dikongsi',
   'training.editCourse': 'Sunting kursus',
   'training.sessionList': 'Sesi',
@@ -406,7 +406,7 @@ export const ms: Messages = {
   'disc.col.mentor': 'Mentor',
   'disc.col.progress': 'Kemajuan',
   'disc.empty': 'Belum ada pasangan.',
-  'disc.form': '🔗 Borang',
+  'disc.form': 'Borang',
   'disc.new.title': 'Tambah pasangan',
   'disc.field.mentor': 'Mentor',
   'disc.field.trainee': 'Yang dimuridkan',
@@ -461,7 +461,7 @@ export const ms: Messages = {
   'settings.toast.deleted': 'Akaun dipadam',
   'settings.toast.passwordReset': 'Kata laluan ditetapkan semula',
   'settings.toast.passwordChanged': 'Kata laluan dikemas kini',
-  'settings.viewMemberProfile': 'Lihat profil ahli →',
+  'settings.viewMemberProfile': 'Lihat profil ahli',
   'settings.linkedTo': 'Dipautkan kepada profil ahli · {email}',
   'settings.accountStatusSub': 'Akaun yang dinyahaktifkan tidak boleh log masuk',
   'settings.security': 'Keselamatan · set semula kata laluan log masuk',

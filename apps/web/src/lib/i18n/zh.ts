@@ -199,7 +199,7 @@ export const zh: Messages = {
   /* ---- events ---------------------------------------------------------- */
   'events.title': '聚会与点名',
   'events.add': '＋ 新增聚会',
-  'events.recurring': '🔁 循环聚会',
+  'events.recurring': '循环聚会',
   'events.upcoming': '即将举行',
   'events.past': '已结束',
   'events.today': '今天',
@@ -343,7 +343,7 @@ export const zh: Messages = {
 
   /* ---- training detail ------------------------------------------------- */
   'training.title': '课程详情',
-  'training.enrollLink': '🔗 报名链接',
+  'training.enrollLink': '报名链接',
   'training.enrollLinkTitle': '复制自助报名链接以分享',
   'training.editCourse': '编辑课程',
   'training.sessionList': '课堂安排',
@@ -406,7 +406,7 @@ export const zh: Messages = {
   'disc.col.mentor': '带领者',
   'disc.col.progress': '进度',
   'disc.empty': '还没有配对。',
-  'disc.form': '🔗 表单',
+  'disc.form': '表单',
   'disc.new.title': '新增配对',
   'disc.field.mentor': '带领者',
   'disc.field.trainee': '被带领者',
@@ -461,7 +461,7 @@ export const zh: Messages = {
   'settings.toast.deleted': '账户已删除',
   'settings.toast.passwordReset': '密码已重置',
   'settings.toast.passwordChanged': '密码已更新',
-  'settings.viewMemberProfile': '查看成员档案 →',
+  'settings.viewMemberProfile': '查看成员档案',
   'settings.linkedTo': '账户已关联成员档案 · {email}',
   'settings.accountStatusSub': '停用后该成员无法登录后台',
   'settings.security': '安全 · 重设登录密码',

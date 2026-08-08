@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useFetch } from '@/lib/hooks';
 import { api } from '@/lib/api';
 import { usePageChrome, useMe, useHallScope } from '@/components/AppShell';
-import { Empty, ErrorBanner, Field, HallSelect, Loading, Modal, PageBar, useConfirm, useToast } from '@/components/ui';
+import { Empty, ErrorBanner, Field, HallSelect, Loading, Modal, PageBar, RepeatIcon, useConfirm, useToast } from '@/components/ui';
 import { can } from '@/lib/perms';
 import { EventDetail, EventRow, MemberRow } from '@/lib/types';
 import {
@@ -144,6 +144,7 @@ export default function EventsPage() {
           actions={
             <>
               <button className="btn ghost" onClick={() => router.push('/events/recurring')}>
+                <RepeatIcon />
                 {t('events.recurring')}
               </button>
               <button className="btn" onClick={() => setAddOpen(true)}>{t('events.add')}</button>

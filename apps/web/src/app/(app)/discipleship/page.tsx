@@ -5,7 +5,7 @@ import { useFetch } from '@/lib/hooks';
 import { useSortableRows } from '@/lib/sort';
 import { api } from '@/lib/api';
 import { usePageChrome, useMe } from '@/components/AppShell';
-import { ErrorBanner, ExportButton, Field, Loading, Modal, PageBar, SortTh, useConfirm, useToast } from '@/components/ui';
+import { ErrorBanner, ExportButton, Field, LinkIcon, Loading, Modal, PageBar, SortTh, useConfirm, useToast } from '@/components/ui';
 import { PairProgressModal } from '@/components/PairProgressModal';
 import { can } from '@/lib/perms';
 import { exportRows } from '@/lib/export';
@@ -317,7 +317,7 @@ export default function DiscipleshipPage() {
                   <td><span className={`badge ${pairStatusClass(n.pair.status)}`}>{t(pairStatusKey(n.pair.status))}</span></td>
                   <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                     <button className="btn ghost sm" style={{ marginRight: 6 }} onClick={() => setPopup(n)}>{t('disc.progressBtn')}</button>
-                    <button className="btn ghost sm" style={{ color: 'var(--brand)' }} onClick={() => window.open(`/d/${n.pair.form_token}`, '_blank')}>{t('disc.form')}</button>
+                    <button className="btn ghost sm" style={{ color: 'var(--brand)' }} onClick={() => window.open(`/d/${n.pair.form_token}`, '_blank')}><LinkIcon size={14} />{t('disc.form')}</button>
                   </td>
                 </tr>
               ))}
@@ -345,6 +345,7 @@ export default function DiscipleshipPage() {
                       window.open(`/d/${n.pair.form_token}`, '_blank');
                     }}
                   >
+                    <LinkIcon size={14} />
                     {t('disc.form')}
                   </button>
                 </div>

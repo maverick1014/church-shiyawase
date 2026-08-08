@@ -200,7 +200,7 @@ export const en = {
   /* ---- events ---------------------------------------------------------- */
   'events.title': 'Events & Attendance',
   'events.add': '＋ Add event',
-  'events.recurring': '🔁 Recurring',
+  'events.recurring': 'Recurring',
   'events.upcoming': 'Upcoming',
   'events.past': 'Past',
   'events.today': 'Today',
@@ -344,7 +344,7 @@ export const en = {
 
   /* ---- training detail ------------------------------------------------- */
   'training.title': 'Training detail',
-  'training.enrollLink': '🔗 Enrolment link',
+  'training.enrollLink': 'Enrolment link',
   'training.enrollLinkTitle': 'Copy the self-enrolment link to share',
   'training.editCourse': 'Edit course',
   'training.sessionList': 'Sessions',
@@ -407,7 +407,7 @@ export const en = {
   'disc.col.mentor': 'Mentor',
   'disc.col.progress': 'Progress',
   'disc.empty': 'No pairs yet.',
-  'disc.form': '🔗 Form',
+  'disc.form': 'Form',
   'disc.new.title': 'Add pair',
   'disc.field.mentor': 'Mentor',
   'disc.field.trainee': 'Trainee',
@@ -462,7 +462,7 @@ export const en = {
   'settings.toast.deleted': 'Account deleted',
   'settings.toast.passwordReset': 'Password reset',
   'settings.toast.passwordChanged': 'Password updated',
-  'settings.viewMemberProfile': 'View member profile →',
+  'settings.viewMemberProfile': 'View member profile',
   'settings.linkedTo': 'Linked to a member profile · {email}',
   'settings.accountStatusSub': 'A disabled account cannot sign in',
   'settings.security': 'Security · reset login password',
