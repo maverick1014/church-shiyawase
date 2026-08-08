@@ -940,6 +940,68 @@ input[type='radio']:focus {
 input.date-empty:not(:focus) {
   color: transparent;
 }
+/* WebKit — and iOS/iPadOS Safari above all — dresses a date/time input in a
+   native box instead of the one we asked for: it takes its intrinsic size from
+   the system picker rather than from our height, and it paints the value
+   centred. That is why the 聚会时间 field on an iPad sat taller than the
+   weekday <select> beside it and read centre-aligned while every text input in
+   the same row read left. Drop that native box the same way <select> drops its
+   native chevron above, so these fields are sized by --control-h like every
+   other single-line control (G9). The picker itself is untouched: on iOS it
+   opens by tapping the field, and on desktop by the indicator kept below. */
+input[type='date'],
+input[type='time'],
+input[type='datetime-local'],
+input[type='month'],
+input[type='week'] {
+  -webkit-appearance: none;
+  appearance: none;
+  /* `height` alone loses to the native control's own intrinsic height on iOS;
+     the matching min-height is what actually pins the field to the token. */
+  min-height: var(--control-h);
+  /* ...and its intrinsic *width* would otherwise push a .form-row wider than
+     the modal, exactly as a <select>'s widest option does (see .trio-pick). */
+  min-width: 0;
+  text-align: left;
+}
+input.sm[type='date'],
+input.sm[type='time'],
+input.sm[type='datetime-local'],
+input.sm[type='month'],
+input.sm[type='week'] {
+  min-height: var(--control-h-sm);
+}
+/* WebKit paints the value through this shadow part and centres it there, so
+   text-align on the input alone never reaches it. Its UA margin also insets the
+   value from the field's own left padding and reserves a slab on the right,
+   which is the other half of the ragged edge; zeroing it puts the first glyph
+   on the same left edge as a plain text input, and the inherited line-height
+   keeps it on that input's baseline. Kept in its own block: browsers that do
+   not know this pseudo-element drop the rule, not the sizing above. */
+input[type='date']::-webkit-date-and-time-value,
+input[type='time']::-webkit-date-and-time-value,
+input[type='datetime-local']::-webkit-date-and-time-value,
+input[type='month']::-webkit-date-and-time-value,
+input[type='week']::-webkit-date-and-time-value {
+  display: block;
+  text-align: left;
+  margin: 0;
+  line-height: inherit;
+}
+/* The indicator is kept, not hidden: on a desktop pointer it is the only way to
+   open the picker (clicking the segments just edits them), while iOS does not
+   render it at all — so hiding it would cost the desktop its affordance and buy
+   the iPad nothing. Zero the UA spacing and let it sit at the end of the row,
+   in the field's own right padding, next to where a <select> draws its chevron. */
+input[type='date']::-webkit-calendar-picker-indicator,
+input[type='time']::-webkit-calendar-picker-indicator,
+input[type='datetime-local']::-webkit-calendar-picker-indicator,
+input[type='month']::-webkit-calendar-picker-indicator,
+input[type='week']::-webkit-calendar-picker-indicator {
+  margin: 0 0 0 auto;
+  padding: 0;
+  cursor: pointer;
+}
 textarea {
   resize: vertical;
 }

@@ -185,6 +185,13 @@ and below. Light theme only — no dark-mode branches or `data-theme` code.
 - `<select>` uses `appearance: none` with the shared custom chevron (drawn via
   `background-image`, right-aligned padding). Never rely on the native arrow —
   its metrics differ per browser/device and break both height and alignment.
+- Date/time inputs (`date` / `time` / `datetime-local` / `month` / `week`) strip
+  WebKit's native box the same way — `appearance: none` plus a `min-height` on
+  the token, and `::-webkit-date-and-time-value` reset to left-aligned with no
+  UA margin. Without it iOS/iPadOS sizes the field from the system picker and
+  paints the value centred, so it sits taller than the `<select>` beside it and
+  reads centre while its neighbours read left. It lives in `globals.css` with
+  the other shared control rules — never patch one page's date field.
 - New controls inherit these by using the base element / `.btn` classes; page
   code should not restyle control geometry inline.
 

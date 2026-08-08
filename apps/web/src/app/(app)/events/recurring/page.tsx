@@ -367,7 +367,12 @@ function RecurringModal({
           </select>
         </Field>
         <Field label={t('training.session.time')}>
-          <input type="time" value={form.start_time} onChange={(e) => setForm({ ...form, start_time: e.target.value })} />
+          <input
+            type="time"
+            className={form.start_time ? undefined : 'date-empty'}
+            value={form.start_time}
+            onChange={(e) => setForm({ ...form, start_time: e.target.value })}
+          />
         </Field>
       </div>
       <div className="form-row">
