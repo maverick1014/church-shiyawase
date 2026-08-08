@@ -723,7 +723,11 @@ async function main() {
     const holdMembers = (url) => url.pathname === '/api/members';
     await page.route(holdMembers, async (route) => {
       await new Promise((r) => setTimeout(r, 5000));
-      await route.continue();
+      // Unrouting settles whatever is still in flight, so by the time a held
+      // request wakes up its route can already be handled. Continuing it then
+      // throws — from inside a handler nobody awaits, which takes the whole
+      // process down as an unhandled rejection rather than failing a check.
+      await route.continue().catch(() => {});
     });
     await page.goto(`${BASE}/members`, { waitUntil: 'domcontentloaded' });
     const skeletonUp = await page
@@ -750,7 +754,7 @@ async function main() {
     );
     check('the skeleton is no wider than the phone viewport', skeletonOver <= 1, `+${skeletonOver}px`);
     await shot('08c-skeleton');
-    await page.unroute(holdMembers);
+    await page.unrouteAll({ behavior: 'ignoreErrors' });
     await page.locator('.mtile').first().waitFor({ timeout: 20000 });
     check('the rows replace the skeleton once the fetch lands',
       (await page.locator('.sk').count()) === 0);
