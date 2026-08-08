@@ -741,7 +741,14 @@ async function main() {
         if (!(await drawerOpen())) await burger.click();
         await hallSelect.selectOption(sheetHallId);
         await w(400);
-        if (await drawerOpen()) await page.locator('.scrim').click();
+        if (await drawerOpen()) {
+          // Click the scrim to the RIGHT of the drawer. The scrim is inset: 0,
+          // so its centre — which is where a plain click() aims — is x≈201 on a
+          // 402px phone, and the open sidebar is 244px wide at z-index 60. The
+          // centre of the scrim is therefore underneath the sidebar, and the
+          // click waits forever for a point that will never receive it.
+          await page.locator('.scrim').click({ position: { x: 340, y: 420 } });
+        }
         await w(300);
       }
       const memberCell = page.locator(`td:has-text("${fxSheetMember.name}")`);
