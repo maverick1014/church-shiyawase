@@ -261,11 +261,35 @@ async function main() {
       stream(`  ↳ ${why}: ${gone ? 'deleted' : 'COULD NOT DELETE'} leftover ${f.label} (${f.path})`);
     }
   };
+  /**
+   * Settings this run took over and must hand back — the church's add-on module
+   * states and the account's interface language. Deleting a fixture is not
+   * enough: those two are switches on the LIVE church, and a run that dies
+   * holding one leaves real users with a module switched off or an interface in
+   * a language nobody chose.
+   *
+   * Each entry re-reads the current value and only writes when it differs, so
+   * running one twice is harmless — which is what lets the normal path keep its
+   * own explicit restores while the crash path below drains the same list.
+   */
+  const restorers = [];
+  const restoreLater = (label, run) => restorers.push({ label, run });
+  const runRestorers = async (why, stream = console.log) => {
+    for (const r of restorers.splice(0).reverse()) {
+      const ok = await r.run().then(() => true).catch(() => false);
+      stream(`  ↳ ${why}: ${ok ? 'restored' : 'COULD NOT RESTORE'} ${r.label}`);
+    }
+  };
+
   const dieCleanly = async (why, err) => {
     if (err) console.error(`UI E2E ${why}:`, err);
     if (leftovers.length) {
       console.error(`\n${leftovers.length} fixture(s) still live after ${why} — removing them.`);
       await sweep(why, console.error).catch(() => {});
+    }
+    if (restorers.length) {
+      console.error(`${restorers.length} live setting(s) still held after ${why} — handing them back.`);
+      await runRestorers(why, console.error).catch(() => {});
     }
     process.exit(1);
   };
@@ -859,6 +883,19 @@ async function main() {
     mod('church settings · add-on modules');
     const moduleStatesBefore = await apiGet('/church/modules');
     const discBefore = moduleStatesBefore.find((m) => m.key === 'discipleship');
+    // The `finally` below covers a failed check; this covers the process dying
+    // outright, which runs no `finally` at all.
+    if (discBefore) {
+      restoreLater(`the discipleship module to enabled=${discBefore.enabled}`, async () => {
+        const now = await ctx.request.get(`${BASE}/api/church/modules`).then((r) => r.json());
+        const current = now?.find?.((m) => m.key === 'discipleship');
+        if (current && current.enabled === discBefore.enabled) return;
+        const r = await ctx.request.patch(`${BASE}/api/church/modules/discipleship`, {
+          data: { enabled: discBefore.enabled },
+        });
+        if (!r.ok()) throw new Error(`restore failed: ${r.status()}`);
+      });
+    }
     /** The row in the catalog for one module — its switch lives on it. */
     const catalogRow = (name) => page.locator('.card .flex-between', { hasText: name });
     try {
@@ -1149,6 +1186,15 @@ async function main() {
     const me = await meRes.json();
     accountId = me.id;
     originalLanguage = me.language;
+    // Same reasoning as the module switch: the `finally` handles a failed
+    // check, this handles the process being killed mid-switch.
+    restoreLater(`the account language to ${originalLanguage}`, async () => {
+      if (!originalLanguage) return; // the run already put it back
+      const r = await ctx.request.patch(`${BASE}/api/accounts/${accountId}`, {
+        data: { language: originalLanguage },
+      });
+      if (!r.ok()) throw new Error(`restore failed: ${r.status()}`);
+    });
     check('/api/auth/me reports the account language', typeof me.language === 'string', String(me.language));
 
     const setLang = (lang) =>
@@ -1231,6 +1277,10 @@ async function main() {
     // a group outlives the member that sits on its roster.
     await sweep('cleanup');
     leftovers.length = 0;
+    // The explicit restores above already ran on this path, so drain the
+    // crash-path list without acting on it — leaving entries behind would make
+    // a later exit hand back settings that are already correct.
+    restorers.length = 0;
     // API-fallback cleanup: if the throwaway member survived, delete it.
     if (createdMemberId) {
       await ctx.request.delete(`${BASE}/api/members/${createdMemberId}`).catch(() => {});
