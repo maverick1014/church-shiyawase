@@ -497,6 +497,7 @@ async function main() {
       // table is .only-desktop / hidden). Each tile navigates to its detail page.
       await page.locator('.mtile').first().waitFor({ timeout: 20000 });
       check('the group list renders', (await page.locator('.mtile').count()) > 0);
+      await shot('03b-groups');
       // Narrow to the fixture group so the tile that gets opened is the one
       // known to have a roster — and prove the search filter works on the way.
       await page.fill('.page-bar-filters input', fxGroup.name);

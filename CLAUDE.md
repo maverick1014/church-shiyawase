@@ -40,6 +40,10 @@ Testing layers (in `apps/web`):
   desktop). ui-e2e proves the pages *work*; it cannot see that two pages lay
   their header out differently. After any layout change, run this and **look at
   the images** — a green ui-e2e is not evidence the UI is consistent.
+  The `ui-e2e` workflow runs the `WIDE=1` sweep itself and uploads it under
+  `desktop/` in the same artifact, because ui-e2e drives a 402px phone and so
+  never photographs anything inside `.only-desktop` — which is every list
+  table, and therefore most column work.
 
 ---
 

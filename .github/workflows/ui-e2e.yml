@@ -68,6 +68,19 @@ jobs:
       - name: Run UI E2E
         working-directory: apps/web
         run: mkdir -p "$UI_E2E_SHOTS" && npm run test:ui-e2e
+      # ui-e2e drives a 402px phone, so everything inside `.only-desktop` — the
+      # list tables, and therefore most column work — is never in its
+      # screenshots. This read-only sweep captures the same pages at 1280px so
+      # a desktop layout change can actually be looked at. It runs even when
+      # the assertions above failed, because that is exactly when the pictures
+      # are worth having.
+      - name: Desktop screenshot sweep
+        if: ${{ !cancelled() }}
+        working-directory: apps/web
+        env:
+          WIDE: '1'
+          OUT: ${{ github.workspace }}/ui-shots/desktop
+        run: npm run ui:shots
       - name: Upload screenshots
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
