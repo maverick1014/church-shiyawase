@@ -584,6 +584,11 @@ async function churchAndModules(adminCookie) {
   }
 }
 
+/** Was this address minted by `provision` below rather than by the church? */
+const generatedEmail = (v) => /^e2e-(readonly|coworker|admin|super_admin)-\d+-\d+@grace\.org$/i.test(String(v ?? ''));
+/** Was this the phone `selfProfileMatrix` writes (012- plus seven digits)? */
+const generatedPhone = (v) => /^012-\d{7}$/.test(String(v ?? ''));
+
 async function roleMatrix(freeMembers, hallId) {
   if (freeMembers.length < 2) { ok('role-matrix (skipped: need 2 free members)', true); return; }
   const admin = await login(EMAIL, PASSWORD);
@@ -591,10 +596,27 @@ async function roleMatrix(freeMembers, hallId) {
   const made = [];
   const originalEmails = new Map();
   const originalPhones = new Map();
+  // A hard exit runs no `finally`. This block writes to real members and
+  // creates real login accounts, so the process-level handlers get the same
+  // undo — otherwise a crash here is what leaves an e2e address on someone's
+  // profile and a stray account in 用户管理.
+  const bail = async (why, err) => {
+    if (err) console.error(`API E2E ${why}:`, err);
+    await restoreRoleMatrix(H, made, originalEmails, originalPhones).catch(() => {});
+    process.exit(1);
+  };
+  process.on('uncaughtException', (e) => void bail('uncaught exception', e));
+  process.on('unhandledRejection', (e) => void bail('unhandled rejection', e));
+  for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => void bail(sig));
   const provision = async (role, member) => {
     const email = `e2e-${role}-${Date.now()}-${Math.floor(Math.random() * 1e4)}@grace.org`;
-    if (!originalEmails.has(member.id)) originalEmails.set(member.id, member.email ?? null);
-    if (!originalPhones.has(member.id)) originalPhones.set(member.id, member.phone ?? null);
+    // Never adopt this script's own leftovers as "the original". A run that
+    // died before its restore leaves an e2e address on a real member; the next
+    // run would then record THAT as the value to put back, and the church's
+    // member list keeps a fake email for ever. Same for the generated phone.
+    // (It happened: four members were carrying e2e addresses before this.)
+    if (!originalEmails.has(member.id)) originalEmails.set(member.id, generatedEmail(member.email) ? null : member.email ?? null);
+    if (!originalPhones.has(member.id)) originalPhones.set(member.id, generatedPhone(member.phone) ? null : member.phone ?? null);
     await req('PATCH', `/api/members/${member.id}`, { ...H, body: { email } });
     const r = await req('POST', '/api/accounts', { ...H, body: { member_id: member.id, account_role: role, password: 'e2ePass2026' } });
     if (r.json?.id) made.push(r.json.id);
@@ -640,10 +662,22 @@ async function roleMatrix(freeMembers, hallId) {
       await selfProfileMatrix('coworker', CH, co, ro.id);
     }
   } finally {
-    for (const id of made) await req('DELETE', `/api/accounts/${id}`, H);
-    for (const [id, email] of originalEmails) await req('PATCH', `/api/members/${id}`, { ...H, body: { email } });
-    for (const [id, phone] of originalPhones) await req('PATCH', `/api/members/${id}`, { ...H, body: { phone } });
+    await restoreRoleMatrix(H, made, originalEmails, originalPhones);
   }
+}
+
+/**
+ * Put the church's own records back. Kept out of the `finally` so the crash
+ * handler can call the same thing: a hard exit runs no `finally`, and what this
+ * undoes is not a throwaway fixture — it is two real members' email and phone,
+ * and two login accounts on the live site.
+ */
+async function restoreRoleMatrix(H, made, originalEmails, originalPhones) {
+  for (const id of made.splice(0)) await req('DELETE', `/api/accounts/${id}`, H).catch(() => {});
+  for (const [id, email] of originalEmails) await req('PATCH', `/api/members/${id}`, { ...H, body: { email } }).catch(() => {});
+  originalEmails.clear();
+  for (const [id, phone] of originalPhones) await req('PATCH', `/api/members/${id}`, { ...H, body: { phone } }).catch(() => {});
+  originalPhones.clear();
 }
 
 /**
