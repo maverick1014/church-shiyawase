@@ -111,14 +111,24 @@
   - **每职位仅一人**：指派新领袖时，系统自动把原任者降为核心成员（`assignLeadership` 中
     auto-demote）。
   - 已移除「须先为核心成员方可晋升」的前置条件——任何组员都可直接被指派为三种组长之一。
-- **每周出席（子模块 WeeklyAttendance）**：
-  - **C 添加一周**（「＋ 添加一周」，仅 `perms.write`）：`POST /groups/[id]/meetings`，以
-    「上周 +7 天」或今天生成日期，展示为「第 N 周」。
-  - **U 勾选出席**（复选框，仅 `perms.write`）：切换 `present` / `absent`，
-    `POST /groups/meetings/[meetingId]/attendance`。只读用户复选框 `disabled`。
-  - **D 删除本周**（表头「✕」，仅 `perms.delete`）：确认对话框后
-    `DELETE /groups/meetings/[meetingId]`。
-  - **R 导出**：`exportMatrix` 导出成员 × 周次矩阵 + 出席次数。
+- **出席点名卡（子模块 WeeklyAttendance）**：卡内筛选区是共享的分段控件
+  `<Segmented tabs />`（`components/ui.tsx`）＋ 年 / 月 `MonthPicker`，
+  **默认「小组」**。分段控件属于**卡片自己的筛选区**，不进页面的 `PageBar`（G7a）。
+  - **小组**（默认）：本组自己的聚会（`group_meetings` / `group_attendance`）。列＝该月
+    本组聚会星期的日期 ＋ 该月已点过名的日期。
+    - **U 勾选出席**（复选框，仅 `perms.write`）：切换 `present` / `absent`，首次勾选时
+      惰性创建当周 `POST /groups/[id]/meetings`，再
+      `POST /groups/meetings/[meetingId]/attendance`。只读用户复选框 `disabled`。
+    - **R 导出**：`exportMatrix` 导出成员 × 周次矩阵 + 出席次数。
+  - **会前 / 主日**：本组组员在**本组所属堂会**的主日点名表
+    （`sunday_attendance`）上的记录，列＝该月每个主日。**「只要有主日那就有会前」——
+    两者是同一行的两个勾**，不需要额外存储。
+    - **R**：`GET /attendance/sundays?hall_id=<小组的堂会>&year&month`，再按本组组员过滤；
+      小组只属于一个堂会，所以这里**明确指定该堂会**，不跟随堂会切换器（服务端仍以
+      `hallFilter` 兜底拒绝越堂读取）。仅在切到这两个标签时才发请求。
+    - **U 勾选**：`PUT /attendance/sundays`——与「崇拜与祷告会」页同一个写入路径，
+      因此在哪一边打勾都是同一条记录；两格都取消即删除该行。
+    - **R 导出**：`exportMatrix` 导出成员 × 主日矩阵 + 合计。
 - ⚠ 小提示：空态文案写「点『＋ 添加本周』」，实际按钮为「＋ 添加一周」（文案不一致，非功能缺陷）。会议 `note` 字段 API 支持但 UI 未采集。
 
 ### 3.4 崇拜与祷告会 `/events`（Services）
@@ -160,14 +170,30 @@
 - **D 删除奉献**（行内「删除」，仅 `perms.delete`）：确认对话框注明日期 / 奉献人 / 类别。
 - 操作列仅在 `perms.write || perms.delete` 时渲染。
 
-### 3.6 培训课程 `/trainings` 与详情 `/trainings/[id]`（培训课程）
+### 3.6 培训&活动 `/trainings` 与详情 `/trainings/[id]`（Trainings & Activities）
+
+**一个目录，两种形态**（`trainings.kind`，迁移 0014，值为 `course` / `activity`）：
+
+- **课程 course**：多场次、逐场点名（原样保留）。
+- **活动 activity**：一次性的自由互动，如兄弟团爬山、姐妹团做蛋糕——**报名 + 点一次名**。
+  活动的「那一次」不是新表：API 在创建活动时替它建**唯一一条 `training_sessions`**，
+  只为给点名表一列可勾；日期就是记录自身的 `starts_on` / `ends_on`（同一天写两次），
+  所以日期只有一个编辑入口。`total_sessions` 由服务端强制为 1。
+- 两种形态共用同一套报名、点名与**公开自助报名链接** `/enroll/[id]`（按全名匹配成员）；
+  公开接口额外返回 `kind` 与 `starts_on`，让活动显示日期而不是「1 堂」。
+- **筛选**：`PageBar` 筛选区一个下拉——「课程与活动 / 只看课程 / 只看活动」，
+  值是**存储代码**而不是译名（G8）。
 
 - **C 新增课程**（「＋ 新增课程」，仅 `perms.write`，`TrainingModal`）：名称（必填）、类别、
-  场次数、讲师（成员）、起止日期、是否开放报名。
-- **R 列表**：按「进行中 / 已结束·已截止」分组（结束依 `ends_on < now` 或 `is_enrollable=false`）。
-- **R 详情**：课程信息、课程场次列表、报名审核、核对名单矩阵。
-- **U 编辑课程**（详情「编辑课程」，仅 `perms.write`，`TrainingModal`）。
-- **D 删除课程**（列表卡片或详情「删除」，仅 `perms.delete`）：确认「报名与名单记录将一并移除」。
+  场次数、讲师（成员）、起止日期、堂会、是否开放报名。
+- **C 新增活动**（「＋ 新增活动」，仅 `perms.write`，同一个 `TrainingModal`）：名称（必填）、
+  类别、**日期（单日）**、负责人、堂会、是否开放报名。`kind` 在创建时定下，编辑时不提供切换。
+- **R 列表**：按「进行中 / 已结束·已截止」分组（结束依 `ends_on` 的**整个马来西亚日**已过，
+  或 `is_enrollable=false`）；卡片带形态徽章，活动显示「负责人 · 日期」而非「讲师 · N 堂」。
+- **R 详情**：课程＝课程信息、场次列表、报名审核、核对名单矩阵；
+  活动＝同一页面**不显示场次卡**（整行只剩报名审核），点名表只有一列「到场」。
+- **U 编辑**（详情「编辑课程 / 编辑活动」，仅 `perms.write`，`TrainingModal`）。
+- **D 删除**（列表卡片或详情，仅 `perms.delete`）：确认「报名与出席记录将一并移除」。
 - **场次**：
   - **C 加场次**（详情「＋ 加场次」，仅 `perms.write`）：第几课（自动取下一号）、标题、时间、地点。
   - ⚠ **缺口（G1）**：API 支持 `PATCH` / `DELETE /trainings/sessions/[id]`，但 UI **未提供场次的编辑 / 删除**入口。

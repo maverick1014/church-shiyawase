@@ -834,6 +834,66 @@ export function MonthPicker({
 }
 
 /**
+ * One option of a `<Segmented />`. `tone` is an optional active class
+ * (`on-good` / `on-warn` / `on-crit`) for a picker whose choices carry a
+ * meaning; a plain tab strip leaves it out and gets the neutral `on`.
+ */
+export type SegmentedOption<T extends string> = {
+  value: T;
+  label: string;
+  tone?: 'on-good' | 'on-warn' | 'on-crit';
+};
+
+/**
+ * The one segmented control (rule G4). Used for a card's own tabs — the life
+ * group's 小组 / 会前 / 主日 roll-call switch — and for the per-member
+ * 出席 / 请假 / 缺席 picker in a roll call, which is the same row of mutually
+ * exclusive buttons with a tone per option.
+ *
+ * Keyed by the STORED code, never by a label (rule G8): `value` is compared
+ * against `option.value`, so switching interface language cannot change which
+ * segment reads as selected.
+ */
+export function Segmented<T extends string>({
+  value,
+  options,
+  onChange,
+  label,
+  block,
+  tabs,
+}: {
+  /** The selected code; null / undefined = nothing chosen yet. */
+  value: T | null | undefined;
+  options: readonly SegmentedOption<T>[];
+  onChange: (value: T) => void;
+  /** Accessible name for the group — what these segments choose between. */
+  label: string;
+  /** Stretch to the full width of the row. */
+  block?: boolean;
+  /** Full `--control-h`, for a strip that sits beside selects in a filter row. */
+  tabs?: boolean;
+}) {
+  return (
+    <div className={`seg${tabs ? ' tabs' : ''}${block ? ' block' : ''}`} role="group" aria-label={label}>
+      {options.map((o) => {
+        const active = o.value === value;
+        return (
+          <button
+            key={o.value}
+            type="button"
+            className={active ? o.tone ?? 'on' : ''}
+            aria-pressed={active}
+            onClick={() => onChange(o.value)}
+          >
+            {o.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
  * One tick on a sheet. A read-only account sees the state and cannot change it
  * — the server refuses the write regardless, this is the UI's half (rule G2).
  */

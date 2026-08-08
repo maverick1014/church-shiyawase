@@ -382,14 +382,40 @@ export interface Donation {
 }
 
 // ---------------------------------------------------------------------------
-// Training catalog, sessions, enrollment & attendance
+// 培训&活动 — the catalog, its sessions, enrollment & attendance
 // ---------------------------------------------------------------------------
+
+/**
+ * Which shape a `trainings` row is (`kind`, migration 0014). Both take
+ * sign-ups and both get ticked off; only the shape differs.
+ *
+ * A stored code, never a label — the UI branches on it and the catalog filters
+ * by it, so it has to survive a language switch (rule G8).
+ */
+export enum TrainingKind {
+  /** Several sessions on several dates, ticked session by session. */
+  Course = 'course',
+  /** ONE occasion: people sign up, you tick who came (兄弟团爬山…). */
+  Activity = 'activity',
+}
+
+export const TRAINING_KINDS: readonly TrainingKind[] = [
+  TrainingKind.Course,
+  TrainingKind.Activity,
+];
+
+/** Is this a shape the app ships? Guards a write against a junk `kind`. */
+export function isTrainingKind(value: unknown): value is TrainingKind {
+  return (TRAINING_KINDS as readonly string[]).includes(String(value));
+}
 
 export interface Training {
   id: string;
   name: string;
   description: string | null;
   category: string | null;
+  /** 'course' | 'activity' — see TrainingKind. */
+  kind: TrainingKind;
   trainer_id: string | null;
   total_sessions: number;
   is_enrollable: boolean;

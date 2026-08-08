@@ -10,6 +10,7 @@ import {
   Language,
   MemberStatus,
   PairStatus,
+  TrainingKind,
   Weekday,
 } from '@tog/shared';
 
@@ -175,6 +176,8 @@ export interface TrainingRow {
   name: string;
   description: string | null;
   category: string | null;
+  /** 课程 or 活动 — which shape this row is (migration 0014). */
+  kind: TrainingKind;
   trainer_id: string | null;
   total_sessions: number;
   is_enrollable: boolean;

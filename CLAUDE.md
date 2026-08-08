@@ -17,6 +17,17 @@ nav href it owns and the API prefixes it owns; today the one entry is
 `discipleship` (四十天守望). Core surfaces are not switchable and are not in
 the registry.
 
+**培训 became 培训&活动 (Trainings & Activities).** Everything that is neither a
+Sunday nor a hand-added meeting lives on `/trainings` now — a brothers' hike, a
+sisters' baking afternoon — because an activity is exactly what sign-ups plus a
+roll call already are. One column tells the two shapes apart: `trainings.kind`
+(`course` | `activity`, migration 0014). A **course** runs over several
+sessions; an **activity** is ONE occasion, whose single `training_sessions` row
+is created by the API with it and exists only to give the roll call its one
+column to tick — its date is the record's own `starts_on`/`ends_on` (the same
+day twice), so there is no second place a date can be edited. The public
+self-sign-up link (`/enroll/[id]`, matching a full name) serves both.
+
 **Attendance is two different shapes, on purpose.** A Sunday is not an event:
 every Sunday simply happens, so `/events` (崇拜与祷告会) opens on a **sheet** —
 `sunday_attendance`, one row per (堂会, Sunday, member) carrying the two ticks
@@ -28,7 +39,14 @@ read is a 400, never a merge. The `events` table is now only for the meetings
 someone genuinely adds by hand (an occasional Wednesday prayer meeting: a name,
 a date, a hall), which keep the old 出席/请假/缺席 roll call. Nothing
 manufactures a 主日崇拜 row any more — 循环聚会 still tops the calendar up for
-weeknight rules and skips Sunday ones.
+weeknight rules and skips Sunday ones. A **life group's** roll-call card
+(`/groups/[id]`) switches between the three with a segmented control, default
+小组: 小组 is its own meetings, while 会前 and 主日 are that group's members read
+off **their congregation's** Sunday sheet — the same rows and the same
+`PUT /api/attendance/sundays` the services page writes, so a tick in either
+place is one fact ("只要有主日那就有会前" therefore needs no extra storage). A
+group belongs to one hall, so those tabs name that hall rather than following
+the congregation switcher.
 
 Run before every push: `npm run --workspace @tog/web -s build` (or in
 `apps/web`: `npx tsc --noEmit && npm test && npm run build`). Deploys are gated
@@ -41,9 +59,11 @@ Testing layers (in `apps/web`):
 - `npm run test:ui-e2e` — **browser UI end-to-end**: drives the real site in
   Chromium and asserts each interaction's expected outcome (login, search,
   filters, modals, weekly attendance, a 主日点名 tick→untick round-trip,
-  discipleship day-notes, an interface-language round-trip, a 守望模块
-  create→edit→delete cycle, an add-on module off→on cycle on 教会设置, a
-  create→delete member write-cycle).
+  discipleship day-notes, the life-group card's 小组/会前/主日 tabs writing the
+  congregation's Sunday sheet, a 培训&活动 course/activity filter plus an
+  activity's single-column roll call, an interface-language round-trip, a
+  守望模块 create→edit→delete cycle, an add-on module off→on cycle on 教会设置,
+  a create→delete member write-cycle).
   It restores anything it changes — including the module states, which it
   reads first and puts back in a `finally`. It runs a tiny in-process reverse proxy so the browser
   works even behind an egress proxy. `UI_E2E_PASSWORD` is required (never
@@ -79,7 +99,7 @@ These are hard requirements for this codebase. A change that breaks one is a
 review finding, not a preference. Cite the rule number in the finding.
 
 ### G1 — CRUD completeness on every management page
-Every entity page (成员、小组、额外聚会、培训、四十天守望模块与配对、账户) must offer
+Every entity page (成员、小组、额外聚会、培训&活动（课程与活动两种形态）、四十天守望模块与配对、账户) must offer
 the full set its users need: **Create, Read, Update, Delete**. If the API supports an
 operation, the UI must expose it (or the omission must be a deliberate,
 documented decision). A page that can only create + list is incomplete.
@@ -150,7 +170,9 @@ like 移除/清空/重置 that discards data) MUST go through the shared
 Reuse the shared primitives instead of re-rolling them per page:
 `Modal`, `Field`, `PasswordInput`, `useConfirm`, `useToast`, `RoleBadge`,
 `Avatar`, `PairProgressModal`, `MonthPicker`/`SheetTick` (the pieces the 主日
-and 小组 attendance sheets share), `exportRows`/`exportMatrix` (`lib/export.ts`),
+and 小组 attendance sheets share), `Segmented` (every segmented control — the
+group card's 小组/会前/主日 tabs and the 出席/请假/缺席 picker),
+`exportRows`/`exportMatrix` (`lib/export.ts`),
 `api` (`lib/api.ts`), and the label/style helpers in `lib/labels.ts`
 (`roleTagStyle`, `roleDot`, `memberRoleZh`, `positionZh`, status/category
 classes). New code that duplicates one of these is a finding — name the helper

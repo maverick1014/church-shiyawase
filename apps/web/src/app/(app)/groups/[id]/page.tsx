@@ -6,10 +6,10 @@ import { useFetch } from '@/lib/hooks';
 import { useSortableRows } from '@/lib/sort';
 import { api } from '@/lib/api';
 import { usePageChrome, useMe } from '@/components/AppShell';
-import { BackButton, ErrorBanner, ExportButton, Field, HallSelect, MonthPicker, RoleBadge, SheetTick, SkeletonCard, SkeletonScreen, SkeletonTable, SortTh, TagsInput, useConfirm, useToast } from '@/components/ui';
+import { BackButton, ErrorBanner, ExportButton, Field, HallSelect, MonthPicker, RoleBadge, Segmented, SheetTick, SkeletonCard, SkeletonScreen, SkeletonTable, SortTh, TagsInput, useConfirm, useToast } from '@/components/ui';
 import { can } from '@/lib/perms';
 import { exportMatrix } from '@/lib/export';
-import { GroupAttendanceResponse, GroupDetail, GroupRow, MemberRow } from '@/lib/types';
+import { GroupAttendanceResponse, GroupDetail, GroupRow, MemberRow, SundaySheet, SundaySheetRow } from '@/lib/types';
 import {
   attendanceKey,
   GROUP_POSITION_OPTIONS,
@@ -277,7 +277,7 @@ function GroupPanel({
 
       {/* Roll-call first: once a group is set up, marking attendance is what
           leaders open this page for. Profile + roster follow below. */}
-      <WeeklyAttendance groupId={group.id} meetingDay={group.meeting_day} />
+      <WeeklyAttendance group={group} />
 
       <div className="grid mt-16" style={{ gridTemplateColumns: '360px 1fr', gap: 16, alignItems: 'start' }} data-glayout>
         {/* Left — group info + leadership trio */}
@@ -444,25 +444,56 @@ function weeksOfMonth(
     .map((date, i) => ({ no: i + 1, date, day: Number(date.slice(8, 10)) }));
 }
 
-function WeeklyAttendance({
-  groupId,
-  meetingDay,
-}: {
-  groupId: string;
-  meetingDay: Weekday | null;
-}) {
+/** Which roll call the card is showing. The two Sunday tabs are the two ticks
+ *  one Sunday carries, so they are the SAME row of `sunday_attendance` — that
+ *  is why "只要有主日那就有会前" needs no extra storage. */
+type RollCall = 'group' | 'pre_service' | 'service';
+
+/**
+ * The group's roll-call card.
+ *
+ * Three tabs over one card, defaulting to 小组:
+ *  - 小组   — the group's own meetings (`group_meetings` / `group_attendance`),
+ *             one column per date it meets on, plus the dates it has already
+ *             been rolled on.
+ *  - 会前 / 主日 — this group's members read off their CONGREGATION's Sunday
+ *             sheet (`sunday_attendance`), one column per Sunday of the month.
+ *             Ticking here goes through the same `PUT /attendance/sundays` the
+ *             services page uses, so a tick in either place is one fact.
+ *
+ * A group belongs to exactly one hall, so the Sunday tabs name that hall
+ * explicitly rather than following the congregation switcher: the sheet a
+ * group is rolled against is its own, whatever the viewer happens to be
+ * looking at (and the server still refuses another congregation's — rule G2).
+ */
+function WeeklyAttendance({ group }: { group: GroupDetail }) {
   const t = useT();
   const toast = useToast();
   const perms = can(useMe().role);
-  const { data, initialLoading, reload } = useFetch<GroupAttendanceResponse>(
-    `/groups/${groupId}/attendance`,
-  );
+  const [tab, setTab] = useState<RollCall>('group');
 
   // Which month "now" is defaults to Malaysia's calendar, not the runtime's —
   // on a UTC Worker the first 8 hours of a new month still read as the old one.
   const nowParts = churchParts(new Date());
   const [year, setYear] = useState(nowParts.year);
   const [month, setMonth] = useState(nowParts.month);
+
+  const { data, initialLoading, reload } = useFetch<GroupAttendanceResponse>(
+    `/groups/${group.id}/attendance`,
+  );
+  // Only fetched while a Sunday tab is open — the common case (小组) must not
+  // pay for a sheet nobody is looking at (rule G6).
+  //
+  // `hall_id` is spelled out here even though `useFetch` appends the hall being
+  // VIEWED: this sheet is the group's own congregation, not the viewer's
+  // current narrowing. The server reads the first value, which is this one —
+  // and a hall-pinned account is still pinned by its session either way, which
+  // is the security property (rule G2).
+  const sunday = useFetch<SundaySheet>(
+    tab === 'group'
+      ? null
+      : `/attendance/sundays?hall_id=${group.hall_id}&year=${year}&month=${month}`,
+  );
 
   // The columns are the group's own meeting day for that month, plus any date
   // it was already rolled on — so a month with ticks keeps its dates when
@@ -472,10 +503,10 @@ function WeeklyAttendance({
       weeksOfMonth(
         year,
         month,
-        weekdayIndex(meetingDay),
+        weekdayIndex(group.meeting_day),
         (data?.meetings ?? []).map((m) => m.meeting_date.slice(0, 10)),
       ),
-    [year, month, meetingDay, data],
+    [year, month, group.meeting_day, data],
   );
 
   // Year options: this year, last year, plus any year that already has records.
@@ -514,10 +545,31 @@ function WeeklyAttendance({
     return weeks.filter((w) => inner?.get(w.date) === AttendanceStatus.Present).length;
   };
 
+  // The congregation's sheet carries every member on its roll; this card only
+  // ever shows the ones in THIS group.
+  const groupMemberIds = useMemo(
+    () => new Set(group.members.map((m) => m.id)),
+    [group.members],
+  );
+  const sundayDates = sunday.data?.dates ?? [];
+  const sundayRows = useMemo(
+    () => (sunday.data?.rows ?? []).filter((r) => groupMemberIds.has(r.member.id)),
+    [sunday.data, groupMemberIds],
+  );
+  /** How many of the month's Sundays this member carries the open tick on. */
+  const sundayCount = (row: SundaySheetRow) =>
+    tab === 'group' ? 0 : sundayDates.filter((d) => row.cells[d]?.[tab]).length;
+
   const { sorted: sortedAttendanceRows, sortKey: attSortKey, sortDir: attSortDir, toggleSort: toggleAttSort } =
     useSortableRows(
       data?.rows ?? [],
       (r, key) => (key === 'count' ? presentCount(r.member.id) : r.member.full_name),
+      { key: 'name', dir: 'asc' },
+    );
+  const { sorted: sortedSundayRows, sortKey: sunSortKey, sortDir: sunSortDir, toggleSort: toggleSunSort } =
+    useSortableRows(
+      sundayRows,
+      (r, key) => (key === 'count' ? sundayCount(r) : r.member.full_name),
       { key: 'name', dir: 'asc' },
     );
 
@@ -527,7 +579,7 @@ function WeeklyAttendance({
       let mid = meetingIdByDate.get(dateStr);
       if (!mid) {
         // The week's meeting row is created lazily the first time it's marked.
-        const meeting = await api.post<{ id: string }>(`/groups/${groupId}/meetings`, {
+        const meeting = await api.post<{ id: string }>(`/groups/${group.id}/meetings`, {
           meeting_date: dateStr,
         });
         mid = meeting.id;
@@ -541,7 +593,46 @@ function WeeklyAttendance({
     }
   };
 
+  /** One Sunday tick, written exactly where the services page writes it. */
+  const toggleSunday = async (row: SundaySheetRow, date: string) => {
+    if (tab === 'group') return;
+    const current = row.cells[date] ?? { pre_service: false, service: false };
+    try {
+      await api.put('/attendance/sundays', {
+        hall_id: group.hall_id,
+        service_date: date,
+        member_id: row.member.id,
+        ...current,
+        [tab]: !current[tab],
+      });
+      sunday.reload();
+    } catch (e) {
+      toast((e as Error).message, 'error');
+    }
+  };
+
   const exportGrid = () => {
+    if (tab !== 'group') {
+      if (!sunday.data) return;
+      const tickLabel = t(tab === 'pre_service' ? 'events.col.preService' : 'events.col.service');
+      const headers = [
+        t('members.col.member'),
+        ...sundayDates.map((d) => d.slice(5)),
+        tickLabel,
+      ];
+      const matrix = sortedSundayRows.map((r) => [
+        r.member.full_name,
+        ...sundayDates.map((d) => (r.cells[d]?.[tab] ? '✓' : '')),
+        sundayCount(r),
+      ]);
+      exportMatrix(
+        t('group.exportFileSunday', { year, month: String(month).padStart(2, '0') }),
+        tickLabel,
+        headers,
+        matrix,
+      );
+      return;
+    }
     if (!data) return;
     const headers = [
       t('members.col.member'),
@@ -564,17 +655,40 @@ function WeeklyAttendance({
     );
   };
 
+  const loading = tab === 'group' ? initialLoading : sunday.initialLoading;
+
   return (
     <div className="card">
       <div className="card-head">
         <div>
           <h3>{t('group.weekly')}</h3>
-          <div className="muted" style={{ fontSize: 12.5, marginTop: 2 }}>{t('group.weeklySub')}</div>
+          <div className="muted" style={{ fontSize: 12.5, marginTop: 2 }}>
+            {tab === 'group' ? t('group.weeklySub') : t('group.sundaySub')}
+          </div>
         </div>
-        <ExportButton onClick={exportGrid} disabled={!data} title={t('group.exportTitle')} />
+        <ExportButton
+          onClick={exportGrid}
+          disabled={tab === 'group' ? !data : !sunday.data}
+          title={t('group.exportTitle')}
+        />
       </div>
 
+      <ErrorBanner message={tab === 'group' ? null : sunday.error} />
+
+      {/* The card's own filters: which roll call, then which month. This is the
+          CARD's row — the page bar belongs to the page (rule G7a). */}
       <div className="flex gap-8 mb-14 flex-wrap">
+        <Segmented<RollCall>
+          value={tab}
+          onChange={setTab}
+          label={t('group.tabsLabel')}
+          tabs
+          options={[
+            { value: 'group', label: t('group.tab.group') },
+            { value: 'pre_service', label: t('events.col.preService') },
+            { value: 'service', label: t('events.col.service') },
+          ]}
+        />
         <MonthPicker
           year={year}
           month={month}
@@ -586,52 +700,92 @@ function WeeklyAttendance({
         />
       </div>
 
-      {initialLoading ? (
+      {loading ? (
         <SkeletonScreen>
           <SkeletonTable rows={5} columns={6} bare />
         </SkeletonScreen>
-      ) : !data || data.rows.length === 0 ? (
-        <div className="empty">{t('group.noMembers')}</div>
+      ) : tab === 'group' ? (
+        !data || data.rows.length === 0 ? (
+          <div className="empty">{t('group.noMembers')}</div>
+        ) : (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <SortTh sortKey="name" activeKey={attSortKey} dir={attSortDir} onSort={toggleAttSort}>{t('members.col.member')}</SortTh>
+                  {weeks.map((w) => (
+                    <th key={w.date} style={{ textAlign: 'center', whiteSpace: 'nowrap' }}>
+                      {t('group.week', { n: w.no })}
+                      <div className="faint" style={{ fontSize: 10.5, fontWeight: 400 }}>{t('group.dayOfMonth', { n: w.day })}</div>
+                    </th>
+                  ))}
+                  <SortTh sortKey="count" activeKey={attSortKey} dir={attSortDir} onSort={toggleAttSort} align="center">{t('group.attended')}</SortTh>
+                </tr>
+              </thead>
+              <tbody>
+                {sortedAttendanceRows.map((r) => {
+                  const inner = statusByMemberDate.get(r.member.id);
+                  return (
+                    <tr key={r.member.id}>
+                      <td><strong>{r.member.full_name}</strong></td>
+                      {weeks.map((w) => {
+                        const present = inner?.get(w.date) === AttendanceStatus.Present;
+                        return (
+                          <td key={w.date} style={{ textAlign: 'center' }}>
+                            <SheetTick
+                              checked={present}
+                              onToggle={() => toggle(w.date, r.member.id, present)}
+                              disabled={!perms.write}
+                              title={present ? t('group.attended') : t('group.notAttended')}
+                            />
+                          </td>
+                        );
+                      })}
+                      <td style={{ textAlign: 'center', fontWeight: 600 }}>
+                        {presentCount(r.member.id)}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )
+      ) : sortedSundayRows.length === 0 ? (
+        <div className="empty">{t('group.sundayEmpty')}</div>
       ) : (
         <div className="table-wrap">
           <table>
             <thead>
               <tr>
-                <SortTh sortKey="name" activeKey={attSortKey} dir={attSortDir} onSort={toggleAttSort}>{t('members.col.member')}</SortTh>
-                {weeks.map((w) => (
-                  <th key={w.date} style={{ textAlign: 'center', whiteSpace: 'nowrap' }}>
-                    {t('group.week', { n: w.no })}
-                    <div className="faint" style={{ fontSize: 10.5, fontWeight: 400 }}>{t('group.dayOfMonth', { n: w.day })}</div>
+                <SortTh sortKey="name" activeKey={sunSortKey} dir={sunSortDir} onSort={toggleSunSort}>{t('members.col.member')}</SortTh>
+                {sundayDates.map((d) => (
+                  <th key={d} className="tnum" style={{ textAlign: 'center', whiteSpace: 'nowrap' }}>
+                    {d.slice(5)}
                   </th>
                 ))}
-                <SortTh sortKey="count" activeKey={attSortKey} dir={attSortDir} onSort={toggleAttSort} align="center">{t('group.attended')}</SortTh>
+                <SortTh sortKey="count" activeKey={sunSortKey} dir={sunSortDir} onSort={toggleSunSort} align="center">{t('events.col.total')}</SortTh>
               </tr>
             </thead>
             <tbody>
-              {sortedAttendanceRows.map((r) => {
-                const inner = statusByMemberDate.get(r.member.id);
-                return (
-                  <tr key={r.member.id}>
-                    <td><strong>{r.member.full_name}</strong></td>
-                    {weeks.map((w) => {
-                      const present = inner?.get(w.date) === AttendanceStatus.Present;
-                      return (
-                        <td key={w.date} style={{ textAlign: 'center' }}>
-                          <SheetTick
-                            checked={present}
-                            onToggle={() => toggle(w.date, r.member.id, present)}
-                            disabled={!perms.write}
-                            title={present ? t('group.attended') : t('group.notAttended')}
-                          />
-                        </td>
-                      );
-                    })}
-                    <td style={{ textAlign: 'center', fontWeight: 600 }}>
-                      {presentCount(r.member.id)}
+              {sortedSundayRows.map((r) => (
+                <tr key={r.member.id}>
+                  <td><strong>{r.member.full_name}</strong></td>
+                  {sundayDates.map((d) => (
+                    <td key={d} style={{ textAlign: 'center' }}>
+                      <SheetTick
+                        checked={!!r.cells[d]?.[tab]}
+                        onToggle={() => toggleSunday(r, d)}
+                        disabled={!perms.write}
+                        title={t(tab === 'pre_service' ? 'events.col.preService' : 'events.col.service')}
+                      />
                     </td>
-                  </tr>
-                );
-              })}
+                  ))}
+                  <td className="tnum" style={{ textAlign: 'center', fontWeight: 600 }}>
+                    {sundayCount(r)}
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>

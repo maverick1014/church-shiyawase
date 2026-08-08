@@ -10,10 +10,12 @@ import {
 import { CHURCH_TZ_OFFSET, churchParts, isSundayDate, sundaysOfMonth } from '@/lib/time';
 import {
   isOptionalModule,
+  isTrainingKind,
   LANGUAGES,
   moduleForApiPath,
   normalizeLanguage,
   OPTIONAL_MODULES,
+  TrainingKind,
 } from '@tog/shared';
 
 /**
@@ -630,22 +632,29 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
         id: string;
         name: string;
         category: string | null;
+        kind: string;
         is_enrollable: boolean;
         total_sessions: number;
+        starts_on: string | null;
       }>(
         await db
           .from('trainings')
-          .select('id,name,category,is_enrollable,total_sessions')
+          .select('id,name,category,kind,is_enrollable,total_sessions,starts_on')
           .eq('id', r2)
           .single(),
       );
       if (method === 'GET') {
+        // `kind` and `starts_on` ride along so the public page can read as an
+        // activity ("Saturday 12 Sept") instead of "1 sessions" (rule G8's
+        // shape half: the wording follows the stored code, not a guess).
         return json({
           id: training.id,
           name: training.name,
           category: training.category,
+          kind: training.kind,
           is_enrollable: training.is_enrollable,
           total_sessions: training.total_sessions,
+          starts_on: training.starts_on,
         });
       }
       if (method === 'POST') {
@@ -742,8 +751,25 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
         if (hallFilter) query = query.or(`hall_id.eq.${hallFilter},hall_id.is.null`);
         return json(unwrap(await query));
       }
-      if (method === 'POST')
-        return json(unwrap(await db.from('trainings').insert(withHall(await body())).select().single()));
+      if (method === 'POST') {
+        const dto = trainingWrite(await body());
+        const row = unwrap<{ id: string; kind: string }>(
+          await db.from('trainings').insert(withHall(dto)).select().single(),
+        );
+        // An activity's ONE occasion is a session row, created here rather than
+        // by the page: it is what gives the attendance sheet its single column
+        // to tick, and the invariant "an activity always has exactly one
+        // session" must not depend on a second request that can fail on its own.
+        if (row.kind === TrainingKind.Activity)
+          unwrap(
+            await db
+              .from('training_sessions')
+              .insert({ training_id: row.id, session_number: 1 })
+              .select('id')
+              .single(),
+          );
+        return json(row);
+      }
     }
     // /trainings/:id ...
     else if (r1 && !r2) {
@@ -769,7 +795,7 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
         return json({ ...training, sessions, enrollments });
       }
       if (method === 'PATCH') {
-        const dto = await body();
+        const dto = trainingWrite(await body());
         assertHallWritable(dto);
         await assertOwnsRow('trainings', r1);
         return json(unwrap(await db.from('trainings').update(dto).eq('id', r1).select().single()));
@@ -1376,6 +1402,26 @@ async function groupAttendance(db: ReturnType<typeof getDb>, groupId: string) {
     })),
   }));
   return { meetings, rows };
+}
+
+/**
+ * Normalize a 培训&活动 create/update payload.
+ *
+ * Two things the server owns rather than trusting the client with (rule G2):
+ *  - `kind` must be one the app actually ships. The table's CHECK would refuse
+ *    anything else too, but a constraint name is not an answer anybody can act
+ *    on — and a stale client must not be able to park a row on a third shape.
+ *  - an activity is ONE occasion, so its `total_sessions` is 1 whatever was
+ *    sent. That is the invariant the single auto-created session stands on.
+ */
+function trainingWrite(dto: Record<string, unknown>): Record<string, unknown> {
+  const patch = { ...dto };
+  if (patch.kind !== undefined) {
+    if (!isTrainingKind(patch.kind))
+      throw new HttpError(400, `Unknown kind: ${String(patch.kind)} — expected course or activity`);
+    if (patch.kind === TrainingKind.Activity) patch.total_sessions = 1;
+  }
+  return patch;
 }
 
 async function namelist(db: ReturnType<typeof getDb>, trainingId: string) {

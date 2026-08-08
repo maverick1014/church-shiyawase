@@ -11,6 +11,7 @@ import {
   GroupPosition,
   MemberStatus,
   PairStatus,
+  TrainingKind,
   Weekday,
   displayRole,
 } from '@tog/shared';
@@ -257,8 +258,26 @@ export function attendanceKey(status: string): MessageKey {
 }
 
 /* -------------------------------------------------------------------------
- * Trainings & enrollment
+ * 培训&活动 — the catalog, enrollment & the two shapes
  * ---------------------------------------------------------------------- */
+
+/**
+ * Message key for a `kind` (课程 / 活动). Keyed by the stored code, so the
+ * catalog's filter and the page's branches survive a language switch.
+ */
+export function trainingKindKey(kind: TrainingKind | string): MessageKey {
+  return `trainingKind.${kind}` as MessageKey;
+}
+
+/** The wording a page uses per shape: an activity never says "course". */
+export function isActivity(row: { kind?: TrainingKind | string | null } | null | undefined): boolean {
+  return row?.kind === TrainingKind.Activity;
+}
+
+/** Badge tone for a kind — so the two shapes are told apart at a glance. */
+export function trainingKindClass(kind: TrainingKind | string): string {
+  return kind === TrainingKind.Activity ? 'b-warn' : 'b-brand';
+}
 
 /**
  * Category is a free-text column, so the three seeded values are stored as the

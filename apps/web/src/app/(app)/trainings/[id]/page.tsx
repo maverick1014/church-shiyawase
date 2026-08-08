@@ -19,10 +19,12 @@ import {
   memberRole,
   roleKey,
   trainingCategoryLabel,
+  trainingKindClass,
+  trainingKindKey,
 } from '@/lib/labels';
 import { fromChurchInput, toChurchInput } from '@/lib/time';
 import { useT } from '@/lib/i18n';
-import { EnrollmentStatus } from '@tog/shared';
+import { EnrollmentStatus, TrainingKind } from '@tog/shared';
 import { TrainingModal } from '@/components/TrainingModal';
 
 export default function TrainingDetailPage() {
@@ -51,7 +53,15 @@ export default function TrainingDetailPage() {
       { key: 'name', dir: 'asc' },
     );
 
-  usePageChrome({ title: tr('training.title') }, [id, tr]);
+  // 培训&活动: the same page serves a course and a one-off activity. An
+  // activity's single session is plumbing (it is what the attendance sheet
+  // ticks), so nothing about it is shown as a "session list" — its date lives
+  // on the record itself and is edited in the activity form.
+  const isActivity = detail.data?.kind === TrainingKind.Activity;
+  usePageChrome(
+    { title: isActivity ? tr('training.activityTitle') : tr('training.title') },
+    [id, tr, isActivity],
+  );
 
   // Course header card over the sessions/roster pair — the same three boxes
   // the loaded page draws.
@@ -162,7 +172,7 @@ export default function TrainingDetailPage() {
 
   const del = async () => {
     const ok = await confirm({
-      title: tr('trainings.delete.title'),
+      title: isActivity ? tr('trainings.deleteActivity.title') : tr('trainings.delete.title'),
       message: tr('trainings.delete.message', { name: t.name }),
       confirmText: tr('common.delete'),
       danger: true,
@@ -170,7 +180,7 @@ export default function TrainingDetailPage() {
     if (!ok) return;
     try {
       await api.delete(`/trainings/${id}`);
-      toast(tr('trainings.toast.deleted'));
+      toast(isActivity ? tr('trainings.toast.activityDeleted') : tr('trainings.toast.deleted'));
       router.push('/trainings');
     } catch (e) {
       toast((e as Error).message, 'error');
@@ -183,7 +193,9 @@ export default function TrainingDetailPage() {
       tr('training.col.enrollee'),
       tr('export.role'),
       ...nl.sessions.map((s) =>
-        `${tr('export.session', { n: s.session_number })} ${s.title ?? ''}`.trim(),
+        isActivity
+          ? tr('training.col.attendedActivity')
+          : `${tr('export.session', { n: s.session_number })} ${s.title ?? ''}`.trim(),
       ),
       tr('training.exportSessionCount'),
     ];
@@ -217,6 +229,7 @@ export default function TrainingDetailPage() {
         <div className="flex-between flex-wrap">
           <div>
             <div className="flex items-center gap-10 flex-wrap">
+              <span className={`badge ${trainingKindClass(t.kind)}`}>{tr(trainingKindKey(t.kind))}</span>
               <span className={`badge ${categoryBadgeClass(t.category)}`}>
                 {trainingCategoryLabel(t.category, tr) || tr('trainings.defaultCategory')}
               </span>
@@ -226,12 +239,17 @@ export default function TrainingDetailPage() {
             </div>
             <h2 style={{ margin: '10px 0 3px', fontSize: 22 }} className="serif">{t.name}</h2>
             <div className="muted" style={{ fontSize: 12.5 }}>
-              {tr('training.summary', {
-                trainer: t.trainer?.full_name ?? tr('common.pending'),
-                sessions: t.total_sessions,
-                from: formatDate(t.starts_on),
-                to: formatDate(t.ends_on),
-              })}
+              {isActivity
+                ? tr('training.summaryActivity', {
+                    trainer: t.trainer?.full_name ?? tr('common.pending'),
+                    date: formatDate(t.starts_on),
+                  })
+                : tr('training.summary', {
+                    trainer: t.trainer?.full_name ?? tr('common.pending'),
+                    sessions: t.total_sessions,
+                    from: formatDate(t.starts_on),
+                    to: formatDate(t.ends_on),
+                  })}
             </div>
           </div>
           <div className="flex gap-8">
@@ -241,13 +259,19 @@ export default function TrainingDetailPage() {
                 {tr('training.enrollLink')}
               </button>
             )}
-            {perms.write && <button className="btn ghost" onClick={() => setEditOpen(true)}>{tr('training.editCourse')}</button>}
+            {perms.write && (
+              <button className="btn ghost" onClick={() => setEditOpen(true)}>
+                {isActivity ? tr('training.editActivity') : tr('training.editCourse')}
+              </button>
+            )}
           </div>
         </div>
       </div>
 
-      <div className="grid g2 mt-16">
-        {/* Sessions */}
+      {/* An activity has ONE occasion and no session list, so it drops to a
+          single full-width card instead of leaving half the row empty. */}
+      <div className={isActivity ? 'mt-16' : 'grid g2 mt-16'}>
+        {!isActivity && (
         <div className="card">
           <div className="card-head">
             <h3>{tr('training.sessionList')}</h3>
@@ -278,6 +302,7 @@ export default function TrainingDetailPage() {
             <div className="empty-inline">{tr('training.noSessions')}</div>
           )}
         </div>
+        )}
 
         {/* Enrollment approval */}
         <div className="card">
@@ -356,7 +381,9 @@ export default function TrainingDetailPage() {
         <div className="card-head">
           <div>
             <h3>{tr('training.namelist')}</h3>
-            <div className="muted" style={{ fontSize: 12.5, marginTop: 2 }}>{tr('training.namelistSub')}</div>
+            <div className="muted" style={{ fontSize: 12.5, marginTop: 2 }}>
+              {isActivity ? tr('training.namelistSubActivity') : tr('training.namelistSub')}
+            </div>
           </div>
           <ExportButton onClick={exportNamelist} disabled={!nl || nl.rows.length === 0} title={tr('training.exportTitle')} />
         </div>
@@ -368,8 +395,14 @@ export default function TrainingDetailPage() {
                 <SortTh sortKey="role" activeKey={nlSortKey} dir={nlSortDir} onSort={toggleNlSort}>{tr('members.col.role')}</SortTh>
                 {(nl?.sessions ?? []).map((s) => (
                   <th key={s.id} style={{ textAlign: 'center' }}>
-                    {tr('training.col.session', { n: s.session_number })}
-                    <br /><span style={{ fontWeight: 400 }}>{s.title ?? ''}</span>
+                    {isActivity
+                      ? tr('training.col.attendedActivity')
+                      : tr('training.col.session', { n: s.session_number })}
+                    {!isActivity && (
+                      <>
+                        <br /><span style={{ fontWeight: 400 }}>{s.title ?? ''}</span>
+                      </>
+                    )}
                   </th>
                 ))}
               </tr>
@@ -418,7 +451,7 @@ export default function TrainingDetailPage() {
           onSaved={() => {
             setEditOpen(false);
             detail.reload();
-            toast(tr('trainings.toast.updated'));
+            toast(isActivity ? tr('trainings.toast.activityUpdated') : tr('trainings.toast.updated'));
           }}
           onDelete={perms.delete ? del : undefined}
         />

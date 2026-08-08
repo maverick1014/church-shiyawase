@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
+  isActivity,
+  trainingKindClass,
+  trainingKindKey,
   roleTagStyle,
   roleDot,
   categoryBadgeClass,
@@ -13,7 +16,7 @@ import {
   groupHealthClass,
   groupHealthKey,
 } from '@/lib/labels';
-import { DisplayRole } from '@tog/shared';
+import { DisplayRole, isTrainingKind, TRAINING_KINDS, TrainingKind } from '@tog/shared';
 
 describe('role palette', () => {
   it('roleTagStyle returns the pastor palette', () => {
@@ -126,5 +129,44 @@ describe('date labels', () => {
     expect(formatDate(null)).toBe('\u2014');
     expect(formatDateTime(undefined)).toBe('\u2014');
     expect(formatDate('nonsense')).toBe('nonsense');
+  });
+});
+
+/*
+ * 培训&活动 — one catalog, two shapes (`kind`, migration 0014). Everything the
+ * pages branch on reads the STORED code, so a language switch can never change
+ * which shape a row is.
+ */
+describe('training kinds', () => {
+  it('ships exactly course and activity, in catalog order', () => {
+    expect([...TRAINING_KINDS]).toEqual([TrainingKind.Course, TrainingKind.Activity]);
+  });
+
+  it('accepts only a kind the app ships', () => {
+    expect(isTrainingKind('course')).toBe(true);
+    expect(isTrainingKind('activity')).toBe(true);
+    // What the API refuses with a 400 rather than storing.
+    expect(isTrainingKind('workshop')).toBe(false);
+    expect(isTrainingKind(null)).toBe(false);
+    expect(isTrainingKind(undefined)).toBe(false);
+  });
+
+  it('maps a kind to a dictionary key, never to text', () => {
+    expect(trainingKindKey(TrainingKind.Course)).toBe('trainingKind.course');
+    expect(trainingKindKey(TrainingKind.Activity)).toBe('trainingKind.activity');
+  });
+
+  it('gives the two shapes different badge tones', () => {
+    expect(trainingKindClass(TrainingKind.Course)).toBe('b-brand');
+    expect(trainingKindClass(TrainingKind.Activity)).toBe('b-warn');
+    // An unknown value reads as a course — the column's own default.
+    expect(trainingKindClass('anything')).toBe('b-brand');
+  });
+
+  it('isActivity is false for a course, a missing kind and a missing row', () => {
+    expect(isActivity({ kind: TrainingKind.Activity })).toBe(true);
+    expect(isActivity({ kind: TrainingKind.Course })).toBe(false);
+    expect(isActivity({})).toBe(false);
+    expect(isActivity(null)).toBe(false);
   });
 });

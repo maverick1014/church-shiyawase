@@ -299,6 +299,25 @@ async function main() {
     process.on(sig, () => void dieCleanly(sig));
   }
 
+  // Today in MALAYSIA — the zone every sheet is read in. The runner may be in
+  // UTC (or anywhere), so taking the month from `new Date()` would open the
+  // wrong sheet for the first 8 hours of a new month (rule G6a).
+  const KL_TODAY = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kuala_Lumpur',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+  const [SHEET_YEAR, SHEET_MONTH] = KL_TODAY.split('-');
+
+  /** One member's cells on a congregation's Sunday sheet, straight from the API. */
+  const sundayCellsOf = async (hallId, memberId) => {
+    const sheet = await apiGet(
+      `/attendance/sundays?hall_id=${hallId}&year=${SHEET_YEAR}&month=${Number(SHEET_MONTH)}`,
+    );
+    return sheet.rows.find((r) => r.member?.id === memberId)?.cells ?? {};
+  };
+
   // Members and groups carry a NOT NULL hall. A hall-scoped account would have
   // one forced on server-side, but this login is 全堂权限, so it must name one.
   let hallIdCache;
@@ -381,6 +400,32 @@ async function main() {
       sessionTitle,
       enrollee,
       remove: async () => { await removeTraining(); await enrollee.remove(); },
+    };
+  };
+
+  /**
+   * A throwaway ACTIVITY — the other shape in the same catalog (`kind`,
+   * migration 0014): one occasion, one sign-up, one column to tick. Its single
+   * session is created by the API with it, so nothing is added here; the
+   * approved sign-up is what puts a row on its roll call.
+   */
+  const makeActivity = async () => {
+    const row = await apiPost('/trainings', {
+      name: fixtureName('ACTIVITY'),
+      kind: 'activity',
+      is_enrollable: true,
+      starts_on: KL_TODAY,
+      ends_on: KL_TODAY,
+      hall_id: await someHallId(),
+    });
+    const removeActivity = disposable(`activity ${row.name}`, `/trainings/${row.id}`);
+    const goer = await makeMember('GOER');
+    await apiPost(`/trainings/${row.id}/enroll`, { member_id: goer.id, status: 'approved' });
+    return {
+      id: row.id,
+      name: row.name,
+      goer,
+      remove: async () => { await removeActivity(); await goer.remove(); },
     };
   };
 
@@ -490,7 +535,7 @@ async function main() {
     const sidebar = await page.locator('.sidebar').innerText();
     check(
       'sidebar lists every module + Users and Church settings (super admin only)',
-      ['Members', 'Life Groups', 'Services', 'Trainings', 'Forty Days', 'Users', 'Church settings']
+      ['Members', 'Life Groups', 'Services', 'Trainings & Activities', 'Forty Days', 'Users', 'Church settings']
         .every((label) => sidebar.includes(label)),
     );
     // The brand at the top of the sidebar is the CHURCH's own name, read from
@@ -583,6 +628,46 @@ async function main() {
       check('the roster lists the member who is in this group',
         (await page.locator(`td:has-text("${fxGroup.member.name}")`).count()) > 0);
       await shot('04-group-detail');
+
+      // The card's own tabs: 小组 (default) / 会前 / 主日. The two Sunday tabs
+      // show THIS group's members against the congregation's own Sunday sheet
+      // — the same rows and the same PUT the services page uses, which is why
+      // a tick here and a tick there are one fact. The group names its hall
+      // itself, so this works while the shell is still on 全部堂会.
+      const tabs = page.locator('.seg.tabs button');
+      check('the roll-call card offers 小组 / 会前 / 主日 tabs',
+        (await tabs.count()) === 3, (await tabs.allInnerTexts()).join(' | '));
+      check('小组 is the tab it opens on',
+        (await tabs.first().getAttribute('aria-pressed')) === 'true');
+      // The tabs are the CARD's own filters — the page bar belongs to the page.
+      check('the tabs are inside the card, not in the page bar',
+        (await page.locator('.page-bar .seg').count()) === 0);
+
+      const groupHallId = await someHallId();
+      await tabs.nth(1).click(); // 会前
+      await w(900);
+      const sundayRow = page.locator('tr', { has: page.locator(`td:has-text("${fxGroup.member.name}")`) });
+      await sundayRow.first().waitFor({ timeout: 20000 });
+      check('the 会前 tab lists this group’s members against the Sunday sheet',
+        (await sundayRow.count()) === 1);
+      const sundayTick = sundayRow.locator('input[type=checkbox]').first();
+      await sundayTick.check();
+      await w(1500);
+      const gTicked = await sundayCellsOf(groupHallId, fxGroup.member.id);
+      check('ticking 会前 here writes the congregation’s Sunday sheet',
+        Object.values(gTicked).some((c) => c.pre_service), JSON.stringify(gTicked));
+      await sundayTick.uncheck();
+      await w(1500);
+      const gCleared = await sundayCellsOf(groupHallId, fxGroup.member.id);
+      check('unticking it leaves no row behind', Object.keys(gCleared).length === 0, JSON.stringify(gCleared));
+      // …and 主日 is the same sheet's other tick, not a second sheet.
+      await tabs.nth(2).click();
+      await w(900);
+      check('the 主日 tab shows the same members', (await sundayRow.count()) === 1);
+      await tabs.first().click();
+      await w(600);
+      check('switching back to 小组 restores the group’s own columns',
+        (await page.locator('th:has-text("Week")').count()) > 0);
     } finally {
       await fxGroup.remove();
     }
@@ -601,23 +686,8 @@ async function main() {
     const fxSheetMember = await makeMember('SUNDAY');
     const fxMeeting = await makeEvent();
     const sheetHallId = await someHallId();
-    // Which month the page opens on: Malaysia's, not the runner's (the page
-    // reads it the same way, so an August-in-KL / July-in-UTC run still agrees).
-    const [sheetYear, sheetMonth] = new Intl.DateTimeFormat('en-CA', {
-      timeZone: 'Asia/Kuala_Lumpur',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-    })
-      .format(new Date())
-      .split('-');
     /** That member's cells on the live sheet, straight from the API. */
-    const sheetCells = async () => {
-      const sheet = await apiGet(
-        `/attendance/sundays?hall_id=${sheetHallId}&year=${sheetYear}&month=${Number(sheetMonth)}`,
-      );
-      return sheet.rows.find((r) => r.member?.id === fxSheetMember.id)?.cells ?? {};
-    };
+    const sheetCells = () => sundayCellsOf(sheetHallId, fxSheetMember.id);
     try {
       await page.goto(`${BASE}/events`, { waitUntil: 'domcontentloaded' });
       await page.locator('.page-bar').first().waitFor({ state: 'attached', timeout: 20000 });
@@ -635,7 +705,13 @@ async function main() {
         await page.locator('.hamburger').click();
         await hallSelect.selectOption(sheetHallId);
         await w(400);
-        await page.locator('.hamburger').click();
+        // Close it by the scrim, NOT by the hamburger. With the drawer open the
+        // scrim covers the whole viewport at z-index 55 while the topbar that
+        // holds the hamburger sits at 5, so a second hamburger click can never
+        // land — it waits for an element that will never receive the event.
+        // (Every other module gets away with opening the drawer because it then
+        // clicks a nav link inside the sidebar, which is above the scrim.)
+        await page.locator('.scrim').click();
         await w(300);
       }
       const memberCell = page.locator(`td:has-text("${fxSheetMember.name}")`);
@@ -702,8 +778,9 @@ async function main() {
     // The catalog is empty in the live database, so the course opened here is
     // one this module creates — with a session and a pending enrolee, which is
     // what makes the detail page's two panels worth asserting on at all.
-    mod('trainings · detail');
+    mod('trainings & activities · catalog · detail');
     const fxTraining = await makeTraining();
+    const fxActivity = await makeActivity();
     try {
       await page.goto(`${BASE}/trainings`, { waitUntil: 'domcontentloaded' });
       const courseTitle = page.locator('.card h3', { hasText: fxTraining.name });
@@ -719,7 +796,47 @@ async function main() {
       check('a pending enrolee is offered for approval',
         (await page.locator('.enrol-row button:has-text("Approve")').count()) > 0);
       await shot('06-training-detail');
+
+      // The page is 培训&活动 now: the same catalog holds one-off activities
+      // (兄弟团爬山), so it offers both create paths and a filter between them.
+      await page.goto(`${BASE}/trainings`, { waitUntil: 'domcontentloaded' });
+      await page.locator('.page-bar').first().waitFor({ state: 'attached', timeout: 20000 });
+      check('the catalog offers both “Add course” and “Add activity”',
+        (await page.locator('button:visible:has-text("Add course")').count()) > 0 &&
+          (await page.locator('button:visible:has-text("Add activity")').count()) > 0);
+      const activityCard = page.locator('.card h3', { hasText: fxActivity.name });
+      await activityCard.first().waitFor({ timeout: 20000 });
+      check('a created activity appears in the same catalog', (await activityCard.count()) === 1);
+      // Filtering is by the STORED code, so it survives a language switch.
+      await page.locator('.page-bar-filters select').first().selectOption('course');
+      await w(700);
+      check('“Courses only” hides the activities',
+        (await activityCard.count()) === 0 &&
+          (await page.locator('.card h3', { hasText: fxTraining.name }).count()) === 1);
+      await page.locator('.page-bar-filters select').first().selectOption('activity');
+      await w(700);
+      check('“Activities only” hides the courses',
+        (await activityCard.count()) === 1 &&
+          (await page.locator('.card h3', { hasText: fxTraining.name }).count()) === 0);
+
+      // An activity is ONE occasion: no session list to manage, and its roll
+      // call is a single column of "came".
+      await activityCard.first().click();
+      await page.waitForURL(/\/trainings\/[0-9a-f-]+/, { timeout: 15000 });
+      await page.locator('text=Attendance sheet').first().waitFor({ timeout: 20000 });
+      check('an activity has no session list to manage',
+        (await page.locator('.card-head h3:has-text("Sessions")').count()) === 0);
+      check('its roll call is one “Came” column',
+        (await page.locator('th:has-text("Came")').count()) === 1);
+      check('the person who signed up is on the roll call',
+        (await page.locator(`strong:has-text("${fxActivity.goer.name}")`).count()) > 0);
+      const activityBody = await page.locator('.content').innerText();
+      check('the page calls it an activity, not a course',
+        /Activity/.test(activityBody) && !/Edit course/.test(activityBody),
+        activityBody.replace(/\s+/g, ' ').slice(0, 120));
+      await shot('06b-activity-detail');
     } finally {
+      await fxActivity.remove();
       await fxTraining.remove();
     }
 

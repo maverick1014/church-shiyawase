@@ -14,6 +14,7 @@ import {
   MonthPicker,
   PageBar,
   RepeatIcon,
+  Segmented,
   SheetTick,
   Skeleton,
   SkeletonScreen,
@@ -30,7 +31,7 @@ import { useT } from '@/lib/i18n';
 import { AttendanceStatus, EventType, MemberStatus } from '@tog/shared';
 
 /** Tone class per attendance option — matches the seg-button palette. */
-const ATTENDANCE_TONE: Record<AttendanceStatus, string> = {
+const ATTENDANCE_TONE: Record<AttendanceStatus, 'on-good' | 'on-warn' | 'on-crit'> = {
   [AttendanceStatus.Present]: 'on-good',
   [AttendanceStatus.Excused]: 'on-warn',
   [AttendanceStatus.Absent]: 'on-crit',
@@ -452,17 +453,19 @@ function AttendancePanel({
           {members.map((m) => (
             <div key={m.id} className="flex-between" style={{ padding: '10px 4px', borderBottom: '1px solid var(--border)' }}>
               <strong>{m.full_name}</strong>
-              <div className="seg">
-                {ATTENDANCE_OPTIONS.map((st) => (
-                  <button
-                    key={st}
-                    className={current[m.id] === st ? ATTENDANCE_TONE[st] : ''}
-                    onClick={() => set(m.id, st)}
-                  >
-                    {t(attendanceKey(st))}
-                  </button>
-                ))}
-              </div>
+              {/* The shared segmented control (rule G4) — the same one the
+                  life-group card switches its roll call with, here with a tone
+                  per option because these choices carry a meaning. */}
+              <Segmented<AttendanceStatus>
+                value={current[m.id]}
+                onChange={(st) => set(m.id, st)}
+                label={t('events.attendance.title')}
+                options={ATTENDANCE_OPTIONS.map((st) => ({
+                  value: st,
+                  label: t(attendanceKey(st)),
+                  tone: ATTENDANCE_TONE[st],
+                }))}
+              />
             </div>
           ))}
           {members.length === 0 && <div className="empty-inline">{t('events.attendance.empty')}</div>}

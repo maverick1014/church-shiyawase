@@ -190,6 +190,7 @@ async function main() {
 
   // ---- Trainings CRUD (+ session, enroll, attendance) ---------------------
   const mkTr = await req('POST', '/api/trainings', { ...H, body: { name: `E2E课程-${Date.now()}`, total_sessions: 1, is_enrollable: true } });
+  ok('a training defaults to the course shape', mkTr.json?.kind === 'course', String(mkTr.json?.kind));
   ok('create training → 200 + id', mkTr.status === 200 && mkTr.json?.id, `status ${mkTr.status} ${JSON.stringify(mkTr.json).slice(0,120)}`);
   const trId = mkTr.json?.id;
   if (trId) {
@@ -211,6 +212,9 @@ async function main() {
     }
     ok('delete training → 200', (await req('DELETE', `/api/trainings/${trId}`, H)).status === 200);
   }
+
+  // ---- 培训&活动: the ACTIVITY shape --------------------------------------
+  await activityShape(admin, members, hallId);
 
   // ---- Discipleship module CRUD + pair CRUD + public form ------------------
   // 守望模块 (discipleship_programs) are creatable from the UI now, so this
@@ -296,6 +300,83 @@ async function main() {
 
 function memberOrNull(members) {
   return members && members.length ? members[0] : null;
+}
+
+/**
+ * 培训&活动 — the second shape in the same catalog (`kind`, migration 0014).
+ *
+ * An activity is one occasion people sign up for and get ticked off at. What
+ * has teeth here is that the SERVER owns the invariants, not the page:
+ *  - it creates the activity's single session itself, so the attendance sheet
+ *    always has exactly one column to tick;
+ *  - `total_sessions` is forced to 1 however many the client asked for;
+ *  - a `kind` the app does not ship is a 400 in words, not a constraint name.
+ * The public sign-up link has to keep working for an activity too — same link,
+ * same full-name match, different wording — so it is exercised here as well.
+ */
+async function activityShape(adminCookie, members, hallId) {
+  const H = { cookie: adminCookie };
+  const mk = await req('POST', '/api/trainings', {
+    ...H,
+    body: {
+      name: `E2E活动-${Date.now()}`,
+      kind: 'activity',
+      // Deliberately wrong: an activity is ONE occasion whatever is sent.
+      total_sessions: 5,
+      is_enrollable: true,
+      starts_on: '2030-03-09',
+      ends_on: '2030-03-09',
+      hall_id: hallId,
+    },
+  });
+  ok('create activity → 200 + id', mk.status === 200 && mk.json?.id, `status ${mk.status} ${JSON.stringify(mk.json).slice(0, 140)}`);
+  const id = mk.json?.id;
+  if (!id) return;
+  try {
+    ok('the activity keeps its kind', mk.json?.kind === 'activity', String(mk.json?.kind));
+    ok('an activity is one occasion, whatever total_sessions was sent',
+      mk.json?.total_sessions === 1, String(mk.json?.total_sessions));
+
+    const detail = await req('GET', `/api/trainings/${id}`, H);
+    ok('the API gives the activity its single session to tick',
+      detail.status === 200 && (detail.json?.sessions || []).length === 1,
+      `${(detail.json?.sessions || []).length} sessions`);
+
+    // Sign up + tick who came, over the same paths a course uses.
+    const sessionId = detail.json?.sessions?.[0]?.id;
+    if (members?.length && sessionId) {
+      const enr = await req('POST', `/api/trainings/${id}/enroll`, { ...H, body: { member_id: members[0].id, status: 'approved' } });
+      ok('sign a member up for the activity → 200', enr.status === 200 && enr.json?.id, `status ${enr.status}`);
+      const att = await req('POST', `/api/trainings/sessions/${sessionId}/attendance`, {
+        ...H, body: { records: [{ member_id: members[0].id, attended: true }] },
+      });
+      ok('tick who came → 200', att.status === 200, `status ${att.status}`);
+      const nl = await req('GET', `/api/trainings/${id}/namelist`, H);
+      ok('the activity roll call has one column and the tick is on it',
+        (nl.json?.sessions || []).length === 1 &&
+          (nl.json?.rows || []).some((r) => r.attendance?.[0]?.attended === true),
+        JSON.stringify(nl.json?.rows || []).slice(0, 140));
+    }
+
+    // The public link makes sense for an activity: it says which shape it is
+    // and when it happens, rather than claiming "1 sessions".
+    const pub = await req('GET', `/api/trainings/enroll/${id}`);
+    ok('public sign-up info for an activity → 200 + kind + date',
+      pub.status === 200 && pub.json?.kind === 'activity' && String(pub.json?.starts_on).startsWith('2030-03-09'),
+      JSON.stringify(pub.json));
+    const badName = await req('POST', `/api/trainings/enroll/${id}`, { body: { full_name: `查无此人-${Date.now()}` } });
+    ok('public sign-up still matches on a full name', badName.json?.status === 'no_member', JSON.stringify(badName.json));
+
+    // A shape the app does not ship never reaches the table.
+    const junk = await req('PATCH', `/api/trainings/${id}`, { ...H, body: { kind: 'workshop' } });
+    ok('an unknown kind → 400', junk.status === 400, `status ${junk.status}`);
+    ok('…and says which kinds there are', /course/i.test(junk.json?.message || ''), String(junk.json?.message));
+    const unchanged = await req('GET', `/api/trainings/${id}`, H);
+    ok('the rejected kind was not stored', unchanged.json?.kind === 'activity', String(unchanged.json?.kind));
+  } finally {
+    const del = await req('DELETE', `/api/trainings/${id}`, H);
+    ok('the activity fixture was deleted', del.status === 200, `status ${del.status}`);
+  }
 }
 
 /**

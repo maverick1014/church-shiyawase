@@ -6,16 +6,24 @@ import { api } from '@/lib/api';
 import { BrandLogo } from '@/components/BrandLogo';
 import { Field } from '@/components/ui';
 import { useChurchProfile } from '@/lib/church';
-import { trainingCategoryLabel } from '@/lib/labels';
+import { formatDate, trainingCategoryLabel, trainingKindKey } from '@/lib/labels';
 import { useT } from '@/lib/i18n';
 import type { MessageKey } from '@/lib/i18n';
+import { TrainingKind } from '@tog/shared';
 
+/**
+ * What the public endpoint hands back. `kind` and `starts_on` ride along so an
+ * ACTIVITY reads as one ("Activity on 2026-09-12") instead of claiming to have
+ * "1 sessions" — the same link, the same name match, different wording.
+ */
 interface EnrollTraining {
   id: string;
   name: string;
   category: string | null;
+  kind: TrainingKind;
   is_enrollable: boolean;
   total_sessions: number;
+  starts_on: string | null;
 }
 
 type EnrollStatus = 'ok' | 'already' | 'no_member' | 'ambiguous' | 'closed';
@@ -109,13 +117,18 @@ export default function EnrollFormPage() {
           ) : (
             <>
               <div className="flex items-center gap-8 flex-wrap" style={{ marginBottom: 4 }}>
+                {training?.kind && (
+                  <span className="badge b-brand">{t(trainingKindKey(training.kind))}</span>
+                )}
                 {training?.category && (
                   <span className="badge b-accent">{trainingCategoryLabel(training.category, t)}</span>
                 )}
                 <strong className="serif" style={{ fontSize: 17 }}>{training?.name}</strong>
               </div>
               <div className="muted" style={{ fontSize: 12.5, marginBottom: 4 }}>
-                {t('enroll.sessionsLine', { n: training?.total_sessions ?? 0 })}
+                {training?.kind === TrainingKind.Activity
+                  ? t('enroll.activityLine', { date: formatDate(training.starts_on) })
+                  : t('enroll.sessionsLine', { n: training?.total_sessions ?? 0 })}
               </div>
 
               {training && !training.is_enrollable ? (

@@ -7,22 +7,43 @@ import { useHallScope } from '@/lib/hall';
 import { MemberRow, TrainingRow } from '@/lib/types';
 import { TRAINING_CATEGORIES, trainingCategoryLabel } from '@/lib/labels';
 import { useT } from '@/lib/i18n';
+import { TrainingKind } from '@tog/shared';
 
+/**
+ * Add / edit one row of 培训&活动 — a course or a one-off activity.
+ *
+ * Both shapes are the same record (migration 0014), so this is one form with
+ * one save path; only the fields that genuinely differ branch:
+ *
+ *   course   — how many sessions, and the range it runs over (start / end).
+ *   activity — a single DATE, which is stored as both `starts_on` and
+ *              `ends_on` so "has it finished?" is the same question for both
+ *              shapes and nothing has to special-case the catalog.
+ *
+ * `kind` is fixed at creation and never offered as a field: an activity's
+ * single occasion is a session row the API creates with it, so flipping the
+ * shape of an existing row would leave that plumbing behind.
+ */
 export function TrainingModal({
   members,
   initial,
+  kind: newKind,
   onClose,
   onSaved,
   onDelete,
 }: {
   members: MemberRow[];
   initial?: TrainingRow;
+  /** Which shape to CREATE. Editing takes the row's own kind instead. */
+  kind?: TrainingKind;
   onClose: () => void;
   onSaved: (id: string) => void;
   onDelete?: () => void;
 }) {
   const t = useT();
   const { hallId } = useHallScope();
+  const kind = initial?.kind ?? newKind ?? TrainingKind.Course;
+  const activity = kind === TrainingKind.Activity;
   const [form, setForm] = useState({
     name: initial?.name ?? '',
     category: initial?.category ?? TRAINING_CATEGORIES[0],
@@ -48,11 +69,15 @@ export function TrainingModal({
     setErr(null);
     const body = {
       name: form.name.trim(),
+      kind,
       category: form.category,
-      total_sessions: Number(form.total_sessions) || 1,
+      // An activity is one occasion — the server forces this too (rule G2), so
+      // a stale client can never leave a two-session activity behind.
+      total_sessions: activity ? 1 : Number(form.total_sessions) || 1,
       trainer_id: form.trainer_id || undefined,
       starts_on: form.starts_on || undefined,
-      ends_on: form.ends_on || undefined,
+      // One day, so an activity starts and ends on the same date.
+      ends_on: (activity ? form.starts_on : form.ends_on) || undefined,
       is_enrollable: form.is_enrollable,
       hall_id: form.hall_id,
     };
@@ -69,11 +94,19 @@ export function TrainingModal({
     }
   };
 
+  const title = initial
+    ? activity ? t('trainings.edit.activityTitle') : t('trainings.edit.title')
+    : activity ? t('trainings.new.activityTitle') : t('trainings.new.title');
+
   return (
-    <Modal title={initial ? t('trainings.edit.title') : t('trainings.new.title')} onClose={onClose}>
+    <Modal title={title} onClose={onClose}>
       {err && <ErrorBanner message={err} />}
-      <Field label={t('trainings.field.name')}>
-        <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder={t('trainings.namePlaceholder')} />
+      <Field label={activity ? t('trainings.field.activityName') : t('trainings.field.name')}>
+        <input
+          value={form.name}
+          onChange={(e) => setForm({ ...form, name: e.target.value })}
+          placeholder={activity ? t('trainings.activityNamePlaceholder') : t('trainings.namePlaceholder')}
+        />
       </Field>
       <div className="form-row">
         <Field label={t('trainings.field.category')}>
@@ -83,12 +116,23 @@ export function TrainingModal({
             ))}
           </select>
         </Field>
-        <Field label={t('trainings.field.sessions')}>
-          <input type="number" value={form.total_sessions} onChange={(e) => setForm({ ...form, total_sessions: Number(e.target.value) })} />
-        </Field>
+        {activity ? (
+          <Field label={t('trainings.field.date')}>
+            <input
+              type="date"
+              className={form.starts_on ? undefined : 'date-empty'}
+              value={form.starts_on}
+              onChange={(e) => setForm({ ...form, starts_on: e.target.value })}
+            />
+          </Field>
+        ) : (
+          <Field label={t('trainings.field.sessions')}>
+            <input type="number" value={form.total_sessions} onChange={(e) => setForm({ ...form, total_sessions: Number(e.target.value) })} />
+          </Field>
+        )}
       </div>
       <div className="form-row">
-        <Field label={t('trainings.field.trainer')}>
+        <Field label={activity ? t('trainings.field.host') : t('trainings.field.trainer')}>
           <select value={form.trainer_id} onChange={(e) => setForm({ ...form, trainer_id: e.target.value })}>
             <option value="">{t('common.pending')}</option>
             {members.map((m) => (
@@ -105,14 +149,16 @@ export function TrainingModal({
           />
         </Field>
       </div>
-      <div className="form-row">
-        <Field label={t('trainings.field.startsOn')}>
-          <input type="date" className={form.starts_on ? undefined : 'date-empty'} value={form.starts_on} onChange={(e) => setForm({ ...form, starts_on: e.target.value })} />
-        </Field>
-        <Field label={t('trainings.field.endsOn')}>
-          <input type="date" className={form.ends_on ? undefined : 'date-empty'} value={form.ends_on} onChange={(e) => setForm({ ...form, ends_on: e.target.value })} />
-        </Field>
-      </div>
+      {!activity && (
+        <div className="form-row">
+          <Field label={t('trainings.field.startsOn')}>
+            <input type="date" className={form.starts_on ? undefined : 'date-empty'} value={form.starts_on} onChange={(e) => setForm({ ...form, starts_on: e.target.value })} />
+          </Field>
+          <Field label={t('trainings.field.endsOn')}>
+            <input type="date" className={form.ends_on ? undefined : 'date-empty'} value={form.ends_on} onChange={(e) => setForm({ ...form, ends_on: e.target.value })} />
+          </Field>
+        </div>
+      )}
       <label className="flex items-center gap-8" style={{ fontSize: 13, fontWeight: 500, margin: '4px 0 18px', cursor: 'pointer' }}>
         <input
           type="checkbox"
@@ -129,7 +175,7 @@ export function TrainingModal({
             style={{ marginRight: 'auto' }}
             onClick={onDelete}
           >
-            {t('trainings.delete')}
+            {activity ? t('trainings.deleteActivity') : t('trainings.delete')}
           </button>
         )}
         <button className="btn ghost" onClick={onClose}>{t('common.cancel')}</button>

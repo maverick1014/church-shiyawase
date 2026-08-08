@@ -1153,7 +1153,11 @@ textarea {
   border: 1px dashed var(--border);
 }
 
-/* Segmented control (attendance) ------------------------------------------ */
+/* Segmented control (<Segmented /> in components/ui.tsx) -------------------
+   Two jobs, one mechanism: the per-row 出席/请假/缺席 picker (compact, one tone
+   class per option) and a card's own tab strip (小组 / 会前 / 主日). Both are
+   sized by the shared control tokens — a segmented control that invented its
+   own height would sit a few pixels off the <select> beside it (G9). */
 .seg {
   display: inline-flex;
   border: 1px solid var(--border);
@@ -1163,7 +1167,8 @@ textarea {
 .seg button {
   border: none;
   border-right: 1px solid var(--border);
-  padding: 6px 14px;
+  min-height: var(--control-h-sm);
+  padding: 0 14px;
   font-size: 12.5px;
   font-weight: 600;
   background: var(--surface);
@@ -1171,6 +1176,19 @@ textarea {
 }
 .seg button:last-child {
   border-right: none;
+}
+/* The neutral "this one is selected" state, for a tab strip that has no
+   good/warn/crit meaning to colour by. */
+.seg button.on {
+  background: var(--brand-soft);
+  color: var(--brand);
+}
+/* Tab-strip variant: it shares a filter row with year/month selects, so it
+   takes the same full --control-h they do. */
+.seg.tabs button {
+  min-height: var(--control-h);
+  padding: 0 16px;
+  font-size: 13px;
 }
 .seg button.on-good {
   background: var(--good-soft);
