@@ -91,6 +91,20 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
   }
 
   /**
+   * The hall this request's list reads are narrowed to — `null` = 全部堂会
+   * (no narrowing). Two things can narrow a view, and the order matters:
+   *
+   *  1. The session's own hall (`hallScope`). It ALWAYS wins, so a hall-pinned
+   *     account can never widen its view by sending a different `hall_id`.
+   *  2. Only when the session has full access, the `?hall_id=` the congregation
+   *     switcher appends to every request (`withHallParam` in `lib/hall.tsx`).
+   *
+   * Every hall-scoped list GET reads this one value rather than re-deriving the
+   * precedence, so a new list can't accidentally trust the client (rule G2).
+   */
+  const hallFilter: string | null = hallScope ?? (q.get('hall_id') || null);
+
+  /**
    * Body for a hall-scoped INSERT. A single-hall account always writes into
    * its own hall (any hall_id the client sent is discarded); a full-access
    * account may pass one explicitly, and for trainings/events may leave it
@@ -118,10 +132,49 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
     if (row.hall_id !== hallScope) throw new HttpError(403, 'No permission to modify another congregation\u2019s records');
   };
 
+  /**
+   * Guard an id-addressed READ the same way `assertOwnsRow` guards a write:
+   * a single-hall account may only open its own hall's records. "GET is
+   * harmless" is not a defence (rule G2) \u2014 the list queries above already hide
+   * other halls, so a detail route must not hand the same row back by id.
+   * A null hall means \u5168\u5802\u5f00\u653e (trainings / events) and stays visible to
+   * everyone, exactly as the list queries expose it.
+   */
+  const assertRowReadable = async (table: string, id: string) => {
+    if (!hallScope) return;
+    const row = unwrap<{ hall_id: string | null }>(
+      await db.from(table).select('hall_id').eq('id', id).single(),
+    );
+    if (row.hall_id !== null && row.hall_id !== hallScope)
+      throw new HttpError(403, 'No permission to view another congregation\u2019s records');
+  };
+
+  /**
+   * Same guard for a \u5b88\u671b\u914d\u5bf9: a pair carries no hall column of its own \u2014 its
+   * hall is its MENTOR's hall (which is what `discipleship_pair_summary`
+   * exposes as `hall_id`). Used for read and write alike; `members.hall_id` is
+   * NOT NULL, so there is no \u5168\u5802 pair to make an exception for.
+   */
+  const assertPairInHall = async (pairId: string) => {
+    if (!hallScope) return;
+    const row = unwrap<{ mentor: { hall_id: string | null } | null }>(
+      await db
+        .from('discipleship_pairs')
+        .select('mentor:members!discipleship_pairs_mentor_id_fkey(hall_id)')
+        .eq('id', pairId)
+        .single(),
+    );
+    if ((row.mentor?.hall_id ?? null) !== hallScope)
+      throw new HttpError(403, 'No permission to view another congregation\u2019s records');
+  };
+
   // ---- Halls (堂会) ----------------------------------------------------------
   // Read-only for now: the three halls are seeded by migration 0008. Every
   // logged-in user may list them (needed to render hall labels); a single-hall
   // account only ever sees its own.
+  // Deliberately `hallScope`, never `hallFilter`: this list IS the congregation
+  // switcher's options. Narrowing it by the switcher's own selection would
+  // leave a single option and strand the user with no way back to 全部堂会.
   if (r0 === 'halls' && !r1 && method === 'GET') {
     let query = db.from('halls').select('id,name,sort_order').order('sort_order');
     if (hallScope) query = query.eq('id', hallScope);
@@ -136,8 +189,7 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
           .from('members')
           .select(MEMBER_SELECT)
           .order('full_name', { ascending: true });
-        if (hallScope) query = query.eq('hall_id', hallScope);
-        else if (q.get('hall_id')) query = query.eq('hall_id', q.get('hall_id'));
+        if (hallFilter) query = query.eq('hall_id', hallFilter);
         if (q.get('church_role')) query = query.eq('church_role', q.get('church_role'));
         if (q.get('group_position')) query = query.eq('group_position', q.get('group_position'));
         if (q.get('group_id')) query = query.eq('group_id', q.get('group_id'));
@@ -148,6 +200,7 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
         return json(unwrap(await db.from('members').insert(withHall(await body())).select().single()));
       }
     } else if (r2 === 'trainings' && method === 'GET') {
+      await assertRowReadable('members', r1);
       return json(
         unwrap(
           await db
@@ -182,8 +235,10 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
         ),
       );
     } else if (!r2) {
-      if (method === 'GET')
+      if (method === 'GET') {
+        await assertRowReadable('members', r1);
         return json(unwrap(await db.from('members').select(MEMBER_SELECT).eq('id', r1).single()));
+      }
       if (method === 'PATCH') {
         const dto = await body();
         assertHallWritable(dto);
@@ -225,13 +280,13 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
     } else if (!r1) {
       if (method === 'GET') {
         let query = db.from('groups').select('*, hall:halls(id,name)').order('name');
-        if (hallScope) query = query.eq('hall_id', hallScope);
-        else if (q.get('hall_id')) query = query.eq('hall_id', q.get('hall_id'));
+        if (hallFilter) query = query.eq('hall_id', hallFilter);
         return json(unwrap(await query));
       }
       if (method === 'POST')
         return json(unwrap(await db.from('groups').insert(withHall(await body())).select().single()));
     } else if (r2 === 'attendance' && method === 'GET') {
+      await assertRowReadable('groups', r1);
       return json(await groupAttendance(db, r1));
     } else if (r2 === 'meetings' && method === 'POST') {
       const dto = await body();
@@ -246,6 +301,7 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
       );
     } else if (!r2) {
       if (method === 'GET') {
+        await assertRowReadable('groups', r1);
         const group = unwrap<Record<string, unknown>>(
           await db.from('groups').select('*, hall:halls(id,name)').eq('id', r1).single(),
         );
@@ -281,9 +337,10 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
           .from('events')
           .select('*, hall:halls(id,name)')
           .order('starts_at', { ascending: false });
-        // A single-hall account sees its own hall plus every 全堂/联合 event.
-        if (hallScope) query = query.or(`hall_id.eq.${hallScope},hall_id.is.null`);
-        else if (q.get('hall_id')) query = query.eq('hall_id', q.get('hall_id'));
+        // A narrowed view sees that hall plus every 全堂/联合 event — the same
+        // rows a hall-pinned account sees, whether the narrowing came from the
+        // session's own hall or from the congregation switcher.
+        if (hallFilter) query = query.or(`hall_id.eq.${hallFilter},hall_id.is.null`);
         return json(unwrap(await query));
       }
       if (method === 'POST')
@@ -303,6 +360,7 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
       );
     } else if (!r2) {
       if (method === 'GET') {
+        await assertRowReadable('events', r1);
         const event = unwrap<Record<string, unknown>>(
           await db.from('events').select('*, hall:halls(id,name)').eq('id', r1).single(),
         );
@@ -339,8 +397,8 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
           .from('recurring_events')
           .select('*, hall:halls(id,name)')
           .order('created_at');
-        if (hallScope) query = query.or(`hall_id.eq.${hallScope},hall_id.is.null`);
-        else if (q.get('hall_id')) query = query.eq('hall_id', q.get('hall_id'));
+        // Same rule as the events they generate: own hall + every 全堂 rule.
+        if (hallFilter) query = query.or(`hall_id.eq.${hallFilter},hall_id.is.null`);
         return json(unwrap(await query));
       }
       if (method === 'POST')
@@ -484,9 +542,8 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
           .from('trainings')
           .select('*, trainer:members(id,full_name), hall:halls(id,name)')
           .order('created_at', { ascending: false });
-        // A single-hall account sees its own hall plus every 全堂开放 course.
-        if (hallScope) query = query.or(`hall_id.eq.${hallScope},hall_id.is.null`);
-        else if (q.get('hall_id')) query = query.eq('hall_id', q.get('hall_id'));
+        // A narrowed view sees that hall plus every 全堂开放 course.
+        if (hallFilter) query = query.or(`hall_id.eq.${hallFilter},hall_id.is.null`);
         return json(unwrap(await query));
       }
       if (method === 'POST')
@@ -495,6 +552,7 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
     // /trainings/:id ...
     else if (r1 && !r2) {
       if (method === 'GET') {
+        await assertRowReadable('trainings', r1);
         const training = unwrap<Record<string, unknown>>(
           await db
             .from('trainings')
@@ -528,7 +586,10 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
     }
     // /trainings/:id/{namelist,sessions,enroll}
     else if (r1 && r2) {
-      if (r2 === 'namelist' && method === 'GET') return json(await namelist(db, r1));
+      if (r2 === 'namelist' && method === 'GET') {
+        await assertRowReadable('trainings', r1);
+        return json(await namelist(db, r1));
+      }
       if (r2 === 'sessions' && method === 'POST')
         return json(
           unwrap(
@@ -566,12 +627,15 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
           return json(unwrap(await db.from('discipleship_programs').insert(await body()).select().single()));
       } else if (r3 === 'overview' && method === 'GET') {
         // A pair's hall is its mentor's hall, exposed on the view by 0008.
+        // Scoped by `hallFilter`, so the congregation switcher narrows the
+        // pastor overview (and the dashboard's 守望进行中 KPI, which counts
+        // these rows) exactly like every other list.
         let query = db
           .from('discipleship_pair_summary')
           .select('*')
           .eq('program_id', r2)
           .order('percent_complete', { ascending: false });
-        if (hallScope) query = query.eq('hall_id', hallScope);
+        if (hallFilter) query = query.eq('hall_id', hallFilter);
         return json(unwrap(await query));
       } else if (!r3 && method === 'GET') {
         return json(unwrap(await db.from('discipleship_programs').select('*').eq('id', r2).single()));
@@ -580,12 +644,15 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
       if (!r2) {
         if (method === 'GET') {
           // A pair belongs to its mentor's hall — an !inner join lets the
-          // filter run in the database rather than post-filtering here.
+          // filter run in the database rather than post-filtering here. The
+          // relay chart and the active/done/pending counts on /discipleship
+          // are built from these rows, so this is what makes the congregation
+          // switcher reach that page at all.
           let query = db
             .from('discipleship_pairs')
-            .select(hallScope ? PAIR_SELECT_SCOPED : PAIR_SELECT)
+            .select(hallFilter ? PAIR_SELECT_SCOPED : PAIR_SELECT)
             .order('created_at');
-          if (hallScope) query = query.eq('mentor.hall_id', hallScope);
+          if (hallFilter) query = query.eq('mentor.hall_id', hallFilter);
           if (q.get('program_id')) query = query.eq('program_id', q.get('program_id'));
           return json(unwrap(await query));
         }
@@ -595,6 +662,10 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
           // paper before this system existed — by marking days 1..N complete
           // immediately instead of starting the pair at 0%.
           const { backfill_days, ...pairDto } = (await body()) as Record<string, unknown>;
+          // The mentor decides the pair's hall, so a single-hall account may
+          // only pair up its own hall's mentors — otherwise it would create a
+          // pair inside another congregation (and never see it again).
+          if (pairDto.mentor_id) await assertOwnsRow('members', String(pairDto.mentor_id));
           const pair = unwrap<{ id: string; program_id: string }>(
             await db.from('discipleship_pairs').insert(pairDto).select(PAIR_SELECT).single(),
           );
@@ -622,9 +693,11 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
           return json(pair);
         }
       } else if (r3 === 'progress' && method === 'POST') {
+        await assertPairInHall(r2);
         return json(await upsertProgress(db, r2, await body()));
       } else if (!r3) {
         if (method === 'GET') {
+          await assertPairInHall(r2);
           const pair = unwrap<Record<string, unknown>>(
             await db
               .from('discipleship_pairs')
@@ -637,9 +710,12 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
           );
           return json({ ...pair, progress });
         }
-        if (method === 'PATCH')
+        if (method === 'PATCH') {
+          await assertPairInHall(r2);
           return json(unwrap(await db.from('discipleship_pairs').update(await body()).eq('id', r2).select().single()));
+        }
         if (method === 'DELETE') {
+          await assertPairInHall(r2);
           unwrap(await db.from('discipleship_pairs').delete().eq('id', r2).select().single());
           return json({ id: r2 });
         }

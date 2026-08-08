@@ -60,9 +60,20 @@ documented decision). A page that can only create + list is incomplete.
   writes are **forced** onto that hall server-side — never trust a client-sent
   `hall_id`. Nullable-hall entities (培训 / 聚会) additionally expose their
   全堂开放 (`hall_id is null`) rows to every hall. `members`/`groups` always
-  carry a hall. New hall-scoped queries must go through the same gate helpers
-  (`withHall` / `assertHallWritable` / `assertOwnsRow`) rather than re-rolling
-  the check.
+  carry a hall. A pair (守望配对) has no hall column — its hall is its
+  **mentor's** hall (`discipleship_pair_summary.hall_id`).
+  New hall-scoped queries must go through the same gate helpers rather than
+  re-rolling the check: `hallFilter` (which hall a **list** read is narrowed
+  to), `withHall` / `assertHallWritable` / `assertOwnsRow` (writes), and
+  `assertRowReadable` / `assertPairInHall` (id-addressed detail reads).
+- **Congregation switcher:** a 全堂权限 account narrows its view with the
+  switcher, which appends `?hall_id=` to every request (`withHallParam`).
+  `hallFilter = hallScope ?? q.get('hall_id')` — the **session's own hall always
+  wins**, so a hall-pinned account can never widen its view by sending a
+  different `hall_id`; that precedence is the security property. Every
+  hall-owned list GET (成员/小组/聚会/循环聚会/培训/守望配对 + 牧养总览) reads
+  `hallFilter`, so switching congregation moves the whole app — dashboard KPIs
+  included — not just some pages.
 - **Server (authoritative):** every non-public API path goes through the gate in
   `route.ts`. Writes are denied for `readonly`; account management
   (`/accounts*`, both **read and write**) is `super_admin` only; `DELETE` is
