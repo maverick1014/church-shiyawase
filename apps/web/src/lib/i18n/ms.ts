@@ -100,7 +100,6 @@ export const ms: Messages = {
 
   /* ---- member detail --------------------------------------------------- */
   'member.title': 'Butiran ahli',
-  'member.back': '‹ Kembali ke senarai ahli',
   'member.editProfile': 'Sunting profil',
   'member.uploadAvatar': 'Muat naik gambar',
   'member.changeAvatar': 'Tukar gambar',
@@ -164,7 +163,6 @@ export const ms: Messages = {
 
   /* ---- group detail ---------------------------------------------------- */
   'group.title': 'Butiran kumpulan',
-  'group.back': '‹ Kembali ke kumpulan',
   'group.info': 'Profil kumpulan · Kepimpinan',
   'group.triangle': 'Trio kepimpinan',
   'group.triangleSub': '· pasukan kepimpinan',
@@ -238,7 +236,6 @@ export const ms: Messages = {
   /* ---- recurring events ------------------------------------------------ */
   'recurring.title': 'Perjumpaan berulang',
   'recurring.add': '＋ Tambah ulangan',
-  'recurring.back': '‹ Kembali ke perjumpaan',
   'recurring.hint': '💡 Perjumpaan dijadualkan automatik untuk “hari jangkaan” yang berikutnya (35 hari secara lalai, lebih kurang sebulan). Jika anda memadam satu kejadian (contohnya cuti umum) ia tidak akan kembali, dan menukar hari atau masa hanya memberi kesan kepada jadual baharu.',
   'recurring.col.name': 'Nama',
   'recurring.col.type': 'Jenis',
@@ -346,7 +343,6 @@ export const ms: Messages = {
 
   /* ---- training detail ------------------------------------------------- */
   'training.title': 'Butiran latihan',
-  'training.back': '‹ Kembali ke katalog',
   'training.enrollLink': '🔗 Pautan pendaftaran',
   'training.enrollLinkTitle': 'Salin pautan pendaftaran sendiri untuk dikongsi',
   'training.editCourse': 'Sunting kursus',
@@ -438,7 +434,6 @@ export const ms: Messages = {
   'settings.manageAccount': 'Urus akaun',
   'settings.neverSignedIn': 'Tidak pernah log masuk',
   'settings.onlySuperAdmin': 'Hanya super admin boleh membuka senarai pengguna.',
-  'settings.back': '‹ Kembali ke akaun',
   'settings.emailFromMember': 'E-mel log masuk (daripada profil ahli)',
   'settings.hallHint': '💡 Apabila terhad kepada satu kongregasi, akaun ini hanya dapat melihat dan mengurus ahli, kumpulan, perjumpaan dan latihan kongregasi tersebut. “Semua kongregasi” bermakna tanpa had.',
   'settings.accountStatus': 'Status akaun',

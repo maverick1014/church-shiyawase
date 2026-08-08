@@ -6,7 +6,7 @@ import { useFetch } from '@/lib/hooks';
 import { useSortableRows } from '@/lib/sort';
 import { api } from '@/lib/api';
 import { usePageChrome, useMe } from '@/components/AppShell';
-import { Avatar, EntityHeader, ErrorBanner, Field, HallSelect, Loading, Modal, ProgressBar, RoleBadge, SortTh, useConfirm, useToast } from '@/components/ui';
+import { Avatar, BackButton, EntityHeader, ErrorBanner, Field, HallSelect, Loading, Modal, ProgressBar, RoleBadge, SortTh, useConfirm, useToast } from '@/components/ui';
 import { PairProgressModal } from '@/components/PairProgressModal';
 import { can } from '@/lib/perms';
 import { EnrollmentRow, GroupDetail, GroupRow, MemberRow, PairRow } from '@/lib/types';
@@ -109,9 +109,7 @@ export default function MemberDetailPage() {
 
   return (
     <>
-      <button className="back-btn" onClick={() => router.push('/members')}>
-        {tr('member.back')}
-      </button>
+      <BackButton onClick={() => router.push('/members')} />
 
       <div className="card">
         <EntityHeader

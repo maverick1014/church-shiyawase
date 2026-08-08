@@ -218,6 +218,15 @@ export function ChevronRightIcon({ size = 18 }: { size?: number }) {
   );
 }
 
+export function ChevronLeftIcon({ size = 18 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M15 6l-6 6 6 6" />
+    </svg>
+  );
+}
+
 export function DownloadIcon({ size = 17 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -268,6 +277,23 @@ export function ExportButton({
   return (
     <button className="btn ghost" onClick={onClick} disabled={disabled} title={label} aria-label={label}>
       <DownloadIcon />
+    </button>
+  );
+}
+
+/**
+ * The one way back out of a detail page. Every page said something different
+ * ("‹ Back to catalog", "‹ Back to accounts"…) at a non-standard height, in
+ * the right corner. It is one control now: a chevron, the word "Back", the
+ * shared `--control-h` like every other button, on the left where a back
+ * affordance belongs.
+ */
+export function BackButton({ onClick }: { onClick: () => void }) {
+  const t = useT();
+  return (
+    <button className="btn ghost back-btn" onClick={onClick}>
+      <ChevronLeftIcon size={16} />
+      {t('common.back')}
     </button>
   );
 }

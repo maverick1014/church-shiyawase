@@ -6,7 +6,7 @@ import { useFetch } from '@/lib/hooks';
 import { useSortableRows } from '@/lib/sort';
 import { api } from '@/lib/api';
 import { usePageChrome, useMe } from '@/components/AppShell';
-import { ErrorBanner, ExportButton, Field, HallSelect, Loading, RoleBadge, SortTh, TagsInput, useConfirm, useToast } from '@/components/ui';
+import { BackButton, ErrorBanner, ExportButton, Field, HallSelect, Loading, RoleBadge, SortTh, TagsInput, useConfirm, useToast } from '@/components/ui';
 import { can } from '@/lib/perms';
 import { exportMatrix } from '@/lib/export';
 import { GroupAttendanceResponse, GroupDetail, GroupRow, MemberRow } from '@/lib/types';
@@ -53,9 +53,7 @@ export default function GroupDetailPage() {
 
   return (
     <>
-      <button className="back-btn" onClick={() => router.push('/groups')}>
-        {t('group.back')}
-      </button>
+      <BackButton onClick={() => router.push('/groups')} />
 
       <GroupPanel
         group={detail.data}

@@ -554,7 +554,7 @@ function DiscList({
             className="flex items-center gap-12"
             style={{ padding: '11px 4px', borderBottom: '1px solid var(--border)', cursor: 'pointer' }}
           >
-            <div className="grow" style={{ minWidth: 0 }}>
+            <div className="grow">
               <div className="flex items-center gap-8 flex-wrap">
                 <strong style={{ fontSize: 13.5 }}>{n.pair.trainee?.full_name}</strong>
                 <span className="badge" style={{ ...roleTagStyle(role), fontSize: 10.5 }}>{t(roleKey(role))}</span>

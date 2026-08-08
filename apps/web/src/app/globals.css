@@ -715,6 +715,23 @@ th.sortable:hover {
   font-weight: 400;
   cursor: default;
 }
+/* Anchoring right:0 to the trigger only works while the trigger is near the
+   right edge. It isn't — it sits to the left of the page's buttons, so a
+   340px panel hanging leftward from it started at roughly -145px and the
+   text was cut off by the screen. On a phone there is no width to anchor
+   into, so stop anchoring: pin it to the viewport instead, where it is
+   always fully visible whatever it is attached to. */
+@media (max-width: 640px) {
+  .info-pop-body {
+    position: fixed;
+    top: 50%;
+    left: 12px;
+    right: 12px;
+    width: auto;
+    max-height: 70vh;
+    transform: translateY(-50%);
+  }
+}
 
 /* The one bar at the top of a list page: filters on the left, the page's own
    action buttons on the right. Every page uses this same row, so the top of
@@ -778,6 +795,30 @@ th.sortable:hover {
   .page-bar-actions {
     margin-left: 0;
   }
+}
+
+/* A list row's trailing action group. Content-sized and allowed to wrap by
+   default; the fixed width that keeps desktop rows aligned applies only where
+   there is room for it. A flex-shrink:0 fixed width narrower than its own
+   contents is how a single row ends up wider than the phone it is on. */
+.row-actions {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+@media (min-width: 641px) {
+  .row-actions {
+    width: 172px;
+    flex-shrink: 0;
+    flex-wrap: nowrap;
+  }
+}
+
+/* Grid and flex children default to min-width:auto, so one wide child does not
+   shrink — it widens its track and pushes the whole page into a sideways
+   scroll. Nothing in this app wants that: wide content scrolls inside its own
+   .table-wrap instead. */
+.grid > * {
+  min-width: 0;
 }
 
 /* The detail-page header (EntityHeader). The identity column keeps a real
@@ -1270,8 +1311,13 @@ textarea {
 .mb-16 {
   margin-bottom: 16px;
 }
+/* The flexible column in a row. min-width:0 is part of the job: without it a
+   flex child refuses to shrink below its longest word, so a long email or name
+   widens the row instead of truncating. Six of the nine call sites were
+   missing the inline override that the other three carried. */
 .grow {
   flex: 1;
+  min-width: 0;
 }
 
 /* Page-level empty state — a standalone panel where content would have been. */
@@ -1309,19 +1355,12 @@ td.empty-inline {
   font-size: 13px;
 }
 
+/* Geometry only — `.btn ghost` supplies the look and the shared --control-h,
+   so back never drifts to its own height again. Left-aligned: a back
+   affordance belongs where reading starts. */
 .back-btn {
-  background: transparent;
-  color: var(--muted);
-  border: 1px solid var(--border);
-  padding: 6px 12px;
-  border-radius: 8px;
-  font-size: 12px;
-  font-weight: 600;
   margin-bottom: 14px;
-  /* Sits at the right edge of its row rather than the left. */
-  display: block;
-  width: fit-content;
-  margin-left: auto;
+  padding-left: 11px;
 }
 
 /* ==========================================================================

@@ -100,7 +100,6 @@ export const zh: Messages = {
 
   /* ---- member detail --------------------------------------------------- */
   'member.title': '成员详情',
-  'member.back': '‹ 返回成员管理',
   'member.editProfile': '编辑资料',
   'member.uploadAvatar': '上传照片',
   'member.changeAvatar': '更换照片',
@@ -164,7 +163,6 @@ export const zh: Messages = {
 
   /* ---- group detail ---------------------------------------------------- */
   'group.title': '小组详情',
-  'group.back': '‹ 返回小组管理',
   'group.info': '小组资料 · 领袖',
   'group.triangle': '铁三角',
   'group.triangleSub': '· 领袖团队',
@@ -238,7 +236,6 @@ export const zh: Messages = {
   /* ---- recurring events ------------------------------------------------ */
   'recurring.title': '循环聚会',
   'recurring.add': '＋ 新增循环',
-  'recurring.back': '‹ 返回聚会与点名',
   'recurring.hint': '💡 系统会自动把未来「提前天数」内的聚会排好（默认 35 天，约一个月）。若删除其中一场（例如公共假期），它不会再被生成；更改星期或时间只影响之后新排的聚会。',
   'recurring.col.name': '名称',
   'recurring.col.type': '类型',
@@ -346,7 +343,6 @@ export const zh: Messages = {
 
   /* ---- training detail ------------------------------------------------- */
   'training.title': '课程详情',
-  'training.back': '‹ 返回课程目录',
   'training.enrollLink': '🔗 报名链接',
   'training.enrollLinkTitle': '复制自助报名链接以分享',
   'training.editCourse': '编辑课程',
@@ -438,7 +434,6 @@ export const zh: Messages = {
   'settings.manageAccount': '管理账户',
   'settings.neverSignedIn': '从未登录',
   'settings.onlySuperAdmin': '只有超级管理员可以打开用户管理。',
-  'settings.back': '‹ 返回用户管理',
   'settings.emailFromMember': '登录邮箱（取自成员资料）',
   'settings.hallHint': '💡 限定堂会后，该账户只能查看和管理所属堂会的成员、小组、聚会与培训。「全部堂会」则不受限制。',
   'settings.accountStatus': '账户状态',

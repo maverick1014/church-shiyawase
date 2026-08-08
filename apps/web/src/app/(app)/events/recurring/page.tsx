@@ -7,6 +7,7 @@ import { useSortableRows } from '@/lib/sort';
 import { api } from '@/lib/api';
 import { usePageChrome, useMe, useHallScope } from '@/components/AppShell';
 import {
+  BackButton,
   ChevronRightIcon,
   ErrorBanner,
   Field,
@@ -132,7 +133,7 @@ export default function RecurringEventsPage() {
 
   return (
     <>
-      <button className="back-btn" onClick={() => router.push('/events')}>{t('recurring.back')}</button>
+      <BackButton onClick={() => router.push('/events')} />
 
       <ErrorBanner message={rules.error} />
 

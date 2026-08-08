@@ -434,6 +434,38 @@ async function main() {
       missingDrawerHall.length === 0,
       expectSwitcher ? missingDrawerHall.join(', ') || 'present on every page' : 'single congregation — n/a');
 
+    /* -- nothing scrolls sideways on a phone ------------------------------ */
+    // A single fixed-width, non-shrinking child is enough to make a whole page
+    // wider than the phone it is on — the training detail page did exactly
+    // that and every button along its right edge was cut off. ui-e2e was green
+    // throughout, because it only ever asked whether elements existed.
+    mod('no horizontal overflow at phone width');
+    const DETAIL_PAGES = [...LIST_PAGES, '/events/recurring'];
+    const overflowing = [];
+    for (const path of DETAIL_PAGES) {
+      await page.goto(`${BASE}${path}`, { waitUntil: 'domcontentloaded' });
+      await page.locator('h1').first().waitFor({ timeout: 20000 });
+      await w(700); // let the lists paint before measuring
+      const over = await page.evaluate(
+        () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      );
+      if (over > 1) overflowing.push(`${path} (+${over}px)`);
+    }
+    // …and the two detail pages whose rows carry the most controls.
+    for (const [listPath, tile] of [['/trainings', '.card h3'], ['/groups', '.mtile']]) {
+      await page.goto(`${BASE}${listPath}`, { waitUntil: 'domcontentloaded' });
+      await page.locator(tile).first().waitFor({ timeout: 20000 }).catch(() => {});
+      await page.locator(tile).first().click().catch(() => {});
+      await page.waitForURL(/\/(trainings|groups)\/[0-9a-f-]+/, { timeout: 15000 }).catch(() => {});
+      await w(1200);
+      const over = await page.evaluate(
+        () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      );
+      if (over > 1) overflowing.push(`${page.url().replace(BASE, '')} (+${over}px)`);
+    }
+    check('no page is wider than the phone viewport',
+      overflowing.length === 0, overflowing.join(', ') || `${DETAIL_PAGES.length + 2} pages fit`);
+
     /* -- interface language ----------------------------------------------- */
     mod('interface language');
     // The language is a per-account setting, so switch this account's own and

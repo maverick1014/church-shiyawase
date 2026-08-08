@@ -101,7 +101,6 @@ export const en = {
 
   /* ---- member detail --------------------------------------------------- */
   'member.title': 'Member detail',
-  'member.back': '‹ Back to members',
   'member.editProfile': 'Edit profile',
   'member.uploadAvatar': 'Upload photo',
   'member.changeAvatar': 'Change photo',
@@ -165,7 +164,6 @@ export const en = {
 
   /* ---- group detail ---------------------------------------------------- */
   'group.title': 'Group detail',
-  'group.back': '‹ Back to groups',
   'group.info': 'Group profile · Leadership',
   'group.triangle': 'Leadership trio',
   'group.triangleSub': '· leadership team',
@@ -239,7 +237,6 @@ export const en = {
   /* ---- recurring events ------------------------------------------------ */
   'recurring.title': 'Recurring events',
   'recurring.add': '＋ Add recurrence',
-  'recurring.back': '‹ Back to events',
   'recurring.hint': '💡 Events are scheduled automatically for the next “lookahead” days (35 by default, about a month). If you delete one occurrence (a public holiday, say) it will not come back, and changing the weekday or time only affects newly scheduled ones.',
   'recurring.col.name': 'Name',
   'recurring.col.type': 'Type',
@@ -347,7 +344,6 @@ export const en = {
 
   /* ---- training detail ------------------------------------------------- */
   'training.title': 'Training detail',
-  'training.back': '‹ Back to catalog',
   'training.enrollLink': '🔗 Enrolment link',
   'training.enrollLinkTitle': 'Copy the self-enrolment link to share',
   'training.editCourse': 'Edit course',
@@ -439,7 +435,6 @@ export const en = {
   'settings.manageAccount': 'Manage account',
   'settings.neverSignedIn': 'Never signed in',
   'settings.onlySuperAdmin': 'Only a super admin can open the user list.',
-  'settings.back': '‹ Back to accounts',
   'settings.emailFromMember': 'Login email (from the member profile)',
   'settings.hallHint': '💡 Scoped to a congregation, this account can only see and manage that congregation’s members, groups, events and trainings. “All congregations” is unrestricted.',
   'settings.accountStatus': 'Account status',

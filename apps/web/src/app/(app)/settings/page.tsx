@@ -8,6 +8,7 @@ import { api } from '@/lib/api';
 import { usePageChrome, useMe } from '@/components/AppShell';
 import {
   Avatar,
+  BackButton,
   ChevronRightIcon,
   EntityHeader,
   ErrorBanner,
@@ -130,9 +131,11 @@ export default function SettingsPage() {
     <>
       <ErrorBanner message={accounts.error} />
 
-      {/* The permission matrix is reference material, so it rides in the action
-          row behind an icon rather than pushing the account list down. There is
-          no search box: with a handful of accounts it would be furniture. */}
+      {/* Two controls only: the permission matrix behind an info icon (reference
+          material, so it must not push the account list down) and the one thing
+          this page creates. "Change my password" used to sit here too, which
+          wrapped the row onto two lines on a phone — and it was a duplicate:
+          the shell's account menu has had it all along. */}
       <PageBar
         actions={
           <>
@@ -149,9 +152,6 @@ export default function SettingsPage() {
                 </div>
               ))}
             </InfoPopover>
-            <button className="btn ghost" onClick={() => setMyPwOpen(true)}>
-              {t('settings.changeMyPassword')}
-            </button>
             <button className="btn" onClick={() => setAddOpen(true)}>{t('settings.add')}</button>
           </>
         }
@@ -353,7 +353,7 @@ function AccountDetail({
 
   return (
     <div style={{ maxWidth: 720 }}>
-      <button className="back-btn" onClick={onBack}>{t('settings.back')}</button>
+      <BackButton onClick={onBack} />
       {err && <ErrorBanner message={err} />}
 
       <div className="card">
