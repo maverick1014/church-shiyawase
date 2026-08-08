@@ -24,6 +24,7 @@ import { can } from '@/lib/perms';
 import { exportRows } from '@/lib/export';
 import { GroupRow, MemberRow } from '@/lib/types';
 import {
+  formatMeetingTime,
   groupHealthClass,
   groupHealthKey,
   groupHealthStatus,
@@ -39,8 +40,11 @@ export default function GroupsPage() {
   const t = useT();
   const toast = useToast();
   const perms = can(useMe().role);
-  // Only worth a column when the account can actually see more than one hall.
-  const { locked: hallLocked } = useHallScope();
+  // Only worth a column when the rows can actually differ: an account pinned to
+  // one hall, or a view narrowed to one hall with the switcher, would see the
+  // same value repeated on every row.
+  const { locked: hallLocked, hallId } = useHallScope();
+  const showHall = !hallLocked && !hallId;
   const groups = useFetch<GroupRow[]>('/groups');
   const members = useFetch<MemberRow[]>('/members');
   const [addOpen, setAddOpen] = useState(false);
@@ -66,7 +70,13 @@ export default function GroupsPage() {
         hallName: g.hall?.name ?? null,
         tags: g.tags ?? [],
         meetingDay: g.meeting_day,
+        // `schedule` stays the one-line summary used by search, export and the
+        // mobile tiles; the desktop cell splits it over two lines.
         schedule: meetingSchedule(g, t),
+        scheduleDayTime: [g.meeting_day ? t(weekdayKey(g.meeting_day)) : '', formatMeetingTime(g.meeting_time)]
+          .filter(Boolean)
+          .join(' '),
+        scheduleLocation: g.location ?? '',
         leaderName: leader?.full_name ?? null,
         memberCount: inGroup.length,
         newMemberCount,
@@ -104,7 +114,10 @@ export default function GroupsPage() {
         case 'new':
           return g.newMemberCount;
         case 'hall':
-          return g.hallName ?? undefined;
+          // The column can disappear (single-hall view) while it is the active
+          // sort key — fall back to the default so rows are never ordered by
+          // something the user can no longer see.
+          return showHall ? g.hallName ?? undefined : g.name;
         case 'status':
           return (['splittable', 'need_members', 'balanced'] as const).indexOf(g.status);
         default:
@@ -174,10 +187,10 @@ export default function GroupsPage() {
           <table className="table-fixed">
             <thead>
               <tr>
-                {/* Name / leader / schedule share the width equally; member
-                    count, new-member count and status stay narrow. */}
+                {/* Columns size to their own content (G7a). The congregation
+                    column only appears when more than one hall is in view. */}
                 <SortTh sortKey="name" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('groups.col.name')}</SortTh>
-                {!hallLocked && (
+                {showHall && (
                   <SortTh sortKey="hall" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('hall.label')}</SortTh>
                 )}
                 <SortTh sortKey="leader" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('groups.col.leader')}</SortTh>
@@ -185,6 +198,7 @@ export default function GroupsPage() {
                 <SortTh sortKey="new" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('groups.col.newCount')}</SortTh>
                 <SortTh sortKey="status" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('groups.col.status')}</SortTh>
                 <th>{t('groups.col.schedule')}</th>
+                <th>{t('groups.field.tags')}</th>
                 <th />
               </tr>
             </thead>
@@ -193,17 +207,8 @@ export default function GroupsPage() {
                 <tr key={g.id}>
                   <td>
                     <strong>{g.name}</strong>
-                    {g.tags.length > 0 && (
-                      <div className="flex gap-4 flex-wrap" style={{ marginTop: 4 }}>
-                        {g.tags.map((tag) => (
-                          <span key={tag} className="chip on" style={{ padding: '2px 8px', fontSize: 11, cursor: 'default' }}>
-                            {tag}
-                          </span>
-                        ))}
-                      </div>
-                    )}
                   </td>
-                  {!hallLocked && <td className="muted">{g.hallName ?? '—'}</td>}
+                  {showHall && <td className="muted">{g.hallName ?? '—'}</td>}
                   <td>
                     {g.leaderName ? <strong>{g.leaderName}</strong> : <span className="faint">{t('common.vacant')}</span>}
                   </td>
@@ -212,7 +217,31 @@ export default function GroupsPage() {
                   <td>
                     <span className={`badge ${groupHealthClass(g.status)}`}>{t(groupHealthKey(g.status))}</span>
                   </td>
-                  <td className="muted">{g.schedule || '—'}</td>
+                  <td className="muted">
+                    {g.scheduleDayTime || g.scheduleLocation ? (
+                      <>
+                        {g.scheduleDayTime && <div>{g.scheduleDayTime}</div>}
+                        {g.scheduleLocation && (
+                          <div className="faint" style={{ fontSize: 12.5 }}>{g.scheduleLocation}</div>
+                        )}
+                      </>
+                    ) : (
+                      '—'
+                    )}
+                  </td>
+                  <td>
+                    {g.tags.length > 0 ? (
+                      <div className="flex gap-4 flex-wrap">
+                        {g.tags.map((tag) => (
+                          <span key={tag} className="chip on" style={{ padding: '2px 8px', fontSize: 11, cursor: 'default' }}>
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="muted">—</span>
+                    )}
+                  </td>
                   <td style={{ textAlign: 'right' }}>
                     <RowChevron title={t('groups.viewDetail')} onClick={() => router.push(`/groups/${g.id}`)} />
                   </td>
@@ -220,7 +249,7 @@ export default function GroupsPage() {
               ))}
               {sorted.length === 0 && (
                 <tr>
-                  <td colSpan={hallLocked ? 7 : 8} className="empty-inline">
+                  <td colSpan={showHall ? 9 : 8} className="empty-inline">
                     {q.trim() || tagFilter !== 'all' || weekdayFilter !== 'all'
                       ? t('groups.empty')
                       : t('groups.emptyNew')}

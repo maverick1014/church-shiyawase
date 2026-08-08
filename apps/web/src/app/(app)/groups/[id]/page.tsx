@@ -255,7 +255,12 @@ function GroupPanel({
   return (
     <>
       {err && <ErrorBanner message={err} />}
-      <div className="grid" style={{ gridTemplateColumns: '360px 1fr', gap: 16, alignItems: 'start' }} data-glayout>
+
+      {/* Roll-call first: once a group is set up, marking attendance is what
+          leaders open this page for. Profile + roster follow below. */}
+      <WeeklyAttendance groupId={group.id} />
+
+      <div className="grid mt-16" style={{ gridTemplateColumns: '360px 1fr', gap: 16, alignItems: 'start' }} data-glayout>
         {/* Left — group info + leadership trio */}
         <div className="card">
           <div className="card-head">
@@ -389,8 +394,6 @@ function GroupPanel({
           </div>
         </div>
       </div>
-
-      <WeeklyAttendance groupId={group.id} />
     </>
   );
 }
@@ -524,7 +527,7 @@ function WeeklyAttendance({ groupId }: { groupId: string }) {
   };
 
   return (
-    <div className="card mt-16">
+    <div className="card">
       <div className="card-head">
         <div>
           <h3>{t('group.weekly')}</h3>
