@@ -481,16 +481,6 @@ export function DownloadIcon({ size = 17 }: { size?: number }) {
   );
 }
 
-export function InfoIcon({ size = 17 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
-      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <circle cx="12" cy="12" r="9" />
-      <path d="M12 11v5M12 7.6v.2" />
-    </svg>
-  );
-}
-
 /**
  * The one "open this row" affordance — used by every list, in both the desktop
  * table and the mobile tile, so the control never differs between them.
@@ -648,60 +638,6 @@ export function FactGrid({
         </div>
       ))}
     </div>
-  );
-}
-
-/**
- * Reference material that would otherwise push the real content down the page
- * (e.g. the permission matrix in 用户管理). Opens on hover and on click, so it
- * works on both a desktop pointer and a touch screen.
- */
-export function InfoPopover({ label, children }: { label: string; children: ReactNode }) {
-  // Hover and click are tracked separately on purpose. A single toggled flag
-  // breaks on a pointer device: hovering opens it, and the click that follows
-  // immediately closes it again. Clicking instead *pins* it open, so it
-  // survives the pointer leaving — and it still works on touch, where there
-  // is no hover at all.
-  const [pinned, setPinned] = useState(false);
-  const [hovered, setHovered] = useState(false);
-  const open = pinned || hovered;
-  const ref = useRef<HTMLSpanElement>(null);
-
-  useEffect(() => {
-    if (!pinned) return;
-    const onDocDown = (e: MouseEvent) => {
-      if (!ref.current?.contains(e.target as Node)) setPinned(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setPinned(false);
-    };
-    document.addEventListener('mousedown', onDocDown);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousedown', onDocDown);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [pinned]);
-
-  return (
-    <span
-      ref={ref}
-      className="info-pop"
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-    >
-      <button
-        type="button"
-        className="info-pop-trigger"
-        aria-label={label}
-        title={label}
-        aria-expanded={open}
-        onClick={() => setPinned((p) => !p)}
-      >
-        <InfoIcon />
-      </button>
-      {open && <span className="info-pop-body">{children}</span>}
-    </span>
   );
 }
 
