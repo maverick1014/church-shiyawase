@@ -244,6 +244,37 @@ async function main() {
     };
   };
 
+  /**
+   * A hard exit runs no `finally`. An uncaught exception, an unhandled
+   * rejection or a CI timeout therefore skips BOTH the per-module cleanup and
+   * the sweep at the end of main(), and the fixtures stay in the church's live
+   * database — which is not hypothetical: one crashed run left a group, an
+   * event, a recurring rule, a course, a pair and four members behind, and
+   * they had to be deleted by hand.
+   *
+   * So sweep on the way out as well. Registered here, right after `disposable`,
+   * because from this point on the script can create rows.
+   */
+  const sweep = async (why, stream = console.log) => {
+    for (const f of leftovers.slice().reverse()) {
+      const gone = await apiDelete(f.path);
+      stream(`  ↳ ${why}: ${gone ? 'deleted' : 'COULD NOT DELETE'} leftover ${f.label} (${f.path})`);
+    }
+  };
+  const dieCleanly = async (why, err) => {
+    if (err) console.error(`UI E2E ${why}:`, err);
+    if (leftovers.length) {
+      console.error(`\n${leftovers.length} fixture(s) still live after ${why} — removing them.`);
+      await sweep(why, console.error).catch(() => {});
+    }
+    process.exit(1);
+  };
+  process.on('uncaughtException', (e) => void dieCleanly('uncaught exception', e));
+  process.on('unhandledRejection', (e) => void dieCleanly('unhandled rejection', e));
+  for (const sig of ['SIGINT', 'SIGTERM']) {
+    process.on(sig, () => void dieCleanly(sig));
+  }
+
   // Members and groups carry a NOT NULL hall. A hall-scoped account would have
   // one forced on server-side, but this login is 全堂权限, so it must name one.
   let hallIdCache;
@@ -997,10 +1028,7 @@ async function main() {
     // `finally`, so this only ever fires when a module died before it could —
     // and it must, because this is the church's live database. Newest first, so
     // a group outlives the member that sits on its roster.
-    for (const f of leftovers.slice().reverse()) {
-      const gone = await apiDelete(f.path);
-      console.log(`  ↳ cleanup: ${gone ? 'deleted' : 'COULD NOT DELETE'} leftover ${f.label} (${f.path})`);
-    }
+    await sweep('cleanup');
     leftovers.length = 0;
     // API-fallback cleanup: if the throwaway member survived, delete it.
     if (createdMemberId) {
