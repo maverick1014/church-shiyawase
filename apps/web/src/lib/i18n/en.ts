@@ -46,8 +46,7 @@ export const en = {
   'nav.discipleship': 'Forty Days',
   'nav.settings': 'Users',
   'nav.menu': 'Menu',
-  'nav.accountMenu': 'Account menu',
-  'nav.changePassword': 'Change my password',
+  'nav.myProfile': 'My profile',
   'nav.logout': 'Sign out',
   'nav.logout.confirmTitle': 'Sign out',
   'nav.logout.confirmMessage': 'Sign out of the current account?',
@@ -424,7 +423,6 @@ export const en = {
   /* ---- settings -------------------------------------------------------- */
   'settings.title': 'Users',
   'settings.add': '＋ New account',
-  'settings.changeMyPassword': 'Change my password',
   'settings.col.account': 'Account · linked member',
   'settings.col.churchRole': 'Church role',
   'settings.col.accountRole': 'Permission role',
@@ -433,8 +431,9 @@ export const en = {
   'settings.empty': 'No accounts yet.',
   'settings.manageAccount': 'Manage account',
   'settings.neverSignedIn': 'Never signed in',
-  'settings.onlySuperAdmin': 'Only a super admin can open the user list.',
-  'settings.emailFromMember': 'Login email (from the member profile)',
+  'settings.emailFromMember': 'Login email (saved to the member profile)',
+  'settings.emailHint': '💡 The login email lives on the member profile — set it here and both are updated, so a member with no email can still be given an account.',
+  'settings.err.email': 'Please enter a login email',
   'settings.hallHint': '💡 Scoped to a congregation, this account can only see and manage that congregation’s members, groups, events and trainings. “All congregations” is unrestricted.',
   'settings.accountStatus': 'Account status',
   'settings.resetPassword': 'Reset this account’s password',
@@ -455,10 +454,9 @@ export const en = {
   'settings.delete.title': 'Delete login account',
   'settings.saveAccount': 'Save account settings',
   'settings.new.title': 'New account',
-  'settings.new.intro': 'A login account must be linked to a member; the login email comes from that member’s profile.',
+  'settings.new.intro': 'A login account must be linked to a member. The login email is saved onto that member’s profile, so a member with no email yet can be given one right here.',
   'settings.linkMember': 'Linked member (members with an account are hidden)',
   'settings.chooseMember': 'Choose a member…',
-  'settings.noEmailWarning': '⚠️ This member has no email yet. Add one in Members first, then create the login account.',
   'settings.initialPassword': 'Initial password',
   'settings.initialPasswordHint': 'At least 8 characters — the user can change it later',
   'settings.create': 'Create account',
@@ -477,6 +475,26 @@ export const en = {
   'settings.toast.passwordResetFor': 'Password reset for {name}',
   'settings.err.member': 'Please choose a member',
   'settings.err.password': 'Set an initial password of at least 8 characters',
+
+  /* ---- my profile ------------------------------------------------------
+   * Open to every signed-in role, read-only accounts included — but only for
+   * their OWN record. Permission role / congregation / account status are
+   * shown here and refused by the server if sent back (rule G2).
+   * -------------------------------------------------------------------- */
+  'profile.title': 'My profile',
+  'profile.edit': 'Edit my details',
+  'profile.edit.title': 'Edit my details',
+  'profile.signedInAs': 'Signed in as {email}',
+  'profile.myDetails': 'My details',
+  'profile.account': 'My account',
+  'profile.field.loginEmail': 'Email · also my sign-in name',
+  'profile.field.lastLogin': 'Last sign-in',
+  'profile.emailHint': '💡 This email is what you sign in with. Changing it updates your member profile and your login together.',
+  'profile.adminHint': '💡 Your permission role, congregation and account status are set by an administrator — ask one if they need to change.',
+  'profile.err.email': 'Please enter your email — it is also your sign-in name',
+  'profile.toast.saved': 'Your details are saved',
+  'profile.notFound': 'Your profile could not be loaded.',
+  'profile.noMember': 'This login is not linked to a member profile yet — ask an administrator to link one.',
 
   /* ---- change password ------------------------------------------------- */
   'password.title': 'Change my password',

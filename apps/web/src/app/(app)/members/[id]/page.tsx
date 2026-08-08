@@ -6,7 +6,7 @@ import { useFetch } from '@/lib/hooks';
 import { useSortableRows } from '@/lib/sort';
 import { api } from '@/lib/api';
 import { usePageChrome, useMe } from '@/components/AppShell';
-import { Avatar, BackButton, EntityHeader, ErrorBanner, Field, HallSelect, Loading, Modal, ProgressBar, RoleBadge, SortTh, useConfirm, useToast } from '@/components/ui';
+import { Avatar, BackButton, EntityHeader, ErrorBanner, FactGrid, Field, HallSelect, Loading, Modal, ProgressBar, RoleBadge, SortTh, useConfirm, useToast } from '@/components/ui';
 import { PairProgressModal } from '@/components/PairProgressModal';
 import { can } from '@/lib/perms';
 import { EnrollmentRow, GroupDetail, GroupRow, MemberRow, PairRow } from '@/lib/types';
@@ -97,14 +97,14 @@ export default function MemberDetailPage() {
   );
 
   const facts = [
-    { k: tr('members.field.email'), v: m.email ?? '—' },
-    { k: tr('members.field.phone'), v: m.phone ?? '—' },
-    { k: tr('member.field.gender'), v: m.gender ? tr(genderKey(m.gender)) : '—' },
-    { k: tr('members.col.group'), v: m.group?.name ?? tr('members.filter.ungrouped') },
-    { k: tr('members.col.status'), v: tr(memberStatusKey(m.status)) },
-    { k: tr('member.field.joined'), v: formatDate(m.joined_at) },
-    { k: tr('member.field.birthday'), v: formatDate(m.date_of_birth) },
-    { k: tr('member.field.household'), v: m.household?.name ?? '—' },
+    { label: tr('members.field.email'), value: m.email ?? '—' },
+    { label: tr('members.field.phone'), value: m.phone ?? '—' },
+    { label: tr('member.field.gender'), value: m.gender ? tr(genderKey(m.gender)) : '—' },
+    { label: tr('members.col.group'), value: m.group?.name ?? tr('members.filter.ungrouped') },
+    { label: tr('members.col.status'), value: tr(memberStatusKey(m.status)) },
+    { label: tr('member.field.joined'), value: formatDate(m.joined_at) },
+    { label: tr('member.field.birthday'), value: formatDate(m.date_of_birth) },
+    { label: tr('member.field.household'), value: m.household?.name ?? '—' },
   ];
 
   return (
@@ -177,14 +177,7 @@ export default function MemberDetailPage() {
           }
         />
 
-        <div className="grid g4" style={{ marginTop: 18 }}>
-          {facts.map((f) => (
-            <div key={f.k} style={{ background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 10, padding: '12px 14px' }}>
-              <div className="muted" style={{ fontSize: 11.5 }}>{f.k}</div>
-              <div style={{ fontSize: 14, fontWeight: 600, marginTop: 3 }}>{f.v}</div>
-            </div>
-          ))}
-        </div>
+        <FactGrid facts={facts} style={{ marginTop: 18 }} />
 
         <div className="section-label" style={{ margin: '24px 0 12px' }}>{tr('member.trainingRecord')}</div>
         <div className="table-wrap">

@@ -369,7 +369,39 @@ async function main() {
     await page.locator('.mtile').first().click();
     await page.locator('button:has-text("Save account settings")').waitFor({ timeout: 10000 });
     check('an account detail page opens', true);
+    // The login email is editable here now: it is stored on the linked member
+    // and mirrored onto the account, which is what lets a member with no email
+    // be given a login without a detour to the member page.
+    check('the account detail exposes an editable login email',
+      (await page.locator('.card input[type=email]:not([disabled])').count()) > 0);
     await shot('08-settings');
+
+    /* -- my profile ------------------------------------------------------- */
+    // The account block at the foot of the sidebar is a link straight to this
+    // page, with sign-out as its own item underneath — it used to be a toggle
+    // that popped a menu, so both destinations were a tap away from nowhere.
+    mod('my profile');
+    const navText = await page.locator('.sidebar').innerText();
+    check('the sidebar offers My profile and Sign out without a pop-up menu',
+      navText.includes('My profile') && navText.includes('Sign out')
+        && (await page.locator('.nav-user-menu').count()) === 0);
+    check('the account block links to the profile page',
+      (await page.locator('.sidebar a.nav-user').getAttribute('href')) === '/profile');
+    await page.locator('.hamburger').click();
+    await page.locator('.sidebar a.nav-user').click();
+    await page.locator('h1:has-text("My profile")').waitFor({ timeout: 20000 });
+    const profileBody = await page.locator('.content').innerText();
+    check('the profile page shows my own account facts',
+      profileBody.includes('Permission role') && profileBody.includes('Congregation'));
+    await page.locator('button:has-text("Edit my details")').first().click();
+    await page.locator('.modal').waitFor({ timeout: 8000 });
+    check('the profile edit form offers the member fields, email included',
+      (await page.locator('.modal input[type=email]').count()) > 0);
+    await page.locator('.modal button:has-text("Cancel")').first().click();
+    await w(300);
+    check('cancelling the profile edit closes the dialog',
+      (await page.locator('.modal').count()) === 0);
+    await shot('08b-profile');
 
     /* -- chrome layout is the same on every list page --------------------- */
     // The bug this guards: the congregation switcher used to sit in the same

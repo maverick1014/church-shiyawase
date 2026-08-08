@@ -225,33 +225,9 @@ button {
   font-size: 11px;
   font-weight: 400;
 }
-.nav-user-menu {
-  position: absolute;
-  bottom: calc(100% + 6px);
-  left: 8px;
-  right: 8px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.28);
-  padding: 6px;
-  z-index: 20;
-}
-.nav-user-menu button {
-  display: block;
-  width: 100%;
-  text-align: left;
-  background: transparent;
-  border: none;
-  padding: 9px 11px;
-  border-radius: 7px;
-  font-size: 13px;
-  color: var(--ink);
-  cursor: pointer;
-}
-.nav-user-menu button:hover {
-  background: var(--surface-2);
-}
+/* The account block used to toggle a .nav-user-menu popover holding "change my
+   password" and "sign out". It is a plain link to /profile now, with sign-out
+   as its own .nav-link directly beneath it, so that popover is gone. */
 
 .main {
   flex: 1;

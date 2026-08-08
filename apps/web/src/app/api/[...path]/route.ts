@@ -1074,7 +1074,10 @@ async function authRoute(
   if (p[1] === 'logout' && method === 'POST') {
     return new Response(null, { status: 204, headers: { 'set-cookie': clearCookie() } });
   }
-  if (p[1] === 'me' && method === 'GET') {
+  // Self-service profile — the one write path every signed-in account has to
+  // its OWN record (a read-only account included). See selfProfileRoute.
+  if (p[1] === 'me' && p[2] === 'profile' && !p[3]) return selfProfileRoute(method, req, db);
+  if (p[1] === 'me' && !p[2] && method === 'GET') {
     const s = await getSession(req);
     if (!s) throw new HttpError(401, 'Not signed in');
     // The interface language is read live rather than baked into the session
@@ -1117,6 +1120,136 @@ async function authRoute(
   throw new HttpError(404, `No auth route for ${method} /api/${p.join('/')}`);
 }
 
+// --- Self-service profile (/auth/me/profile) --------------------------------
+
+/**
+ * The ONLY fields a signed-in account may write on its own records, split by
+ * the table they land in. Everything else is refused — see selfProfileRoute.
+ *
+ * `account_role`, `hall_id` and `status` are deliberately absent, and so is
+ * every other `app_users` column: the list is an allow-list, so a column added
+ * to the table later stays unwritable until someone puts it here on purpose.
+ */
+const SELF_MEMBER_FIELDS = [
+  'full_name',
+  'chinese_name',
+  'email',
+  'phone',
+  'gender',
+  'date_of_birth',
+] as const;
+const SELF_ACCOUNT_FIELDS = ['language'] as const;
+
+/** The signed-in account plus its linked member — always read by account id. */
+async function readSelfProfile(db: ReturnType<typeof getDb>, accountId: string) {
+  const account = unwrap<Record<string, unknown> & { member_id: string | null }>(
+    await db
+      .from('app_users')
+      .select(
+        'id,member_id,email,account_role,hall_id,status,language,last_sign_in_at, hall:halls(id,name)',
+      )
+      .eq('id', accountId)
+      .single(),
+  );
+  const member = account.member_id
+    ? unwrap(await db.from('members').select(MEMBER_SELECT).eq('id', account.member_id).single())
+    : null;
+  return { ...account, language: normalizeLanguage(account.language as string | null), member };
+}
+
+/**
+ * `GET`/`PATCH /api/auth/me/profile` — a user reading and editing their own
+ * account and member record, and the one exception to "a read-only account
+ * cannot make changes".
+ *
+ * It lives under `/auth` (dispatched ahead of the role gate) and is safe by
+ * construction rather than by a chain of `if`s a later edit could miss
+ * (rule G2):
+ *
+ *  1. **Whose row** comes from the signed session cookie — `s.sub` for the
+ *     account, and the `member_id` read off that account row for the member.
+ *     No id is taken from the URL or the body, so there is no request shape
+ *     that can address somebody else's record. Nothing here widens `/accounts`,
+ *     which stays super_admin-only for reads and writes.
+ *  2. **Which fields** come from the allow-lists above, and an unknown key is
+ *     a 403 rather than a silent drop — so `account_role`, `hall_id` and
+ *     `status` are refused loudly and a read-only account cannot promote
+ *     itself, move congregation, or re-enable a disabled login.
+ */
+async function selfProfileRoute(
+  method: string,
+  req: Request,
+  db: ReturnType<typeof getDb>,
+): Promise<Response> {
+  const s = await getSession(req);
+  if (!s) throw new HttpError(401, 'Not signed in');
+  if (method === 'GET') return json(await readSelfProfile(db, s.sub));
+  if (method !== 'PATCH') throw new HttpError(404, `No route for ${method} /api/auth/me/profile`);
+
+  const dto = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+  const memberPatch: Record<string, unknown> = {};
+  const accountPatch: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(dto)) {
+    if ((SELF_MEMBER_FIELDS as readonly string[]).includes(key)) memberPatch[key] = value;
+    else if ((SELF_ACCOUNT_FIELDS as readonly string[]).includes(key)) accountPatch[key] = value;
+    else throw new HttpError(403, `You may not change ${key} on your own profile`);
+  }
+
+  // Read the account first: its `member_id` — not the session's cached copy —
+  // decides which member row this may touch.
+  const account = unwrap(
+    await db.from('app_users').select('member_id').eq('id', s.sub).single<{ member_id: string | null }>(),
+  );
+
+  if ('email' in memberPatch) {
+    const email = normalizeEmail(memberPatch.email);
+    if (!email) throw new HttpError(400, 'Your email is also your sign-in name and cannot be removed');
+    memberPatch.email = email;
+    // The login email always mirrors the member's own email (the same rule
+    // accountWrite enforces on the admin path), so move both together.
+    accountPatch.email = email;
+    // app_users.email is unique. Checked before either write so a clash leaves
+    // nothing half-saved; the 23505 mapping below still covers the race.
+    const clash = unwrap<Array<{ id: string }>>(
+      await db.from('app_users').select('id').eq('email', email).neq('id', s.sub),
+    );
+    if (clash.length > 0)
+      throw new HttpError(409, 'That email already belongs to another login account');
+  }
+  if (accountPatch.language !== undefined) assertSupportedLanguage(accountPatch.language);
+
+  if (Object.keys(memberPatch).length > 0) {
+    if (!account.member_id)
+      throw new HttpError(400, 'This account is not linked to a member profile');
+    unwrap(
+      await db.from('members').update(memberPatch).eq('id', account.member_id).select('id').single(),
+    );
+  }
+  if (Object.keys(accountPatch).length > 0) {
+    const res = await db.from('app_users').update(accountPatch).eq('id', s.sub).select('id').single();
+    // app_users.email is unique — a clash is the user's mistake, not a 500.
+    if (res.error?.code === '23505')
+      throw new HttpError(409, 'That email already belongs to another login account');
+    unwrap(res);
+  }
+  return json(await readSelfProfile(db, s.sub));
+}
+
+/** Sign-in matches on a lower-cased address, so stored emails are too. */
+function normalizeEmail(value: unknown): string {
+  return String(value ?? '').trim().toLowerCase();
+}
+
+/**
+ * Only the three shipped interface languages may be stored, so a stale client
+ * (or a hand-rolled request) can never park an account on a language the app
+ * has no dictionary for.
+ */
+function assertSupportedLanguage(value: unknown): void {
+  if (!(LANGUAGES as readonly string[]).includes(String(value)))
+    throw new HttpError(400, `Unsupported language: ${String(value)}`);
+}
+
 /**
  * Normalize an account create/update payload: a plaintext `password` field is
  * hashed into `password_hash` and stripped, so passwords are never stored raw.
@@ -1140,15 +1273,9 @@ async function accountWrite(
       await db.from('members').select('email').eq('id', memberId).single<{ email: string | null }>(),
     );
     if (!member.email) throw new HttpError(400, 'This member has no email yet \u2014 add one to their profile first');
-    rest.email = member.email;
+    rest.email = normalizeEmail(member.email);
   }
-  // Only the three supported interface languages may be stored, so a stale
-  // client (or a hand-rolled request) can never park an account on a language
-  // the app has no dictionary for.
-  if (rest.language !== undefined) {
-    if (!(LANGUAGES as readonly string[]).includes(String(rest.language)))
-      throw new HttpError(400, `Unsupported language: ${String(rest.language)}`);
-  }
+  if (rest.language !== undefined) assertSupportedLanguage(rest.language);
   return rest;
 }
 

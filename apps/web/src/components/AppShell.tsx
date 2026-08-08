@@ -4,7 +4,6 @@ import { createContext, ReactNode, useContext, useEffect, useState } from 'react
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { ConfirmProvider, ToastProvider, useConfirm, useToast } from './ui';
-import { ChangePasswordModal } from './ChangePasswordModal';
 import { BrandLogo } from './BrandLogo';
 import { accountRoleKey, initialOf } from '@/lib/labels';
 import { HallContext } from '@/lib/hall';
@@ -257,15 +256,19 @@ function Shell({
   );
 }
 
+/**
+ * The account block at the foot of the sidebar. It is a link straight to
+ * 我的资料 (`/profile`) — the page every role, read-only included, uses to edit
+ * its own details and password — with sign-out as a red item directly beneath
+ * it. It used to be a toggle that popped a two-item menu over the nav, which
+ * hid both destinations behind a tap and left the page it opened ambiguous.
+ */
 function NavUser({ me }: { me: Me }) {
   const t = useT();
   const confirm = useConfirm();
   const toast = useToast();
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [pwOpen, setPwOpen] = useState(false);
 
   const logout = async () => {
-    setMenuOpen(false);
     const ok = await confirm({
       title: t('nav.logout.confirmTitle'),
       message: t('nav.logout.confirmMessage'),
@@ -282,29 +285,23 @@ function NavUser({ me }: { me: Me }) {
   };
 
   return (
-    <div style={{ position: 'relative' }}>
-      {menuOpen && (
-        <div className="nav-user-menu">
-          <button onClick={() => { setMenuOpen(false); setPwOpen(true); }}>🔑 {t('nav.changePassword')}</button>
-          <button onClick={logout}>↩ {t('nav.logout')}</button>
-        </div>
-      )}
-      <div className="nav-user" onClick={() => setMenuOpen((o) => !o)} title={t('nav.accountMenu')} style={{ cursor: 'pointer' }}>
+    <div>
+      <Link href="/profile" className="nav-user" title={t('nav.myProfile')}>
         <div className="avatar">{initialOf(me.name)}</div>
         <div className="who">
           {me.name}
-          <small>{t(accountRoleKey(me.role))} · {t('nav.accountMenu')}</small>
+          <small>{t(accountRoleKey(me.role))} · {t('nav.myProfile')}</small>
         </div>
-      </div>
-      {pwOpen && (
-        <ChangePasswordModal
-          onClose={() => setPwOpen(false)}
-          onSaved={() => {
-            setPwOpen(false);
-            toast(t('settings.toast.passwordChanged'));
-          }}
-        />
-      )}
+      </Link>
+      {/* Same nav-item geometry as every other row in the sidebar; only the
+          colour differs, and it comes from the crit token (rule G4). */}
+      <button
+        className="nav-link"
+        onClick={logout}
+        style={{ color: 'var(--crit)', background: 'transparent', border: 'none', width: '100%', textAlign: 'left' }}
+      >
+        <span className="ico">↩</span> {t('nav.logout')}
+      </button>
     </div>
   );
 }

@@ -1,7 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useFetch } from '@/lib/hooks';
 import { useSortableRows } from '@/lib/sort';
 import { api } from '@/lib/api';
@@ -25,7 +25,6 @@ import {
   useConfirm,
   useToast,
 } from '@/components/ui';
-import { ChangePasswordModal } from '@/components/ChangePasswordModal';
 import { AccountRow, MemberRow } from '@/lib/types';
 import {
   ACCOUNT_ROLE_OPTIONS,
@@ -46,15 +45,24 @@ import type { MessageKey } from '@/lib/i18n';
 export default function SettingsPage() {
   const t = useT();
   const me = useMe();
+  const router = useRouter();
   const isSuperAdmin = me.role === AccountRole.SuperAdmin;
   const toast = useToast();
   const accounts = useFetch<AccountRow[]>(isSuperAdmin ? '/accounts' : null);
   const members = useFetch<MemberRow[]>(isSuperAdmin ? '/members' : null);
   const [detailId, setDetailId] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
-  const [myPwOpen, setMyPwOpen] = useState(false);
 
   usePageChrome({ title: t('settings.title') }, [t]);
+
+  // Managing other people's logins is super_admin-only (the API says the same
+  // for reads and writes). Everyone else who lands here by URL wants their own
+  // account, so send them to 我的资料 rather than showing them a dead end —
+  // this page used to render "only a super admin may manage users" plus a lone
+  // change-password button, which was the profile page in miniature.
+  useEffect(() => {
+    if (!isSuperAdmin) router.replace('/profile');
+  }, [isSuperAdmin, router]);
 
   const list = accounts.data ?? [];
   const selected = list.find((a) => a.id === detailId) ?? null;
@@ -85,28 +93,8 @@ export default function SettingsPage() {
     accounts.reload();
   };
 
-  // User management is super_admin-only; others may still change their own password.
-  if (!isSuperAdmin) {
-    return (
-      <>
-        <div className="empty">{t('settings.onlySuperAdmin')}</div>
-        <div style={{ textAlign: 'center', marginTop: 12 }}>
-          <button className="btn ghost" onClick={() => setMyPwOpen(true)}>{t('settings.changeMyPassword')}</button>
-        </div>
-        {myPwOpen && (
-          <ChangePasswordModal
-            onClose={() => setMyPwOpen(false)}
-            onSaved={() => {
-              setMyPwOpen(false);
-              toast(t('settings.toast.passwordChanged'));
-            }}
-          />
-        )}
-      </>
-    );
-  }
-
-  if (accounts.initialLoading) return <Loading />;
+  // The redirect above is already in flight; show the spinner, never the list.
+  if (!isSuperAdmin || accounts.initialLoading) return <Loading />;
 
   if (selected) {
     return (
@@ -216,16 +204,6 @@ export default function SettingsPage() {
           }}
         />
       )}
-
-      {myPwOpen && (
-        <ChangePasswordModal
-          onClose={() => setMyPwOpen(false)}
-          onSaved={() => {
-            setMyPwOpen(false);
-            toast(t('settings.toast.passwordChanged'));
-          }}
-        />
-      )}
     </>
   );
 }
@@ -273,9 +251,12 @@ function AccountDetail({
 }) {
   const router = useRouter();
   const t = useT();
-  // Login email always follows the linked member's own profile — never
-  // independently editable — so the two can never drift apart.
-  const email = account.member?.email ?? account.email;
+  // The login email is stored on the linked MEMBER and mirrored onto the
+  // account server-side (`accountWrite`), so the two can never drift apart.
+  // Editing it here writes the member first and lets the account re-derive it —
+  // which is also how a member who had no email gets one without a detour to
+  // the member page.
+  const [email, setEmail] = useState(account.member?.email ?? account.email);
   const [role, setRole] = useState<AccountRole>(account.account_role);
   // null = full access (may see and manage every hall).
   const [hall, setHall] = useState<string | null>(account.hall_id ?? null);
@@ -333,6 +314,11 @@ function AccountDetail({
   };
 
   const save = async () => {
+    const nextEmail = email.trim().toLowerCase();
+    if (!nextEmail) {
+      setErr(t('settings.err.email'));
+      return;
+    }
     setBusy(true);
     setErr(null);
     // The interface language is read once, when the page loads (`/auth/me`), so
@@ -342,6 +328,12 @@ function AccountDetail({
     const languageChanged = language !== account.language;
     let saved = false;
     try {
+      // Member first: the account PATCH below re-reads the member's email and
+      // copies it onto the login, so writing them the other way round would
+      // save the old address.
+      if (account.member && nextEmail !== (account.member.email ?? '').toLowerCase()) {
+        await api.patch(`/members/${account.member.id}`, { email: nextEmail });
+      }
       await api.patch(`/accounts/${account.id}`, {
         account_role: role,
         hall_id: hall,
@@ -401,9 +393,16 @@ function AccountDetail({
 
         <div className="grid g2" style={{ marginTop: 18 }}>
           <Field label={t('settings.emailFromMember')}>
-            <input value={email} readOnly disabled style={{ color: 'var(--muted)' }} />
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder={t('settings.noEmailPlaceholder')}
+              autoComplete="email"
+            />
           </Field>
           <AccountRoleField value={role} onChange={setRole} />
+          <div className="hint" style={{ gridColumn: '1 / -1' }}>{t('settings.emailHint')}</div>
           <Field label={t('hall.label')}>
             <HallSelect value={hall} onChange={setHall} allowAll allLabel={t('hall.unlimited')} />
           </Field>
@@ -483,6 +482,10 @@ function AddAccountModal({
   const toast = useToast();
   const takenMembers = new Set(existing.map((a) => a.member_id));
   const [memberId, setMemberId] = useState('');
+  // The login email is the member's own email. It is editable here so a member
+  // who has none can still be given an account in one go — it is written onto
+  // the member below, and the account derives it from there server-side.
+  const [email, setEmail] = useState('');
   const [role, setRole] = useState<AccountRole>(AccountRole.Coworker);
   // null = full access (every hall).
   const [hall, setHall] = useState<string | null>(null);
@@ -491,17 +494,20 @@ function AddAccountModal({
   const [err, setErr] = useState<string | null>(null);
 
   const selectedMember = members.find((m) => m.id === memberId) ?? null;
-  // The login email always follows the member's own profile — never a
-  // separately typed value — so the two can never drift apart.
-  const email = selectedMember?.email ?? '';
+
+  const pickMember = (id: string) => {
+    setMemberId(id);
+    setEmail(members.find((m) => m.id === id)?.email ?? '');
+  };
 
   const save = async () => {
     if (!memberId) {
       setErr(t('settings.err.member'));
       return;
     }
-    if (!email) {
-      setErr(t('settings.noEmailWarning'));
+    const nextEmail = email.trim().toLowerCase();
+    if (!nextEmail) {
+      setErr(t('settings.err.email'));
       return;
     }
     if (password.length < 8) {
@@ -511,9 +517,13 @@ function AddAccountModal({
     setSaving(true);
     setErr(null);
     try {
+      // Member first — the account's login email is read back off the member
+      // when it is created, so this is what unblocks a member with no email.
+      if (nextEmail !== (selectedMember?.email ?? '').toLowerCase()) {
+        await api.patch(`/members/${memberId}`, { email: nextEmail });
+      }
       await api.post('/accounts', {
         member_id: memberId,
-        email,
         account_role: role,
         hall_id: hall,
         password,
@@ -534,7 +544,7 @@ function AddAccountModal({
         {t('settings.new.intro')}
       </p>
       <Field label={t('settings.linkMember')}>
-        <select value={memberId} onChange={(e) => setMemberId(e.target.value)}>
+        <select value={memberId} onChange={(e) => pickMember(e.target.value)}>
           <option value="">{t('settings.chooseMember')}</option>
           {members
             .filter((m) => !takenMembers.has(m.id))
@@ -547,22 +557,26 @@ function AddAccountModal({
       </Field>
       <div className="form-row">
         <Field label={t('settings.emailFromMember')}>
-          <input value={email} readOnly disabled placeholder={t('settings.noEmailPlaceholder')} style={{ color: 'var(--muted)' }} />
+          <input
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder={t('settings.noEmailPlaceholder')}
+            autoComplete="email"
+          />
         </Field>
         <AccountRoleField value={role} onChange={setRole} />
       </div>
+      <div className="hint" style={{ marginBottom: 14 }}>{t('settings.emailHint')}</div>
       <Field label={t('hall.label')}>
         <HallSelect value={hall} onChange={setHall} allowAll allLabel={t('hall.unlimited')} />
       </Field>
-      {memberId && !email && (
-        <div className="hint" style={{ marginBottom: 14 }}>{t('settings.noEmailWarning')}</div>
-      )}
       <Field label={t('settings.initialPassword')}>
         <PasswordInput value={password} onChange={setPassword} placeholder={t('settings.initialPasswordHint')} autoComplete="new-password" />
       </Field>
       <div className="modal-actions">
         <button className="btn ghost" onClick={onClose}>{t('common.cancel')}</button>
-        <button className="btn" onClick={save} disabled={saving || !memberId || !email}>{saving ? t('common.saving') : t('settings.create')}</button>
+        <button className="btn" onClick={save} disabled={saving || !memberId || !email.trim()}>{saving ? t('common.saving') : t('settings.create')}</button>
       </div>
     </Modal>
   );

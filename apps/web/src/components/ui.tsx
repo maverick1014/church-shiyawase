@@ -398,6 +398,34 @@ export function EntityHeader({
 }
 
 /**
+ * The read-only "facts" tiles under a detail page's header (email, phone,
+ * congregation…). Member detail built this shape inline; the profile page needs
+ * the same one, so it lives here once rather than being retyped per page
+ * (rule G4). Values may be nodes, so a fact can carry a badge.
+ */
+export function FactGrid({
+  facts,
+  style,
+}: {
+  facts: { label: string; value: ReactNode }[];
+  style?: React.CSSProperties;
+}) {
+  return (
+    <div className="grid g4" style={style}>
+      {facts.map((f) => (
+        <div
+          key={f.label}
+          style={{ background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 10, padding: '12px 14px' }}
+        >
+          <div className="muted" style={{ fontSize: 11.5 }}>{f.label}</div>
+          <div style={{ fontSize: 14, fontWeight: 600, marginTop: 3 }}>{f.value}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
  * Reference material that would otherwise push the real content down the page
  * (e.g. the permission matrix in 用户管理). Opens on hover and on click, so it
  * works on both a desktop pointer and a touch screen.
