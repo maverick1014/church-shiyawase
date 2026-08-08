@@ -718,7 +718,27 @@ async function main() {
         // clicking that hangs instead. Which of the two applies after picking a
         // congregation depends on whether the shell closed the drawer itself.
         const drawerOpen = () => page.locator('.app-shell.nav-open').count().then((n) => n > 0);
-        if (!(await drawerOpen())) await page.locator('.hamburger').click();
+        // This click has timed out three times and each diagnosis was a guess,
+        // so record what is actually on screen at the moment it happens: the
+        // button's box, whether the browser agrees it is visible, and what sits
+        // at its centre point. A screenshot goes with it, because the artifact
+        // outlives the log.
+        const burger = page.locator('.hamburger');
+        const burgerBox = await burger.boundingBox().catch(() => null);
+        const onTop = burgerBox
+          ? await page.evaluate(
+              ([x, y]) => {
+                const el = document.elementFromPoint(x, y);
+                return el ? `${el.tagName.toLowerCase()}.${el.className || '(no class)'}` : 'nothing';
+              },
+              [burgerBox.x + burgerBox.width / 2, burgerBox.y + burgerBox.height / 2],
+            )
+          : 'no box';
+        check('the menu button is reachable before picking a congregation',
+          !!burgerBox && (await burger.isVisible()) && onTop.startsWith('button'),
+          `box=${JSON.stringify(burgerBox)} visible=${await burger.isVisible()} atPoint=${onTop}`);
+        await shot('05a-services-before-pick');
+        if (!(await drawerOpen())) await burger.click();
         await hallSelect.selectOption(sheetHallId);
         await w(400);
         if (await drawerOpen()) await page.locator('.scrim').click();
