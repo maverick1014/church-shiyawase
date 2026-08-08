@@ -2,10 +2,10 @@
 
 import { useState } from 'react';
 import { api } from '@/lib/api';
-import { ErrorBanner, Field, HallSelect, Modal, useToast } from '@/components/ui';
+import { Combobox, ErrorBanner, Field, HallSelect, Modal, useToast } from '@/components/ui';
 import { useHallScope } from '@/lib/hall';
 import { MemberRow, TrainingRow } from '@/lib/types';
-import { TRAINING_CATEGORIES, trainingCategoryLabel } from '@/lib/labels';
+import { memberRole, roleKey, TRAINING_CATEGORIES, trainingCategoryLabel } from '@/lib/labels';
 import { useT } from '@/lib/i18n';
 import { TrainingKind } from '@tog/shared';
 
@@ -133,12 +133,20 @@ export function TrainingModal({
       </div>
       <div className="form-row">
         <Field label={activity ? t('trainings.field.host') : t('trainings.field.trainer')}>
-          <select value={form.trainer_id} onChange={(e) => setForm({ ...form, trainer_id: e.target.value })}>
-            <option value="">{t('common.pending')}</option>
-            {members.map((m) => (
-              <option key={m.id} value={m.id}>{m.full_name}</option>
-            ))}
-          </select>
+          {/* Type-to-search, like every other member field (rule G4). Empty
+              means nobody is assigned yet, which is what the ✕ puts it back
+              to. */}
+          <Combobox
+            value={form.trainer_id}
+            onChange={(id) => setForm({ ...form, trainer_id: id })}
+            options={members.map((m) => ({
+              value: m.id,
+              label: m.full_name,
+              hint: t(roleKey(memberRole(m))),
+            }))}
+            placeholder={t('common.pending')}
+            ariaLabel={activity ? t('trainings.field.host') : t('trainings.field.trainer')}
+          />
         </Field>
         <Field label={t('hall.label')}>
           <HallSelect

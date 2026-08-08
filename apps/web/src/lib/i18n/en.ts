@@ -30,6 +30,8 @@ export const en = {
   'common.hidePassword': 'Hide password',
   'common.tagsPlaceholder': 'Type a tag and press Enter…',
   'common.removeTag': 'Remove tag {name}',
+  'combo.clear': 'Clear the selection',
+  'combo.noMatch': 'Nothing matches that',
 
   /* ---- navigation ------------------------------------------------------ */
   'nav.section.overview': 'Overview',
@@ -71,7 +73,6 @@ export const en = {
   'church.field.name': 'Church name',
   'church.field.shortName': 'Short name',
   'church.field.shortNamePlaceholder': 'Shown in the sidebar when set',
-  'church.field.nameHint': 'The church name is data, not a translation: every interface language shows this same name.',
   'church.field.description': 'Description',
   'church.save': 'Save church profile',
   'church.err.name': 'Please enter the church name',
@@ -227,7 +228,6 @@ export const en = {
   'group.delete.message': 'Delete “{name}”? Its members become ungrouped.',
   'group.removeMember.message': 'Remove {name} from this group? Their group position is cleared with it.',
   'group.thisMember': 'this member',
-  'group.memberOption': '{name}{group}',
   'group.exportTitle': 'Export weekly attendance',
   'group.exportFile': 'Group weekly attendance {year}-{month}',
   'group.notAttended': 'Not present',
@@ -235,6 +235,11 @@ export const en = {
   /* ---- attendance sheets (shared by the roll-call and life-group sheets) - */
   'sheet.year': 'Year',
   'sheet.month': 'Month',
+  'sheet.tickAll.check': 'Tick {column} for everyone',
+  'sheet.tickAll.uncheck': 'Untick {column} for everyone',
+  'sheet.tickAll.title': 'Clear this column',
+  'sheet.tickAll.message': 'Untick {column} for everyone? {n} ticks already recorded will be deleted. This cannot be undone.',
+  'sheet.tickAll.confirm': 'Clear column',
 
   /* ---- services: one roll-call sheet — Sundays + hand-added meetings ---- */
   'events.title': 'Services',
@@ -359,7 +364,6 @@ export const en = {
   'disc.err.same': 'The mentor and the trainee cannot be the same person',
   'disc.create': 'Create pair',
   'disc.delete.message': 'Delete the pair {trainee} ← {mentor}? Its daily progress records go with it.',
-  'disc.memberOption': '{name} ({role})',
 
   /* ---- training / activity detail --------------------------------------- */
   'training.title': 'Training detail',
@@ -446,30 +450,18 @@ export const en = {
   'disc.progress.completed': 'Completed',
 
   /* ---- discipleship modules (add-on modules) --------------------------- */
-  'disc.module.manage': 'Modules',
   'disc.module.selector': 'Module',
   'disc.module.add': '＋ New module',
-  'disc.module.list.title': 'Discipleship modules',
-  'disc.module.list.intro': 'A module sets a name and how many days each pair follows. Every pair belongs to exactly one module.',
-  'disc.module.meta': '{days} days · {pairs} pairs',
   'disc.module.new.title': 'New module',
-  'disc.module.edit.title': 'Edit module',
   'disc.module.field.name': 'Module name',
   'disc.module.field.description': 'Description',
   'disc.module.field.totalDays': 'Total days',
   'disc.module.namePlaceholder': 'e.g. Forty Days one-on-one',
   'disc.module.descriptionPlaceholder': 'What this module is for (optional)',
   'disc.module.daysHint': 'How many day cells every pair in this module gets. 1 or more.',
-  'disc.module.warnTotalDays': '⚠ {pairs} pairs already follow this module. Changing the length recalculates every one of their percentages against the new total, and their day grids grow or shrink to match.',
   'disc.module.err.name': 'Please enter a module name',
   'disc.module.err.days': 'Total days must be a whole number, 1 or more',
-  'disc.module.delete': 'Delete module',
-  'disc.module.delete.title': 'Delete module',
-  'disc.module.delete.message': 'Delete the module “{name}”? Its {pairs} pairs go with it, and so do all of their daily records — up to {days} days of entries. This cannot be undone.',
-  'disc.module.delete.messageEmpty': 'Delete the module “{name}”? No pairs follow it, so nothing else is removed. This cannot be undone.',
   'disc.module.toast.created': 'Module created',
-  'disc.module.toast.saved': 'Module saved',
-  'disc.module.toast.deleted': 'Module deleted',
 
   /* ---- settings -------------------------------------------------------- */
   'settings.title': 'Users',
@@ -482,7 +474,7 @@ export const en = {
   'settings.empty': 'No accounts yet.',
   'settings.manageAccount': 'Manage account',
   'settings.neverSignedIn': 'Never signed in',
-  'settings.emailFromMember': 'Login email (saved to the member profile)',
+  'settings.emailFromMember': 'Login email',
   'settings.emailHint': '💡 The login email lives on the member profile — set it here and both are updated, so a member with no email can still be given an account.',
   'settings.err.email': 'Please enter a login email',
   'settings.hallHint': '💡 Scoped to a congregation, this account can only see and manage that congregation’s members, groups, events and trainings. “All congregations” is unrestricted.',
@@ -506,7 +498,7 @@ export const en = {
   'settings.saveAccount': 'Save account settings',
   'settings.new.title': 'New account',
   'settings.new.intro': 'A login account must be linked to a member. The login email is saved onto that member’s profile, so a member with no email yet can be given one right here.',
-  'settings.linkMember': 'Linked member (members with an account are hidden)',
+  'settings.linkMember': 'Linked member',
   'settings.chooseMember': 'Choose a member…',
   'settings.initialPassword': 'Initial password',
   'settings.initialPasswordHint': 'At least 8 characters — the user can change it later',

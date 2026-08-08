@@ -5,9 +5,9 @@ import { useFetch } from '@/lib/hooks';
 import { useSortableRows } from '@/lib/sort';
 import { api } from '@/lib/api';
 import { usePageChrome, useMe } from '@/components/AppShell';
-import { ErrorBanner, ExportButton, Field, LinkIcon, Modal, ModuleDisabled, PageBar, Skeleton, SkeletonScreen, SkeletonTable, SkeletonText, SortTh, useConfirm, useToast } from '@/components/ui';
+import { Combobox, ErrorBanner, ExportButton, Field, LinkIcon, Modal, ModuleDisabled, PageBar, Skeleton, SkeletonScreen, SkeletonTable, SkeletonText, SortTh, useConfirm, useToast } from '@/components/ui';
 import { PairProgressModal } from '@/components/PairProgressModal';
-import { can, type Perms } from '@/lib/perms';
+import { can } from '@/lib/perms';
 import { useModuleEnabled } from '@/lib/church';
 import { exportRows } from '@/lib/export';
 import { MemberRow, OverviewRow, PairRow, ProgramRow } from '@/lib/types';
@@ -64,15 +64,13 @@ export default function DiscipleshipPage() {
   const [popup, setPopup] = useState<Node | null>(null);
   const [fullscreen, setFullscreen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
-  const [modulesOpen, setModulesOpen] = useState(false);
-  /** null = closed · 'new' = create form · a row = edit form for that module. */
-  const [moduleForm, setModuleForm] = useState<ProgramRow | 'new' | null>(null);
+  /** The create form, shown only from the empty state below. */
+  const [moduleForm, setModuleForm] = useState(false);
   /** Which module is being viewed. Nothing is persisted across reloads. */
   const [picked, setPicked] = useState<string | null>(null);
 
   const moduleList = modules.data ?? [];
-  // The default is the first module, and a picked id that no longer exists
-  // (it was just deleted) falls back to the first one too.
+  // The default is the first module; an unknown picked id falls back to it too.
   const activeModule = moduleList.find((m) => m.id === picked) ?? moduleList[0];
   const programId = activeModule?.id;
 
@@ -89,7 +87,6 @@ export default function DiscipleshipPage() {
     }
     return m;
   }, [pairs.data]);
-  const pairCountOf = (id: string) => pairsByModule.get(id)?.length ?? 0;
   const modulePairs = (programId && pairsByModule.get(programId)) || NO_PAIRS;
 
   usePageChrome({ title: t('disc.title') }, [t]);
@@ -117,47 +114,13 @@ export default function DiscipleshipPage() {
     }
   };
 
-  /**
-   * Deleting a module CASCADES — `discipleship_pairs.program_id` is
-   * `on delete cascade` and `discipleship_progress.pair_id` cascades from
-   * there — so the confirmation names the blast radius in rows, not in
-   * adjectives: how many pairs go with it and how many days of daily records
-   * that is (rule G3).
-   */
-  const delModule = async (m: ProgramRow) => {
-    const n = pairCountOf(m.id);
-    const ok = await confirm({
-      title: t('disc.module.delete.title'),
-      message:
-        n === 0
-          ? t('disc.module.delete.messageEmpty', { name: m.name })
-          : t('disc.module.delete.message', { name: m.name, pairs: n, days: n * m.total_days }),
-      confirmText: t('common.delete'),
-      danger: true,
-    });
-    if (!ok) return;
-    try {
-      await api.delete(`/discipleship/programs/${m.id}`);
-      if (picked === m.id) setPicked(null);
-      modules.reload();
-      pairs.reload();
-      toast(t('disc.module.toast.deleted'));
-    } catch (e) {
-      toast((e as Error).message, 'error');
-    }
-  };
-
-  const onModuleSaved = (saved: ProgramRow, created: boolean) => {
-    setModuleForm(null);
-    // Land on what was just saved — including a brand-new module, which is
-    // what the empty state's button exists to reach.
+  const onModuleCreated = (saved: ProgramRow) => {
+    setModuleForm(false);
+    // Land on the module that was just created — the whole point of the empty
+    // state's button.
     setPicked(saved.id);
     modules.reload();
-    // A changed total_days re-scores every pair in the module, so the overview
-    // (percent_complete) and the day grids have to come back too.
-    pairs.reload();
-    overview.reload();
-    toast(created ? t('disc.module.toast.created') : t('disc.module.toast.saved'));
+    toast(t('disc.module.toast.created'));
   };
 
   const ovByPair = useMemo(() => {
@@ -318,9 +281,10 @@ export default function DiscipleshipPage() {
   if (!discipleshipOn) return <ModuleDisabled name={t('module.discipleship.name')} />;
 
   // A church with no 守望 module at all is a different state from a slow
-  // fetch — decide it only once the modules have actually arrived. Deleting
-  // the last module is allowed, and this is what makes it recoverable from the
-  // UI instead of from raw SQL.
+  // fetch — decide it only once the modules have actually arrived. This is the
+  // one place a module is created from, and it is kept precisely because a row
+  // that goes missing (a data cleanup, a restore) would otherwise leave the
+  // whole feature unreachable except from raw SQL. That already happened once.
   if (!booting && !programId) {
     return (
       <>
@@ -328,7 +292,7 @@ export default function DiscipleshipPage() {
         <PageBar
           actions={
             perms.write ? (
-              <button className="btn" onClick={() => setModuleForm('new')}>{t('disc.module.add')}</button>
+              <button className="btn" onClick={() => setModuleForm(true)}>{t('disc.module.add')}</button>
             ) : undefined
           }
         />
@@ -336,12 +300,7 @@ export default function DiscipleshipPage() {
           {perms.write ? t('disc.noModule') : t('disc.noModule.readonly')}
         </div>
         {moduleForm && (
-          <ModuleFormModal
-            initial={moduleForm === 'new' ? undefined : moduleForm}
-            pairCount={moduleForm === 'new' ? 0 : pairCountOf(moduleForm.id)}
-            onClose={() => setModuleForm(null)}
-            onSaved={onModuleSaved}
-          />
+          <ModuleFormModal onClose={() => setModuleForm(false)} onCreated={onModuleCreated} />
         )}
       </>
     );
@@ -371,11 +330,6 @@ export default function DiscipleshipPage() {
         actions={
           <>
             <ExportButton onClick={exportPairs} disabled={nodes.length === 0} />
-            {perms.write && (
-              <button className="btn ghost" onClick={() => setModulesOpen(true)}>
-                {t('disc.module.manage')}
-              </button>
-            )}
             {perms.write && (
               <button className="btn" onClick={() => setAddOpen(true)} disabled={!programId}>
                 {t('disc.add')}
@@ -584,119 +538,41 @@ export default function DiscipleshipPage() {
         />
       )}
 
-      {/* Module management. The list and the form are one dialog at a time —
-          closing the form drops back to the list it was opened from. */}
-      {modulesOpen && !moduleForm && (
-        <ModuleListModal
-          modules={moduleList}
-          pairCountOf={pairCountOf}
-          perms={perms}
-          onNew={() => setModuleForm('new')}
-          onEdit={setModuleForm}
-          onDelete={delModule}
-          onClose={() => setModulesOpen(false)}
-        />
-      )}
-      {moduleForm && (
-        <ModuleFormModal
-          initial={moduleForm === 'new' ? undefined : moduleForm}
-          pairCount={moduleForm === 'new' ? 0 : pairCountOf(moduleForm.id)}
-          onClose={() => setModuleForm(null)}
-          onSaved={onModuleSaved}
-        />
-      )}
     </>
   );
 }
 
-/* ---- Modules (守望模块) --------------------------------------------------
- * The module is the definition a pair hangs off: its name and how many days
- * the pair follows. There was no way to touch one from the app at all, so
- * deleting the single row during a data cleanup took the whole feature down
- * and only raw SQL could bring it back (rule G1).
+/* ---- The 守望模块, created once ------------------------------------------
+ * A module is the definition a pair hangs off: its name and how many days the
+ * pair follows. It is CREATED here and never edited or deleted from the app.
+ *
+ * There was a manager on this page — a Modules button over a list dialog with
+ * an edit form and a delete on every row. It came from a misreading of what
+ * the church meant by "module" (they meant the add-on switches on 教会设置),
+ * and its delete cascaded away every pair under a module and every day of
+ * their records behind one confirmation. It is gone, along with the API routes
+ * it called.
+ *
+ * What is kept is exactly this form, reachable only from the page's empty
+ * state: with no module at all the whole feature has nothing to hang pairs on,
+ * and without a way to make the first one the page is unrecoverable from the
+ * UI — a hole this app has already fallen into once.
  * ---------------------------------------------------------------------- */
 
-function ModuleListModal({
-  modules,
-  pairCountOf,
-  perms,
-  onNew,
-  onEdit,
-  onDelete,
-  onClose,
-}: {
-  modules: ProgramRow[];
-  pairCountOf: (id: string) => number;
-  perms: Perms;
-  onNew: () => void;
-  onEdit: (m: ProgramRow) => void;
-  onDelete: (m: ProgramRow) => void;
-  onClose: () => void;
-}) {
-  const t = useT();
-  return (
-    <Modal title={t('disc.module.list.title')} onClose={onClose}>
-      <p className="muted" style={{ margin: '0 0 14px', fontSize: 12.5, lineHeight: 1.6 }}>
-        {t('disc.module.list.intro')}
-      </p>
-      {modules.map((m) => (
-        <div
-          key={m.id}
-          className="flex items-center gap-12"
-          style={{ padding: '11px 4px', borderBottom: '1px solid var(--border)' }}
-        >
-          <div className="grow" style={{ minWidth: 0 }}>
-            <strong style={{ fontSize: 13.5 }}>{m.name}</strong>
-            <div className="faint" style={{ fontSize: 11.5, marginTop: 1 }}>
-              {t('disc.module.meta', { days: m.total_days, pairs: pairCountOf(m.id) })}
-              {m.description ? ` · ${m.description}` : ''}
-            </div>
-          </div>
-          <div className="flex gap-6" style={{ flexShrink: 0 }}>
-            {perms.write && (
-              <button className="btn ghost sm" onClick={() => onEdit(m)}>{t('common.edit')}</button>
-            )}
-            {/* Delete only where the role may delete — a button that can only
-                ever return 403 is a bug (rule G2). */}
-            {perms.delete && (
-              <button className="btn ghost sm" style={{ color: 'var(--crit)' }} onClick={() => onDelete(m)}>
-                {t('common.delete')}
-              </button>
-            )}
-          </div>
-        </div>
-      ))}
-      <div className="modal-actions">
-        {perms.write && (
-          <button className="btn" style={{ marginRight: 'auto' }} onClick={onNew}>
-            {t('disc.module.add')}
-          </button>
-        )}
-        <button className="btn ghost" onClick={onClose}>{t('common.close')}</button>
-      </div>
-    </Modal>
-  );
-}
-
 function ModuleFormModal({
-  initial,
-  pairCount,
   onClose,
-  onSaved,
+  onCreated,
 }: {
-  initial?: ProgramRow;
-  /** Pairs already following this module — 0 when creating. */
-  pairCount: number;
   onClose: () => void;
-  onSaved: (saved: ProgramRow, created: boolean) => void;
+  onCreated: (saved: ProgramRow) => void;
 }) {
   const t = useT();
   const toast = useToast();
   const [form, setForm] = useState({
-    name: initial?.name ?? '',
-    description: initial?.description ?? '',
+    name: '',
+    description: '',
     // Kept as a string so the field can be cleared while typing; validated below.
-    total_days: String(initial?.total_days ?? 40),
+    total_days: '40',
   });
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -717,12 +593,14 @@ function ModuleFormModal({
     }
     setSaving(true);
     setErr(null);
-    const dto = { name, description: form.description.trim() || null, total_days: days };
     try {
-      const saved = initial
-        ? await api.patch<ProgramRow>(`/discipleship/programs/${initial.id}`, dto)
-        : await api.post<ProgramRow>('/discipleship/programs', dto);
-      onSaved(saved, !initial);
+      onCreated(
+        await api.post<ProgramRow>('/discipleship/programs', {
+          name,
+          description: form.description.trim() || null,
+          total_days: days,
+        }),
+      );
     } catch (e) {
       setErr((e as Error).message);
       toast((e as Error).message, 'error');
@@ -732,7 +610,7 @@ function ModuleFormModal({
   };
 
   return (
-    <Modal title={initial ? t('disc.module.edit.title') : t('disc.module.new.title')} onClose={onClose}>
+    <Modal title={t('disc.module.new.title')} onClose={onClose}>
       {err && <ErrorBanner message={err} />}
       <Field label={t('disc.module.field.name')}>
         <input
@@ -758,14 +636,6 @@ function ModuleFormModal({
         />
       </Field>
       <div className="hint" style={{ marginBottom: 6 }}>{t('disc.module.daysHint')}</div>
-      {/* Editing the length changes the meaning of data that already exists:
-          every pair's percent_complete is divided by the new figure and the
-          progress grid grows or shrinks. Say so with the real count. */}
-      {initial && pairCount > 0 && (
-        <div className="hint" style={{ marginBottom: 6 }}>
-          {t('disc.module.warnTotalDays', { pairs: pairCount })}
-        </div>
-      )}
       <div className="modal-actions">
         <button className="btn ghost" onClick={onClose}>{t('common.cancel')}</button>
         <button className="btn" onClick={save} disabled={saving}>
@@ -1001,28 +871,36 @@ function AddPairModal({
       <p className="muted" style={{ margin: '0 0 14px', fontSize: 12.5, lineHeight: 1.6 }}>
         {t('disc.new.intro')}
       </p>
+      {/* Both pickers are type-to-search: with the whole church in the list,
+          scrolling to find one person is the slow way (rule G4). */}
       <Field label={t('disc.field.mentor')}>
-        <select value={mentorId} onChange={(e) => setMentorId(e.target.value)}>
-          <option value="">{t('disc.chooseMember')}</option>
-          {members.map((m) => (
-            <option key={m.id} value={m.id}>
-              {t('disc.memberOption', { name: m.full_name, role: t(roleKey(memberRole(m))) })}
-            </option>
-          ))}
-        </select>
+        <Combobox
+          value={mentorId}
+          onChange={setMentorId}
+          options={members.map((m) => ({
+            value: m.id,
+            label: m.full_name,
+            hint: t(roleKey(memberRole(m))),
+          }))}
+          placeholder={t('disc.chooseMember')}
+          ariaLabel={t('disc.field.mentor')}
+        />
       </Field>
       <div style={{ textAlign: 'center', color: 'var(--accent)', fontSize: 16, fontWeight: 700, margin: '-2px 0 8px' }}>↓</div>
       <Field label={t('disc.field.traineeHint')}>
-        <select value={traineeId} onChange={(e) => setTraineeId(e.target.value)}>
-          <option value="">{t('disc.chooseMember')}</option>
-          {members
+        <Combobox
+          value={traineeId}
+          onChange={setTraineeId}
+          options={members
             .filter((m) => !takenTrainees.has(m.id) && m.id !== mentorId)
-            .map((m) => (
-              <option key={m.id} value={m.id}>
-                {t('disc.memberOption', { name: m.full_name, role: t(roleKey(memberRole(m))) })}
-              </option>
-            ))}
-        </select>
+            .map((m) => ({
+              value: m.id,
+              label: m.full_name,
+              hint: t(roleKey(memberRole(m))),
+            }))}
+          placeholder={t('disc.chooseMember')}
+          ariaLabel={t('disc.field.traineeHint')}
+        />
       </Field>
       <Field label={t('disc.field.backfillLabel', { total: totalDays })}>
         <input

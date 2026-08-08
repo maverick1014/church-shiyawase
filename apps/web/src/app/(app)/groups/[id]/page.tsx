@@ -6,7 +6,7 @@ import { useFetch } from '@/lib/hooks';
 import { useSortableRows } from '@/lib/sort';
 import { api } from '@/lib/api';
 import { usePageChrome, useMe } from '@/components/AppShell';
-import { BackButton, ErrorBanner, ExportButton, Field, HallSelect, MonthPicker, RoleBadge, SheetTick, SkeletonCard, SkeletonScreen, SkeletonTable, SortTh, TagsInput, useConfirm, useToast } from '@/components/ui';
+import { BackButton, Combobox, ErrorBanner, ExportButton, Field, HallSelect, MonthPicker, RoleBadge, SheetTick, SheetTickAll, SkeletonCard, SkeletonScreen, SkeletonTable, SortTh, TagsInput, useConfirm, useToast } from '@/components/ui';
 import { can } from '@/lib/perms';
 import { exportMatrix } from '@/lib/export';
 import { GroupAttendanceResponse, GroupDetail, GroupRow, MemberRow } from '@/lib/types';
@@ -20,6 +20,7 @@ import {
   weekdayKey,
   WEEKDAY_OPTIONS,
 } from '@/lib/labels';
+import { columnTickState } from '@/lib/sheet';
 import { churchParts, weekdayDatesOfMonth } from '@/lib/time';
 import { useT } from '@/lib/i18n';
 import { AttendanceStatus, GroupPosition, LEADERSHIP_POSITIONS, Weekday } from '@tog/shared';
@@ -252,16 +253,17 @@ function GroupPanel({
           {t(positionKey(pos))}
         </span>
         {perms.write ? (
-          <select
-            className="sm trio-pick"
+          // Type-to-search like every other member field (rule G4): a large
+          // group's roster is no nicer to scroll here than anywhere else.
+          <Combobox
+            size="sm"
+            className="trio-pick"
             value={holder?.id ?? ''}
-            onChange={(e) => assignLeadership(pos, e.target.value)}
-          >
-            <option value="">{t('common.vacant')}</option>
-            {groupMembers.map((m) => (
-              <option key={m.id} value={m.id}>{m.full_name}</option>
-            ))}
-          </select>
+            onChange={(id) => assignLeadership(pos, id)}
+            options={groupMembers.map((m) => ({ value: m.id, label: m.full_name }))}
+            placeholder={t('common.vacant')}
+            ariaLabel={t(positionKey(pos))}
+          />
         ) : (
           <strong className={`trio-name${holder ? '' : ' vacant'}`}>
             {holder?.full_name ?? t('common.vacant')}
@@ -362,17 +364,18 @@ function GroupPanel({
           </div>
           {perms.write && (
             <div className="flex gap-8 mb-14">
-              <select value={addSel} onChange={(e) => setAddSel(e.target.value)} style={{ flex: 1 }}>
-                <option value="">{t('group.addMemberPlaceholder')}</option>
-                {unassigned.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {t('group.memberOption', {
-                      name: m.full_name,
-                      group: m.group ? ` (${m.group.name})` : '',
-                    })}
-                  </option>
-                ))}
-              </select>
+              <Combobox
+                value={addSel}
+                onChange={setAddSel}
+                options={unassigned.map((m) => ({
+                  value: m.id,
+                  label: m.full_name,
+                  hint: m.group?.name,
+                }))}
+                placeholder={t('group.addMemberPlaceholder')}
+                ariaLabel={t('group.addMember')}
+                style={{ flex: 1 }}
+              />
               <button className="btn accent" onClick={addMember} disabled={!addSel}>{t('group.addMember')}</button>
             </div>
           )}
@@ -456,6 +459,7 @@ function weeksOfMonth(
 function WeeklyAttendance({ group }: { group: GroupDetail }) {
   const t = useT();
   const toast = useToast();
+  const confirm = useConfirm();
   const perms = can(useMe().role);
 
   // Which month "now" is defaults to Malaysia's calendar, not the runtime's —
@@ -525,23 +529,72 @@ function WeeklyAttendance({ group }: { group: GroupDetail }) {
       { key: 'name', dir: 'asc' },
     );
 
+  /** The week's meeting row, created lazily the first time it is marked. */
+  const meetingFor = async (dateStr: string) => {
+    const existing = meetingIdByDate.get(dateStr);
+    if (existing) return existing;
+    const meeting = await api.post<{ id: string }>(`/groups/${group.id}/meetings`, {
+      meeting_date: dateStr,
+    });
+    return meeting.id;
+  };
+
   const toggle = async (dateStr: string, memberId: string, present: boolean) => {
     const next = present ? AttendanceStatus.Absent : AttendanceStatus.Present;
     try {
-      let mid = meetingIdByDate.get(dateStr);
-      if (!mid) {
-        // The week's meeting row is created lazily the first time it's marked.
-        const meeting = await api.post<{ id: string }>(`/groups/${group.id}/meetings`, {
-          meeting_date: dateStr,
-        });
-        mid = meeting.id;
-      }
+      const mid = await meetingFor(dateStr);
+      // A list of one — the same call the column shortcut below makes, so a
+      // single tick and 全员到齐 can never take different paths.
       await api.post(`/groups/meetings/${mid}/attendance`, {
         records: [{ member_id: memberId, status: next }],
       });
       reload();
     } catch (e) {
       toast((e as Error).message, 'error');
+    }
+  };
+
+  /** Who is marked present on one week, and whether that is all / none / some. */
+  const weekState = (dateStr: string) => {
+    const flags = (data?.rows ?? []).map(
+      (r) => statusByMemberDate.get(r.member.id)?.get(dateStr) === AttendanceStatus.Present,
+    );
+    return { state: columnTickState(flags), present: flags.filter(Boolean).length };
+  };
+
+  /**
+   * 全员到齐 for one week's column.
+   *
+   * Same two rules as the services sheet: clearing a column throws real records
+   * away, so it asks first and names how many marks go (rule G3); filling one
+   * asks nothing. One request either way — this endpoint has always taken a
+   * LIST of records, so the whole roster rides in the same call a single tick
+   * uses.
+   */
+  const toggleWeek = async (dateStr: string, weekLabel: string) => {
+    const roster = data?.rows ?? [];
+    if (roster.length === 0) return;
+    const here = weekState(dateStr);
+    const next = here.state !== 'all';
+    if (!next) {
+      const ok = await confirm({
+        title: t('sheet.tickAll.title'),
+        message: t('sheet.tickAll.message', { column: weekLabel, n: here.present }),
+        confirmText: t('sheet.tickAll.confirm'),
+        danger: true,
+      });
+      if (!ok) return;
+    }
+    const status = next ? AttendanceStatus.Present : AttendanceStatus.Absent;
+    try {
+      const mid = await meetingFor(dateStr);
+      await api.post(`/groups/meetings/${mid}/attendance`, {
+        records: roster.map((r) => ({ member_id: r.member.id, status })),
+      });
+      reload();
+    } catch (e) {
+      toast((e as Error).message, 'error');
+      reload();
     }
   };
 
@@ -605,12 +658,31 @@ function WeeklyAttendance({ group }: { group: GroupDetail }) {
             <thead>
               <tr>
                 <SortTh sortKey="name" activeKey={attSortKey} dir={attSortDir} onSort={toggleAttSort}>{t('members.col.member')}</SortTh>
-                {weeks.map((w) => (
-                  <th key={w.date} style={{ textAlign: 'center', whiteSpace: 'nowrap' }}>
-                    {t('group.week', { n: w.no })}
-                    <div className="faint" style={{ fontSize: 10.5, fontWeight: 400 }}>{t('group.dayOfMonth', { n: w.day })}</div>
-                  </th>
-                ))}
+                {/* Under the date: the week's own check-all. 全员到齐 is the
+                    normal case, and ticking a roster one person at a time is
+                    the thing this page is asked to stop making people do.
+                    Hidden from a read-only account (rule G2). */}
+                {weeks.map((w) => {
+                  const label = t('group.week', { n: w.no });
+                  const here = weekState(w.date);
+                  return (
+                    <th key={w.date} style={{ textAlign: 'center', whiteSpace: 'nowrap' }}>
+                      {label}
+                      <div className="faint" style={{ fontSize: 10.5, fontWeight: 400 }}>{t('group.dayOfMonth', { n: w.day })}</div>
+                      {perms.write && (
+                        <SheetTickAll
+                          state={here.state}
+                          onToggle={() => toggleWeek(w.date, label)}
+                          disabled={(data?.rows ?? []).length === 0}
+                          title={t(
+                            here.state === 'all' ? 'sheet.tickAll.uncheck' : 'sheet.tickAll.check',
+                            { column: label },
+                          )}
+                        />
+                      )}
+                    </th>
+                  );
+                })}
                 <SortTh sortKey="count" activeKey={attSortKey} dir={attSortDir} onSort={toggleAttSort} align="center">{t('group.attended')}</SortTh>
               </tr>
             </thead>

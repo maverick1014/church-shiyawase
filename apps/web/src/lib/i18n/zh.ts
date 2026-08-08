@@ -29,6 +29,8 @@ export const zh: Messages = {
   'common.hidePassword': '隐藏密码',
   'common.tagsPlaceholder': '输入标签后按 Enter…',
   'common.removeTag': '移除标签 {name}',
+  'combo.clear': '清除选择',
+  'combo.noMatch': '没有匹配的结果',
 
   /* ---- navigation ------------------------------------------------------ */
   'nav.section.overview': '总览',
@@ -67,7 +69,6 @@ export const zh: Messages = {
   'church.field.name': '教会名称',
   'church.field.shortName': '简称',
   'church.field.shortNamePlaceholder': '填写后显示在侧边栏',
-  'church.field.nameHint': '教会名称是数据，不是翻译：任何界面语言都显示同一个名称。',
   'church.field.description': '简介',
   'church.save': '保存教会资料',
   'church.err.name': '请填写教会名称',
@@ -223,7 +224,6 @@ export const zh: Messages = {
   'group.delete.message': '删除「{name}」？组员将变为未分组。',
   'group.removeMember.message': '将 {name} 移出本组？其在组职位会一并清除。',
   'group.thisMember': '该成员',
-  'group.memberOption': '{name}{group}',
   'group.exportTitle': '导出每周出席',
   'group.exportFile': '小组每周出席 {year}-{month}',
   'group.notAttended': '未出席',
@@ -231,6 +231,11 @@ export const zh: Messages = {
   /* ---- attendance sheets (shared by the roll-call and life-group sheets) - */
   'sheet.year': '年份',
   'sheet.month': '月份',
+  'sheet.tickAll.check': '为全部成员勾选{column}',
+  'sheet.tickAll.uncheck': '取消全部成员的{column}',
+  'sheet.tickAll.title': '清空这一列',
+  'sheet.tickAll.message': '取消全部成员的{column}？已记录的 {n} 个勾选会被删除，此操作无法撤销。',
+  'sheet.tickAll.confirm': '清空该列',
 
   /* ---- services: one roll-call sheet — Sundays + hand-added meetings ---- */
   'events.title': '崇拜与祷告会',
@@ -351,7 +356,6 @@ export const zh: Messages = {
   'disc.err.same': '带领者与被带领者不能是同一人',
   'disc.create': '建立配对',
   'disc.delete.message': '删除 {trainee} ← {mentor} 的配对？其守望进度记录将一并移除。',
-  'disc.memberOption': '{name}（{role}）',
 
   /* ---- 课程 / 活动详情 --------------------------------------------------- */
   'training.title': '课程详情',
@@ -438,30 +442,18 @@ export const zh: Messages = {
   'disc.progress.completed': '已完成',
 
   /* ---- discipleship modules (add-on modules) --------------------------- */
-  'disc.module.manage': '模块',
   'disc.module.selector': '模块',
   'disc.module.add': '＋ 新建模块',
-  'disc.module.list.title': '守望模块',
-  'disc.module.list.intro': '模块决定名称，以及每对守望多少天。每个配对只属于一个模块。',
-  'disc.module.meta': '{days} 天 · {pairs} 对配对',
   'disc.module.new.title': '新建模块',
-  'disc.module.edit.title': '编辑模块',
   'disc.module.field.name': '模块名称',
   'disc.module.field.description': '说明',
   'disc.module.field.totalDays': '总天数',
   'disc.module.namePlaceholder': '例如：四十天一对一守望',
   'disc.module.descriptionPlaceholder': '这个模块的用途（选填）',
   'disc.module.daysHint': '本模块每个配对会有多少个日格，最少 1 天。',
-  'disc.module.warnTotalDays': '⚠ 已有 {pairs} 对配对使用这个模块。修改天数会按新的总天数重新计算它们的完成百分比，守望格也会随之增减。',
   'disc.module.err.name': '请输入模块名称',
   'disc.module.err.days': '总天数须为 1 或以上的整数',
-  'disc.module.delete': '删除模块',
-  'disc.module.delete.title': '删除模块',
-  'disc.module.delete.message': '删除模块「{name}」？其下 {pairs} 对配对会一并删除，它们的每日记录（最多 {days} 天）也会一起消失。此操作无法撤销。',
-  'disc.module.delete.messageEmpty': '删除模块「{name}」？目前没有配对使用它，不会牵连其他记录。此操作无法撤销。',
   'disc.module.toast.created': '模块已建立',
-  'disc.module.toast.saved': '模块已保存',
-  'disc.module.toast.deleted': '模块已删除',
 
   /* ---- settings -------------------------------------------------------- */
   'settings.title': '用户',
@@ -474,7 +466,7 @@ export const zh: Messages = {
   'settings.empty': '还没有账户。',
   'settings.manageAccount': '管理账户',
   'settings.neverSignedIn': '从未登录',
-  'settings.emailFromMember': '登录邮箱（同时保存到成员资料）',
+  'settings.emailFromMember': '登录邮箱',
   'settings.emailHint': '💡 登录邮箱保存在成员资料上 — 在此填写会同时更新两处，所以还没有邮箱的成员也可以直接开通账户。',
   'settings.err.email': '请填写登录邮箱',
   'settings.hallHint': '💡 限定堂会后，该账户只能查看和管理所属堂会的成员、小组、聚会与培训。「全部堂会」则不受限制。',
@@ -497,7 +489,7 @@ export const zh: Messages = {
   'settings.saveAccount': '保存账户设置',
   'settings.new.title': '新建账户',
   'settings.new.intro': '登录账户必须关联一位成员。登录邮箱会同时保存到该成员的资料上，所以还没有邮箱的成员也可以在此直接填写。',
-  'settings.linkMember': '关联成员（已有账户的成员不显示）',
+  'settings.linkMember': '关联成员',
   'settings.chooseMember': '选择成员…',
   'settings.initialPassword': '初始密码',
   'settings.initialPasswordHint': '至少 8 位 — 用户之后可自行修改',

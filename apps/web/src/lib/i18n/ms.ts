@@ -29,6 +29,8 @@ export const ms: Messages = {
   'common.hidePassword': 'Sembunyikan kata laluan',
   'common.tagsPlaceholder': 'Taip tag dan tekan Enter…',
   'common.removeTag': 'Buang tag {name}',
+  'combo.clear': 'Kosongkan pilihan',
+  'combo.noMatch': 'Tiada padanan',
 
   /* ---- navigation ------------------------------------------------------ */
   'nav.section.overview': 'Ringkasan',
@@ -68,7 +70,6 @@ export const ms: Messages = {
   'church.field.name': 'Nama gereja',
   'church.field.shortName': 'Nama ringkas',
   'church.field.shortNamePlaceholder': 'Dipaparkan pada bar sisi jika diisi',
-  'church.field.nameHint': 'Nama gereja ialah data, bukan terjemahan: setiap bahasa antara muka memaparkan nama yang sama.',
   'church.field.description': 'Keterangan',
   'church.save': 'Simpan profil gereja',
   'church.err.name': 'Sila isi nama gereja',
@@ -224,7 +225,6 @@ export const ms: Messages = {
   'group.delete.message': 'Padam “{name}”? Ahlinya akan menjadi tiada kumpulan.',
   'group.removeMember.message': 'Keluarkan {name} daripada kumpulan ini? Jawatan kumpulannya turut dikosongkan.',
   'group.thisMember': 'ahli ini',
-  'group.memberOption': '{name}{group}',
   'group.exportTitle': 'Eksport kehadiran mingguan',
   'group.exportFile': 'Kehadiran mingguan kumpulan {year}-{month}',
   'group.notAttended': 'Tidak hadir',
@@ -232,6 +232,11 @@ export const ms: Messages = {
   /* ---- attendance sheets (shared by the roll-call and life-group sheets) - */
   'sheet.year': 'Tahun',
   'sheet.month': 'Bulan',
+  'sheet.tickAll.check': 'Tanda {column} untuk semua orang',
+  'sheet.tickAll.uncheck': 'Buang tanda {column} untuk semua orang',
+  'sheet.tickAll.title': 'Kosongkan lajur ini',
+  'sheet.tickAll.message': 'Buang tanda {column} untuk semua orang? {n} tanda yang sudah direkodkan akan dipadam. Tindakan ini tidak boleh dibatalkan.',
+  'sheet.tickAll.confirm': 'Kosongkan lajur',
 
   /* ---- services: one roll-call sheet — Sundays + hand-added meetings ---- */
   'events.title': 'Kebaktian & Doa',
@@ -352,7 +357,6 @@ export const ms: Messages = {
   'disc.err.same': 'Mentor dan orang yang dimuridkan tidak boleh orang yang sama',
   'disc.create': 'Cipta pasangan',
   'disc.delete.message': 'Padam pasangan {trainee} ← {mentor}? Rekod kemajuan hariannya turut dibuang.',
-  'disc.memberOption': '{name} ({role})',
 
   /* ---- butiran kursus / aktiviti ---------------------------------------- */
   'training.title': 'Butiran latihan',
@@ -439,30 +443,18 @@ export const ms: Messages = {
   'disc.progress.completed': 'Selesai',
 
   /* ---- discipleship modules (add-on modules) --------------------------- */
-  'disc.module.manage': 'Modul',
   'disc.module.selector': 'Modul',
   'disc.module.add': '＋ Modul baharu',
-  'disc.module.list.title': 'Modul pemuridan',
-  'disc.module.list.intro': 'Modul menetapkan nama dan berapa hari setiap pasangan diikuti. Setiap pasangan tergolong dalam satu modul sahaja.',
-  'disc.module.meta': '{days} hari · {pairs} pasangan',
   'disc.module.new.title': 'Modul baharu',
-  'disc.module.edit.title': 'Sunting modul',
   'disc.module.field.name': 'Nama modul',
   'disc.module.field.description': 'Keterangan',
   'disc.module.field.totalDays': 'Jumlah hari',
   'disc.module.namePlaceholder': 'cth. Empat Puluh Hari satu lawan satu',
   'disc.module.descriptionPlaceholder': 'Tujuan modul ini (pilihan)',
   'disc.module.daysHint': 'Berapa petak hari yang diberi kepada setiap pasangan dalam modul ini. 1 atau lebih.',
-  'disc.module.warnTotalDays': '⚠ {pairs} pasangan sudah mengikuti modul ini. Menukar panjangnya mengira semula setiap peratusan mereka mengikut jumlah baharu, dan grid hari mereka akan bertambah atau berkurang.',
   'disc.module.err.name': 'Sila masukkan nama modul',
   'disc.module.err.days': 'Jumlah hari mesti nombor bulat, 1 atau lebih',
-  'disc.module.delete': 'Padam modul',
-  'disc.module.delete.title': 'Padam modul',
-  'disc.module.delete.message': 'Padam modul “{name}”? {pairs} pasangannya turut dipadam, berserta semua rekod harian mereka — sehingga {days} hari catatan. Tindakan ini tidak boleh dibatalkan.',
-  'disc.module.delete.messageEmpty': 'Padam modul “{name}”? Tiada pasangan mengikutinya, jadi tiada apa-apa lagi yang dibuang. Tindakan ini tidak boleh dibatalkan.',
   'disc.module.toast.created': 'Modul dicipta',
-  'disc.module.toast.saved': 'Modul disimpan',
-  'disc.module.toast.deleted': 'Modul dipadam',
 
   /* ---- settings -------------------------------------------------------- */
   'settings.title': 'Pengguna',
@@ -475,7 +467,7 @@ export const ms: Messages = {
   'settings.empty': 'Belum ada akaun.',
   'settings.manageAccount': 'Urus akaun',
   'settings.neverSignedIn': 'Tidak pernah log masuk',
-  'settings.emailFromMember': 'E-mel log masuk (disimpan pada profil ahli)',
+  'settings.emailFromMember': 'E-mel log masuk',
   'settings.emailHint': '💡 E-mel log masuk disimpan pada profil ahli — isikan di sini dan kedua-duanya dikemas kini, jadi ahli yang belum ada e-mel pun boleh diberi akaun.',
   'settings.err.email': 'Sila masukkan e-mel log masuk',
   'settings.hallHint': '💡 Apabila terhad kepada satu kongregasi, akaun ini hanya dapat melihat dan mengurus ahli, kumpulan, perjumpaan dan latihan kongregasi tersebut. “Semua kongregasi” bermakna tanpa had.',
@@ -499,7 +491,7 @@ export const ms: Messages = {
   'settings.saveAccount': 'Simpan tetapan akaun',
   'settings.new.title': 'Akaun baharu',
   'settings.new.intro': 'Akaun log masuk mesti dikaitkan dengan seorang ahli. E-mel log masuk turut disimpan pada profil ahli itu, jadi ahli yang belum ada e-mel boleh diberikan satu di sini juga.',
-  'settings.linkMember': 'Ahli berkaitan (ahli yang sudah ada akaun disembunyikan)',
+  'settings.linkMember': 'Ahli berkaitan',
   'settings.chooseMember': 'Pilih ahli…',
   'settings.initialPassword': 'Kata laluan awal',
   'settings.initialPasswordHint': 'Sekurang-kurangnya 8 aksara — pengguna boleh menukarnya kemudian',

@@ -386,17 +386,45 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
     }
   }
 
+  /**
+   * A group meeting's hall is its GROUP's hall — `group_meetings` carries no
+   * hall column of its own, the same shape a 守望配对 has. Used for the roll
+   * call and for deleting a meeting, so a hall-pinned account cannot reach
+   * another congregation's group through a meeting id (rule G2).
+   *
+   * It resolves the group and then defers to `assertOwnsRow`, rather than
+   * re-rolling the comparison off an embedded join: the hall check stays in
+   * one place, and there is no ambiguous-relationship shape to get wrong.
+   */
+  const assertGroupMeetingWritable = async (meetingId: string) => {
+    if (!hallScope) return;
+    const row = unwrap<{ group_id: string }>(
+      await db.from('group_meetings').select('group_id').eq('id', meetingId).single(),
+    );
+    await assertOwnsRow('groups', row.group_id);
+  };
+
   // ---- Groups ---------------------------------------------------------------
   if (r0 === 'groups') {
     // /groups/meetings/:meetingId ...
     if (r1 === 'meetings' && r2) {
+      // The life-group roll call. `records` is a LIST by design — one tick is
+      // a list of one, and the column header's 全员到齐 shortcut sends the
+      // whole roster in the same call, so the two can never diverge (the same
+      // reasoning as `member_ids` on the services sheet above).
       if (r3 === 'attendance' && method === 'POST') {
+        await assertGroupMeetingWritable(r2);
         const dto = await body();
-        const records = (dto.records as Array<Record<string, unknown>>).map((r) => ({
-          meeting_id: r2,
-          member_id: r.member_id,
-          status: r.status ?? 'present',
-        }));
+        const list = Array.isArray(dto.records) ? (dto.records as Array<Record<string, unknown>>) : null;
+        if (!list || list.length === 0)
+          throw new HttpError(400, 'records must be a non-empty list of { member_id, status }');
+        if (list.length > 1000)
+          throw new HttpError(400, 'Too many records in one write — 1000 at most');
+        const records = list.map((r) => {
+          const memberId = String(r.member_id ?? '');
+          if (!memberId) throw new HttpError(400, 'every record needs a member_id');
+          return { meeting_id: r2, member_id: memberId, status: r.status ?? 'present' };
+        });
         return json(
           unwrap(
             await db
@@ -407,6 +435,7 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
         );
       }
       if (!r3 && method === 'DELETE') {
+        await assertGroupMeetingWritable(r2);
         unwrap(await db.from('group_meetings').delete().eq('id', r2).select().single());
         return json({ id: r2 });
       }
@@ -422,6 +451,9 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
       await assertRowReadable('groups', r1);
       return json(await groupAttendance(db, r1));
     } else if (r2 === 'meetings' && method === 'POST') {
+      // The roll call creates the week's meeting row lazily, so this is a
+      // write into the group and follows the same hall rule as editing it.
+      await assertOwnsRow('groups', r1);
       const dto = await body();
       return json(
         unwrap(
@@ -488,21 +520,45 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
       // counted in; it is read off the member's own hall when it is written.
       return json(await rollCallSheet(db, hallFilter, year, month));
     }
+    // ONE cell, or one whole column, through the SAME call.
+    //
+    // `member_ids` is the general shape and `member_id` its singular alias: a
+    // single tick is a list of one, and the header's 全员到齐 shortcut is the
+    // list of everybody on the sheet. Making the list the shape — rather than
+    // adding a second "bulk" endpoint — is what guarantees the shortcut can
+    // never drift from the single tick: same column resolution, same hall rule,
+    // same gate, same delete-instead-of-false. Thirteen members × two ticks ×
+    // five Sundays is 130 round trips otherwise, on a phone, over a mobile
+    // link.
     if (method === 'PUT') {
       const dto = await body();
       const column = parseColumnKey(String(dto.column ?? ''));
       if (!column)
         throw new HttpError(400, `Unknown sheet column: ${String(dto.column ?? '')}`);
-      const memberId = String(dto.member_id ?? '');
-      if (!memberId) throw new HttpError(400, 'member_id is required');
-      // Whose cell — and, for a Sunday, which congregation the tick is filed
+      const asked = Array.isArray(dto.member_ids)
+        ? dto.member_ids
+        : dto.member_id !== undefined
+          ? [dto.member_id]
+          : [];
+      const memberIds = [...new Set(asked.map((v) => String(v ?? '')).filter(Boolean))];
+      if (memberIds.length === 0)
+        throw new HttpError(400, 'member_id (or a non-empty member_ids) is required');
+      // A sheet is one congregation's active members; anything an order of
+      // magnitude past that is a malformed request, not a roll call.
+      if (memberIds.length > 1000)
+        throw new HttpError(400, 'Too many members in one write — 1000 at most');
+
+      // Whose cells — and, for a Sunday, which congregation each tick is filed
       // under. The member's OWN hall decides that (never a client-sent
       // hall_id), and a hall-pinned account may only tick its own hall's
-      // members, exactly like every other write (rule G2).
-      const member = unwrap<{ hall_id: string }>(
-        await db.from('members').select('hall_id').eq('id', memberId).single(),
+      // members, exactly like every other write (rule G2). Read once for the
+      // whole list, so a column of thirteen is still one lookup.
+      const members = unwrap<Array<{ id: string; hall_id: string }>>(
+        await db.from('members').select('id,hall_id').in('id', memberIds),
       );
-      if (hallScope && member.hall_id !== hallScope)
+      if (members.length !== memberIds.length)
+        throw new HttpError(400, 'One of those members does not exist');
+      if (hallScope && members.some((m) => m.hall_id !== hallScope))
         throw new HttpError(403, 'No permission to modify another congregation’s records');
 
       if (column.kind === 'sunday') {
@@ -518,34 +574,50 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
         // means — and the table's not-empty check forbids storing it. So an
         // untick deletes rather than writing an empty row.
         if (!preService && !service) {
-          unwrap(
-            await db
-              .from('sunday_attendance')
-              .delete()
-              .eq('hall_id', member.hall_id)
-              .eq('service_date', serviceDate)
-              .eq('member_id', memberId)
-              .select('id'),
-          );
+          // Grouped by the hall each member actually belongs to, exactly as a
+          // single untick is: on 全部堂会 the list spans congregations, and
+          // someone who moved mid-year can hold a row in each — clearing one
+          // must never reach the other.
+          const byHall = new Map<string, string[]>();
+          for (const m of members) {
+            const ids = byHall.get(m.hall_id);
+            if (ids) ids.push(m.id);
+            else byHall.set(m.hall_id, [m.id]);
+          }
+          for (const [hallId, ids] of byHall) {
+            unwrap(
+              await db
+                .from('sunday_attendance')
+                .delete()
+                .eq('hall_id', hallId)
+                .eq('service_date', serviceDate)
+                .in('member_id', ids)
+                .select('id'),
+            );
+          }
         } else {
           unwrap(
             await db
               .from('sunday_attendance')
               .upsert(
-                {
-                  hall_id: member.hall_id,
+                members.map((m) => ({
+                  hall_id: m.hall_id,
                   service_date: serviceDate,
-                  member_id: memberId,
+                  member_id: m.id,
                   pre_service: preService,
                   service,
-                },
+                })),
                 { onConflict: 'hall_id,service_date,member_id' },
               )
-              .select('id')
-              .single(),
+              .select('id'),
           );
         }
-        return json({ column: sundayColumnKey(serviceDate), member_id: memberId, ...cell });
+        return json({
+          column: sundayColumnKey(serviceDate),
+          member_ids: memberIds,
+          count: memberIds.length,
+          ...cell,
+        });
       }
 
       // A meeting column. `assertRowReadable` rather than `assertOwnsRow`: a
@@ -558,11 +630,10 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
           await db
             .from('event_attendance')
             .upsert(
-              { event_id: column.eventId, member_id: memberId, status: 'present' },
+              memberIds.map((id) => ({ event_id: column.eventId, member_id: id, status: 'present' })),
               { onConflict: 'event_id,member_id' },
             )
-            .select('id')
-            .single(),
+            .select('id'),
         );
       } else {
         // Same rule as a Sunday: an untick removes the row, so "no row" keeps
@@ -572,11 +643,16 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
             .from('event_attendance')
             .delete()
             .eq('event_id', column.eventId)
-            .eq('member_id', memberId)
+            .in('member_id', memberIds)
             .select('id'),
         );
       }
-      return json({ column: meetingColumnKey(column.eventId), member_id: memberId, attended });
+      return json({
+        column: meetingColumnKey(column.eventId),
+        member_ids: memberIds,
+        count: memberIds.length,
+        attended,
+      });
     }
   }
 
@@ -864,24 +940,18 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
         // A 守望模块 (discipleship_programs row) carries NO hall column — it is
         // church-wide configuration, like a training session or an enrollment,
         // so none of the hall helpers apply here. Access control is entirely
-        // the gate at the top of dispatch(): `readonly` cannot write at all,
-        // and DELETE is super_admin/admin only.
+        // the gate at the top of dispatch(): `readonly` cannot write at all.
+        //
+        // READ ONLY BY ID, deliberately. A module is created (POST above) and
+        // then left alone: editing or deleting one was a manager built on a
+        // misreading of what the church meant by "module", and it shipped a
+        // button whose whole job was to cascade away every pair under a module
+        // and all of their daily records. PATCH and DELETE therefore fall
+        // through to the 404 at the foot of dispatch() — the route does not
+        // exist, rather than existing and being hidden in the UI (rule G2:
+        // the server is the authority, not the page).
         if (method === 'GET') {
           return json(unwrap(await db.from('discipleship_programs').select('*').eq('id', r2).single()));
-        }
-        if (method === 'PATCH') {
-          return json(
-            unwrap(await db.from('discipleship_programs').update(await body()).eq('id', r2).select().single()),
-          );
-        }
-        if (method === 'DELETE') {
-          // This CASCADES: discipleship_pairs.program_id is `on delete
-          // cascade` and discipleship_progress.pair_id cascades from there, so
-          // every pair under the module and all their daily entries go with
-          // it. The 四十天守望 page names that blast radius (how many pairs,
-          // how many days of records) in its confirmation before calling this.
-          unwrap(await db.from('discipleship_programs').delete().eq('id', r2).select().single());
-          return json({ id: r2 });
         }
       }
     } else if (r1 === 'pairs') {

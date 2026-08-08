@@ -245,10 +245,14 @@ Tables:
 - `training_enrollments(id, training_id, member_id, status, progress, enrolled_at, completed_at, notes, unique(training_id,member_id))`
 - `training_attendance(id, session_id, member_id, attended, checked_at, notes, unique(session_id,member_id))`
 - `discipleship_programs(id, name, description, total_days=40 check ≥ 1, created_at)` — the
-  **module** (模块) in the UI; managed from `/discipleship`. It has no `hall_id`, so no hall
-  gate applies. Deleting one **cascades** to every pair under it (`program_id` is
-  `on delete cascade`) and from there to all their `discipleship_progress` rows, which is why
-  the UI's confirmation states the pair count before it calls `DELETE`.
+  **module** (模块) in the UI. It has no `hall_id`, so no hall gate applies. It is **created
+  once and then read**: the app has `GET`/`POST` and `GET /:id` only. There is no edit and no
+  delete, on the server or in the UI — a delete here would **cascade** to every pair under it
+  (`program_id` is `on delete cascade`) and from there to all their `discipleship_progress`
+  rows, and the manager that offered one was a misreading of what the church calls a "module"
+  (they meant the add-on switches on `/church`). The create path is kept for exactly one
+  case: a church with no module at all, whose 四十天守望 page would otherwise be
+  unrecoverable from the UI.
 - `discipleship_pairs(id, program_id, mentor_id→members, trainee_id→members, parent_pair_id?, status, start_date, form_token uuid unique, created_at, unique(program_id,trainee_id), check mentor≠trainee)`
 - `discipleship_progress(id, pair_id, day_number, entry_date, completed, notes, timestamps, unique(pair_id,day_number))`
 - View `discipleship_pair_summary` — per-pair days_completed + percent_complete for the pastor overview.
@@ -263,8 +267,8 @@ Tables:
 | `/members` | 成员目录 | filter chips by 身份(derived) + 小组, search, table, create |
 | `/members/[id]` | 成员详情 | profile + **个人培训档案** + 门训对子 |
 | `/groups` | 小组管理 · 列表 | table of all groups (小组名称+标签, 组长, 组员人数, 新成员人数, 小组状态, 聚会时间地点), sortable, filter by 标签/星期几, click a row → detail |
-| `/groups/[id]` | 小组详情 | create/delete, member allocation (simple list), **铁三角** leader picker (the only identity assignment here), roll-call card for the group's OWN meetings (year/month, then export at the end of its toolbar) |
-| `/events` | 崇拜与祷告会 Services | ONE 聚会点名 sheet: members × (the month's Sundays with 会前 / 主日 ticks + each hand-added meeting as a dated 到场 column), per-tick totals, export; ＋新增聚会, edit/delete from a meeting's column header |
+| `/groups/[id]` | 小组详情 | create/delete, member allocation (simple list), **铁三角** leader picker (the only identity assignment here), roll-call card for the group's OWN meetings (year/month, then export at the end of its toolbar; each week column has a check-all in its header) |
+| `/events` | 崇拜与祷告会 Services | ONE 聚会点名 sheet: members × (the month's Sundays with 会前 / 主日 ticks + each hand-added meeting as a dated 到场 column), a check-all per sub-column, per-tick totals, export; ＋新增聚会, edit/delete from a meeting's column header |
 | `/donations` | 奉献管理 | fund summary tiles + records table + create |
 | `/trainings` | 培训&活动 | catalog cards for both shapes, kind filter, ＋新增课程 / ＋新增活动 |
 | `/trainings/[id]` | 培训 / 活动详情 | a course: sessions, enrolment approval, **核对名单** grid, per-session attendance. An activity: no session list, one 「到场」 column |
@@ -283,15 +287,15 @@ Tables:
 | --- | --- |
 | Members | `GET/POST /members`, `GET/PATCH/DELETE /members/:id`, `GET /members/:id/trainings` (filters: `church_role`, `group_position`, `group_id`, `q`) |
 | Halls | `GET /halls` — 堂会 list (read-only; a hall-scoped account only sees its own) |
-| Groups | `GET/POST /groups`, `GET/PATCH/DELETE /groups/:id` (member positions live on `members`) |
+| Groups | `GET/POST /groups`, `GET/PATCH/DELETE /groups/:id` (member positions live on `members`), `GET /groups/:id/attendance`, `POST /groups/:id/meetings`, `DELETE /groups/meetings/:meetingId`, `POST /groups/meetings/:meetingId/attendance` `{records[{member_id,status}]}` — one tick or a whole column in the same call; a group meeting's hall is its **group's** hall, checked server-side |
 | Households | `GET/POST /households`, `GET/PATCH/DELETE /households/:id` |
-| 聚会点名 | `GET /attendance/sheet?year&month[&hall_id]` → `{hall_id, columns[{key, kind, date, ticks[], meeting}], rows[{member, cells{key:{…ticks}}}]}` — no `hall_id` means every congregation's members; `PUT /attendance/sheet` `{column, member_id, …ticks}` — one cell, created / updated / **deleted** (every tick false) by the same call, in `sunday_attendance` or `event_attendance` depending on the column. 400 on a non-Sunday `sunday:` column and on a column key the server never handed out |
+| 聚会点名 | `GET /attendance/sheet?year&month[&hall_id]` → `{hall_id, columns[{key, kind, date, ticks[], meeting}], rows[{member, cells{key:{…ticks}}}]}` — no `hall_id` means every congregation's members; `PUT /attendance/sheet` `{column, member_ids[], …ticks}` → `{column, member_ids[], count, …ticks}` — the cells of **one or many** members in one call (`member_id` is the singular alias), created / updated / **deleted** (every tick false) by the same call, in `sunday_attendance` or `event_attendance` depending on the column. A list is the general shape so the column check-all cannot drift from a single tick: same gate, same hall rule (each row filed under **that member's own** hall), same delete-instead-of-false. 400 on a non-Sunday `sunday:` column, a column key the server never handed out, an empty list, or an id that is not a member (refused whole — never half-applied) |
 | Events | `GET/POST /events`, `GET/PATCH/DELETE /events/:id` — the hand-added meetings; their attendance is a column on the sheet above |
 | Donations | `GET/POST /donations`, `GET /donations/summary`, `PATCH/DELETE /donations/:id` |
 | Trainings & Activities | `GET/POST /trainings`, `GET/PATCH/DELETE /trainings/:id`, `GET /trainings/:id/namelist`, **public** `GET/POST /trainings/enroll/:id`. `kind` is validated server-side (400 on anything but `course`/`activity`); creating an `activity` forces `total_sessions: 1` and inserts its single session |
 | Sessions | `POST /trainings/:id/sessions`, `PATCH/DELETE /trainings/sessions/:sessionId`, `POST /trainings/sessions/:sessionId/attendance` |
 | Enrollment | `POST /trainings/:id/enroll`, `PATCH/DELETE /trainings/enrollments/:enrollmentId` |
-| Discipleship | `GET/POST /discipleship/programs`, `GET/PATCH/DELETE /discipleship/programs/:id` (the module — no hall column, so no hall gate), `GET /discipleship/programs/:id/overview`, `GET/POST /discipleship/pairs`, `GET/PATCH/DELETE /discipleship/pairs/:id`, `POST /discipleship/pairs/:id/progress` |
+| Discipleship | `GET/POST /discipleship/programs`, **`GET` only** on `/discipleship/programs/:id` (the module — no hall column, so no hall gate; PATCH and DELETE were removed with the module manager and now 404), `GET /discipleship/programs/:id/overview`, `GET/POST /discipleship/pairs`, `GET/PATCH/DELETE /discipleship/pairs/:id`, `POST /discipleship/pairs/:id/progress` |
 | **Private form** | `GET /discipleship/form/:token`, `POST /discipleship/form/:token/progress` (no login) |
 
 ---

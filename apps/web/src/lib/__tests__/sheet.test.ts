@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  columnTickState,
   MEETING_TICKS,
   parseColumnKey,
   sheetColumns,
@@ -134,5 +135,38 @@ describe('parseColumnKey', () => {
   it('refuses anything it did not hand out', () => {
     for (const junk of ['', 'sunday', 'sunday:', ':2026-08-02', 'weekday:2026-08-02', null, undefined])
       expect(parseColumnKey(junk)).toBeNull();
+  });
+});
+
+/**
+ * What the check-all in a column header shows, and therefore which way it goes
+ * when it is pressed: `all` clears the column (destructive — the page puts that
+ * behind a confirmation), anything else fills it.
+ */
+describe('columnTickState', () => {
+  it('is none when a column has no rows at all', () => {
+    expect(columnTickState([])).toBe('none');
+  });
+
+  it('is none when nobody is ticked', () => {
+    expect(columnTickState([false])).toBe('none');
+    expect(columnTickState([false, false, false])).toBe('none');
+  });
+
+  it('is all when everybody is ticked', () => {
+    expect(columnTickState([true])).toBe('all');
+    expect(columnTickState([true, true, true])).toBe('all');
+  });
+
+  it('is some for anything in between — never rounded to all or none', () => {
+    expect(columnTickState([true, false])).toBe('some');
+    expect(columnTickState([false, true])).toBe('some');
+    expect(columnTickState([true, true, false])).toBe('some');
+    expect(columnTickState([false, false, true])).toBe('some');
+  });
+
+  it('says all for a single-member column that is ticked', () => {
+    // A church hall with one person on the sheet still has to be clearable.
+    expect(columnTickState([true])).toBe('all');
   });
 });

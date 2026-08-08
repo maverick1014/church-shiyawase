@@ -118,3 +118,25 @@ export function sheetTicks(columns: readonly SheetColumn[]): SheetTickName[] {
   for (const c of columns) for (const t of c.ticks) present.add(t);
   return TICK_ORDER.filter((t) => present.has(t));
 }
+
+/**
+ * How one whole column stands: is everybody ticked, nobody, or somebody.
+ *
+ * This is what the column's check-all control shows and what decides which way
+ * it goes when it is pressed — "all" unticks the column, anything else ticks
+ * the rest of it. `some` is a real third state (drawn as an indeterminate
+ * checkbox), never rounded to on or off: a header that claimed "everyone" while
+ * three people were unticked would be a lie about records.
+ *
+ * A column with no rows at all is `none` — there is nothing to untick, and the
+ * control is disabled by the caller anyway.
+ */
+export type ColumnTickState = 'none' | 'some' | 'all';
+
+export function columnTickState(flags: readonly boolean[]): ColumnTickState {
+  if (flags.length === 0) return 'none';
+  let on = 0;
+  for (const f of flags) if (f) on++;
+  if (on === 0) return 'none';
+  return on === flags.length ? 'all' : 'some';
+}

@@ -596,7 +596,13 @@ async function main() {
       await page.waitForURL(/\/groups\/[0-9a-f-]+/, { timeout: 15000 });
       await page.locator('text=Leadership trio').first().waitFor({ timeout: 15000 });
       check('group detail shows the leadership trio', true);
-      check('the leadership assignment dropdowns are present', (await page.locator('select.sm').count()) > 0);
+      // Every member picker is a type-to-search combobox now, never a native
+      // <select>: on a phone a <select> is a system wheel with no search at
+      // all, and the church's member list only gets longer.
+      const trioPick = page.locator('.trio-pick input[role=combobox]');
+      check('the three leadership seats are type-to-search comboboxes',
+        (await trioPick.count()) === 3 && (await page.locator('select.trio-pick').count()) === 0,
+        `${await trioPick.count()} comboboxes`);
       check('the year / month selects are present', (await page.locator('select').count()) >= 2);
       await page.locator('th:has-text("Week")').first().waitFor({ timeout: 20000 });
       check('weekly attendance renders a column per Sunday', (await page.locator('th:has-text("Week")').count()) > 0,
@@ -651,6 +657,75 @@ async function main() {
         .find((r) => r.member?.id === fxGroup.member.id)?.cells
         ?.some((c) => c.status === 'present');
       check('unticking it takes the mark off again', stillMarked !== true);
+
+      /* -- the column check-all (全员到齐) ------------------------------- */
+      // Marking a roster one person at a time is what this shortcut exists to
+      // stop. Safe to drive here: the group, its roster and its meetings were
+      // all created by this run.
+      const presentIn = (sheet) =>
+        (sheet.rows || []).filter((r) => (r.cells || []).some((c) => c.status === 'present')).length;
+      const weekAll = sheetCard.locator('thead input.sheet-tick-all');
+      const weekCount = await page.locator('th:has-text("Week")').count();
+      check('every week column carries a check-all in its header',
+        (await weekAll.count()) === weekCount, `${await weekAll.count()} of ${weekCount}`);
+      const firstAll = weekAll.first();
+      check('…which reads as empty while nobody is ticked',
+        !(await firstAll.isChecked()) && (await firstAll.evaluate((el) => el.indeterminate)) === false);
+
+      await firstAll.click();
+      await w(1800);
+      check('filling a whole column needs no confirmation — nothing is lost',
+        (await page.locator('.modal-backdrop').count()) === 0);
+      const filled = await apiGet(`/groups/${fxGroup.id}/attendance`);
+      check('the header check-all marks the whole roster',
+        presentIn(filled) === (filled.rows || []).length && (filled.rows || []).length > 0,
+        `${presentIn(filled)} of ${(filled.rows || []).length}`);
+      check('…and the header then reads as fully ticked', await firstAll.isChecked());
+
+      // Clearing throws real marks away, so it must ask first and say how many
+      // (rule G3).
+      await firstAll.click();
+      await page.locator('.modal-backdrop').last().waitFor({ timeout: 8000 });
+      const clearCopy = await page.locator('.modal-backdrop').last().innerText();
+      check('clearing a whole column asks first, names the column and warns it is final',
+        /Week\s*\d/.test(clearCopy) && /cannot be undone/i.test(clearCopy),
+        clearCopy.replace(/\s+/g, ' ').slice(0, 140));
+      await page.locator('.modal-backdrop').last().locator('button:has-text("Clear column")').last().click();
+      await w(1800);
+      const emptied = await apiGet(`/groups/${fxGroup.id}/attendance`);
+      check('confirming clears every mark in that column', presentIn(emptied) === 0,
+        `${presentIn(emptied)} still present`);
+
+      /* -- the member combobox: type, filter, pick ----------------------- */
+      // Driven on the leadership seat, whose options are this group's own
+      // members — so the person typed for and the person picked are both
+      // fixtures this run created.
+      const seat = trioPick.first();
+      await seat.click();
+      await page.locator('.combo-list').first().waitFor({ timeout: 8000 });
+      check('clicking a member picker opens its option list',
+        (await page.locator('.combo-list .combo-option').count()) > 0,
+        `${await page.locator('.combo-list .combo-option').count()} options`);
+      await seat.fill('ZZ_NOBODY_BY_THIS_NAME');
+      await w(400);
+      check('a query nobody matches says so instead of showing a stale list',
+        (await page.locator('.combo-empty').count()) === 1 &&
+          (await page.locator('.combo-list .combo-option').count()) === 0);
+      await seat.fill(fxGroup.member.name);
+      await w(400);
+      const narrowed = await page.locator('.combo-list .combo-option').count();
+      check('typing part of a name narrows the list to that member', narrowed === 1, `${narrowed} options`);
+      await page.locator('.combo-list .combo-option').first().click();
+      await w(1800);
+      const assigned = await apiGet(`/groups/${fxGroup.id}`);
+      check('picking an option saves that member, not the typed text',
+        (assigned.members || []).find((m) => m.id === fxGroup.member.id)?.group_position === 'leader',
+        JSON.stringify((assigned.members || []).map((m) => m.group_position)));
+      check('…and the field then reads back the member it saved',
+        (await seat.inputValue()).includes(fxGroup.member.name),
+        await seat.inputValue());
+      check('the option list closes once something is picked',
+        (await page.locator('.combo-list').count()) === 0);
     } finally {
       await fxGroup.remove();
     }
@@ -731,6 +806,76 @@ async function main() {
       const wentBack = await sheetCells();
       check('unticking the meeting leaves no row behind either',
         !wentBack[`meeting:${fxMeeting.id}`], JSON.stringify(wentBack));
+
+      /* -- the column check-all (全员到齐) ------------------------------- */
+      // Deliberately driven on THIS RUN'S OWN MEETING column and never on a
+      // Sunday one. The Sundays on this sheet hold the congregation's real
+      // attendance, and clearing one of those columns would delete records the
+      // church actually entered. The fixture meeting holds nothing but what
+      // this run writes, and deleting it below takes every tick with it.
+      const meetingAll = page.locator(`input.sheet-tick-all[aria-label*="${fxMeeting.name}"]`);
+      check('a column carries its check-all in the header, under the date',
+        (await meetingAll.count()) === 1);
+      check('…reading as empty while nobody is ticked',
+        !(await meetingAll.isChecked()) && (await meetingAll.evaluate((el) => el.indeterminate)) === false);
+      const sundayAlls = await page.locator('input.sheet-tick-all').count();
+      // One per sub-column: two per Sunday (会前 / 主日) plus one per meeting.
+      check('every sub-column gets its own — a Sunday’s two ticks are filled separately',
+        sundayAlls >= 2 * (await page.locator('th:has-text("Pre-service")').count()) + 1,
+        `${sundayAlls} check-alls`);
+
+      // One person ticked out of the whole sheet is the in-between state, and
+      // it has to be reported honestly rather than rounded to on or off.
+      await meetingTick.first().click();
+      await w(1500);
+      check('one member ticked shows the header as indeterminate, not as checked',
+        (await meetingAll.evaluate((el) => el.indeterminate)) === true &&
+          !(await meetingAll.isChecked()));
+
+      // Filling the column is ONE request for the whole sheet, not one per
+      // member — the reason the write takes a list at all.
+      let columnPuts = 0;
+      const countPut = (r) => {
+        if (r.method() === 'PUT' && r.url().includes('/api/attendance/sheet')) columnPuts++;
+      };
+      page.on('request', countPut);
+      await meetingAll.click();
+      await w(2500);
+      page.off('request', countPut);
+      check('filling a whole column is ONE request, not one per member',
+        columnPuts === 1, `${columnPuts} PUT(s)`);
+      check('…and needs no confirmation, because nothing is lost',
+        (await page.locator('.modal-backdrop').count()) === 0);
+      const wholeSheet = await apiGet(`/attendance/sheet?year=${SHEET_YEAR}&month=${Number(SHEET_MONTH)}`);
+      const onColumn = (wholeSheet.rows || []).filter(
+        (r) => r.cells?.[`meeting:${fxMeeting.id}`]?.attended === true,
+      ).length;
+      check('every member on the sheet is marked by that one call',
+        onColumn === (wholeSheet.rows || []).length && onColumn > 0,
+        `${onColumn} of ${(wholeSheet.rows || []).length}`);
+      check('…and the header now reads as fully ticked', await meetingAll.isChecked());
+
+      // Clearing throws real records away, so it asks first and says how many.
+      await meetingAll.click();
+      await page.locator('.modal-backdrop').last().waitFor({ timeout: 8000 });
+      const clearCopy = await page.locator('.modal-backdrop').last().innerText();
+      check('clearing a whole column asks first, names it and counts what goes',
+        clearCopy.includes(fxMeeting.name) && new RegExp(`${onColumn}\\s+ticks`).test(clearCopy) &&
+          /cannot be undone/i.test(clearCopy),
+        clearCopy.replace(/\s+/g, ' ').slice(0, 160));
+      // Backing out must leave the column exactly as it was.
+      await page.locator('.modal-backdrop').last().locator('button:has-text("Cancel")').last().click();
+      await w(1200);
+      check('backing out of that confirmation changes nothing',
+        (await sheetCells())[`meeting:${fxMeeting.id}`]?.attended === true);
+
+      await meetingAll.click();
+      await page.locator('.modal-backdrop').last().waitFor({ timeout: 8000 });
+      await page.locator('.modal-backdrop').last().locator('button:has-text("Clear column")').last().click();
+      await w(2500);
+      const clearedSheet = await apiGet(`/attendance/sheet?year=${SHEET_YEAR}&month=${Number(SHEET_MONTH)}`);
+      check('confirming leaves no row behind anywhere in that column',
+        (clearedSheet.rows || []).every((r) => !r.cells?.[`meeting:${fxMeeting.id}`]));
 
       // The meeting's own name in the header is where it is edited from.
       await meetingHead.locator(`button:has-text("${fxMeeting.name}")`).first().click();
@@ -871,93 +1016,36 @@ async function main() {
       await fxPair.remove();
     }
 
-    /* -- forty days · modules --------------------------------------------- */
-    // A 守望模块 (discipleship_programs row) is the definition a pair hangs
-    // off — its name and how many days the pair follows. It had no UI at all,
-    // so when the church's single row was deleted during a data cleanup the
-    // whole feature went dark and only raw SQL could bring it back. This
-    // module drives the create → see → edit → delete cycle through the
-    // dialogs, on a throwaway module of its own: the church's real one is only
-    // ever read, never edited and never deleted (deleting a module cascades to
-    // every pair under it and all of their daily records).
-    mod('forty days · module management');
-    const moduleName = fixtureName('MODULE');
-    /** `{ path, remove }` once the module exists; null until then. */
-    let fxModule = null;
-    const openModules = async () => {
-      await page.locator('button:visible:has-text("Modules")').first().click();
-      await page.locator('.modal').waitFor({ timeout: 8000 });
-    };
-    /** The list dialog's row for one module — Edit / Delete live on it. */
-    const moduleRow = () => page.locator('.modal .flex.items-center', { hasText: moduleName });
-    try {
-      await page.goto(`${BASE}/discipleship`, { waitUntil: 'domcontentloaded' });
-      const modulesBtn = page.locator('button:visible:has-text("Modules")');
-      await modulesBtn.first().waitFor({ timeout: 20000 });
-      check('the forty-days page offers a module manager', (await modulesBtn.count()) > 0);
-
-      await openModules();
-      check('the module dialog offers a create button',
-        (await page.locator('.modal button:has-text("New module")').count()) > 0);
-      await page.locator('.modal button:has-text("New module")').first().click();
-      await page.locator('.modal input').first().waitFor({ timeout: 8000 });
-      await page.locator('.modal input').first().fill(moduleName);
-      // name · description · total days — the length is the third field.
-      await page.locator('.modal input').nth(2).fill('9');
-      await page.locator('.modal button:has-text("Save")').first().click();
-      await w(1500);
-      check('creating a module adds it to the module list', (await moduleRow().count()) === 1);
-
-      // Register it for cleanup the moment the server confirms it exists, so a
-      // failure below can never leave a stray module on the live database.
-      const created = (await apiGet('/discipleship/programs')).find((p) => p.name === moduleName);
-      check('the created module is stored with the length that was typed',
-        !!created && created.total_days === 9, String(created?.total_days));
-      if (created) {
-        const path = `/discipleship/programs/${created.id}`;
-        fxModule = { path, remove: disposable(`discipleship module ${moduleName}`, path) };
-      }
-
-      // Close the dialog: with two or more modules the page grows a selector,
-      // and it belongs in the filters half of the page bar, never the actions.
-      await page.locator('.modal button:has-text("Close")').first().click();
-      await w(600);
-      const selectorOptions = await page.locator('.page-bar-filters select option').allInnerTexts();
-      check('a second module makes the page bar offer a module selector',
-        selectorOptions.includes(moduleName), selectorOptions.join(' | ').slice(0, 120));
-      check('the selector is not mixed into the action row',
-        (await page.locator('.page-bar-actions select').count()) === 0);
-
-      // Edit: change the length and confirm the change actually persisted.
-      await openModules();
-      await moduleRow().locator('button:has-text("Edit")').first().click();
-      await page.locator('.modal input').first().waitFor({ timeout: 8000 });
-      check('the edit form opens on that module',
-        (await page.locator('.modal input').first().inputValue()) === moduleName);
-      await page.locator('.modal input').nth(2).fill('15');
-      await page.locator('.modal button:has-text("Save")').first().click();
-      await w(1500);
-      const edited = (await apiGet('/discipleship/programs')).find((p) => p.name === moduleName);
-      check('editing a module saves its new length', edited?.total_days === 15, String(edited?.total_days));
-
-      // Delete: the confirmation must spell out what goes with it (rule G3).
-      await moduleRow().locator('button:has-text("Delete")').first().click();
-      await page.locator('.modal-backdrop').last().waitFor({ timeout: 8000 });
-      const confirmText = await page.locator('.modal-backdrop').last().innerText();
-      check('deleting a module asks first, and says what it destroys',
-        confirmText.includes(moduleName) && /cannot be undone/i.test(confirmText),
-        confirmText.replace(/\s+/g, ' ').slice(0, 140));
-      await page.locator('.modal-backdrop').last().locator('button:has-text("Delete")').last().click();
-      await w(1500);
-      const afterDelete = await apiGet('/discipleship/programs');
-      const gone = !afterDelete.some((p) => p.name === moduleName);
-      check('deleting a module removes it', gone);
-      // Deleted through the UI — take it off the sweep list so the run does not
-      // report a leftover it already cleaned up.
-      if (gone && fxModule) { forget(fxModule.path); fxModule = null; }
-      check('the church’s own module is untouched', afterDelete.length >= 1, `${afterDelete.length} left`);
-    } finally {
-      if (fxModule) await fxModule.remove();
+    /* -- forty days · the module is read, never managed -------------------- */
+    // There WAS a 守望模块 manager here — a Modules button over a list dialog
+    // with an edit form and a per-row delete, driven through a throwaway
+    // module of its own. It was a misreading of what the church meant by
+    // "module" and it is gone, along with the PATCH/DELETE routes behind it.
+    // What is asserted now is that it is gone from BOTH halves: no button in
+    // the UI, and no route on the server (rule G2 — hiding a control is not
+    // removing a capability). The church's own module is only ever read, so
+    // this module creates no fixture and has nothing to clean up.
+    mod('forty days · no module manager');
+    await page.goto(`${BASE}/discipleship`, { waitUntil: 'domcontentloaded' });
+    await page.locator('.chip', { hasText: 'Active' }).first().waitFor({ timeout: 20000 });
+    check('the page offers no module manager button',
+      (await page.locator('button:visible:has-text("Modules")').count()) === 0);
+    const liveModules = await apiGet('/discipleship/programs');
+    check('the church still has its module, and it is readable',
+      Array.isArray(liveModules) && liveModules.length >= 1, `${liveModules?.length} module(s)`);
+    if (liveModules?.[0]?.id) {
+      const moduleId = liveModules[0].id;
+      const patched = await ctx.request.patch(`${BASE}/api/discipleship/programs/${moduleId}`, {
+        data: { total_days: 999 },
+      });
+      check('editing a module by hand is refused — the route is gone',
+        patched.status() === 404, `status ${patched.status()}`);
+      const deleted = await ctx.request.delete(`${BASE}/api/discipleship/programs/${moduleId}`);
+      check('deleting one by hand is refused too', deleted.status() === 404, `status ${deleted.status()}`);
+      const afterModules = await apiGet('/discipleship/programs');
+      check('…and the church’s module survived both attempts',
+        afterModules.find((p) => p.id === moduleId)?.total_days === liveModules[0].total_days,
+        String(afterModules.find((p) => p.id === moduleId)?.total_days));
     }
 
     /* -- user management -------------------------------------------------- */
@@ -987,7 +1075,58 @@ async function main() {
     // be given a login without a detour to the member page.
     check('the account detail exposes an editable login email',
       (await page.locator('.card input[type=email]:not([disabled])').count()) > 0);
+
+    // Cancel / Save is pinned to the foot of the viewport instead of sitting
+    // at the bottom of a long form, so it is reachable from anywhere on the
+    // page. Sticky, not fixed — measured at the TOP of the page, where a
+    // non-sticky row would be far below the fold.
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await w(400);
+    const footer = page.locator('.detail-footer');
+    check('the account form has one pinned Cancel / Save row', (await footer.count()) === 1);
+    const footerBox = await footer.first().evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      return {
+        position: getComputedStyle(el).position,
+        top: Math.round(r.top),
+        bottom: Math.round(r.bottom),
+        viewport: window.innerHeight,
+        scrollable: document.documentElement.scrollHeight > window.innerHeight,
+      };
+    });
+    check('…which is sticky and on screen from the top of the form',
+      footerBox.position === 'sticky' && footerBox.scrollable &&
+        footerBox.top >= 0 && footerBox.bottom <= footerBox.viewport + 1,
+      JSON.stringify(footerBox));
+    // It stays in the flow, so it can never sit on top of the last row of
+    // content: scrolled to the very bottom, nothing overlaps it.
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+    await w(400);
+    const covers = await footer.first().evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      const hit = document.elementFromPoint(r.left + r.width / 2, r.top - 6);
+      return !!hit && el.contains(hit);
+    });
+    check('…and never covers the last row of content', covers === false);
     await shot('08-settings');
+
+    // The linked-member picker on the create form is the same shared
+    // combobox, not a native <select> (rule G4).
+    await page.goto(`${BASE}/settings`, { waitUntil: 'domcontentloaded' });
+    await page.locator('button:visible:has-text("New account")').first().waitFor({ timeout: 20000 });
+    await page.locator('button:visible:has-text("New account")').first().click();
+    await page.locator('.modal').waitFor({ timeout: 8000 });
+    check('the new-account form picks its member with a searchable combobox',
+      (await page.locator('.modal input[role=combobox]').count()) === 1);
+    // Two labels used to carry parenthetical asides the form no longer needs.
+    const newAccountCopy = await page.locator('.modal').innerText();
+    check('its labels are plain, without the explanations in brackets',
+      !/members with an account are hidden/i.test(newAccountCopy) &&
+        !/saved to the member profile/i.test(newAccountCopy),
+      newAccountCopy.replace(/\s+/g, ' ').slice(0, 160));
+    await page.locator('.modal button:has-text("Cancel")').first().click();
+    await w(300);
+    check('the new-account form closes again', (await page.locator('.modal').count()) === 0);
 
     /* -- church settings · add-on module catalog -------------------------- */
     // 四十天守望 is an ADD-ON, not a core module: a church may not run it. The

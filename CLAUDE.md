@@ -17,6 +17,14 @@ nav href it owns and the API prefixes it owns; today the one entry is
 `discipleship` (四十天守望). Core surfaces are not switchable and are not in
 the registry.
 
+Not to be confused with a **守望模块** (`discipleship_programs`), which is the
+definition a 40-day pair hangs off. That one is **created once and then read**:
+`GET`/`POST` and `GET /:id`, no edit and no delete anywhere — the manager that
+offered them misread which "module" the church meant, and its delete cascaded
+away every pair and every day of their records. The create path survives only
+for the empty state: with no module the page has nothing to hang pairs on, and
+no way back except SQL.
+
 **培训 became 培训&活动 (Trainings & Activities).** Everything that is neither a
 Sunday nor a hand-added meeting lives on `/trainings` now — a brothers' hike, a
 sisters' baking afternoon — because an activity is exactly what sign-ups plus a
@@ -42,7 +50,16 @@ rather than storing falses — in either table.
 The page knows about neither table: `GET /api/attendance/sheet` hands each
 column an opaque `key` (`sunday:YYYY-MM-DD` / `meeting:<id>`) and
 `PUT /api/attendance/sheet` quotes it back, so the server decides where a tick
-lands. Which columns a month has, and in what order, is a pure function in
+lands. That write takes a **list** — `member_ids` (`member_id` is the singular
+alias) — because both sheets carry a **check-all in every column header**
+(全员到齐): a single tick is a list of one and a whole column is the list of
+everybody, down the same path, through the same gate, under the same hall rule.
+The life-group sheet does the same through its own endpoint, whose `records`
+was already a list. Filling a column asks nothing; clearing one throws records
+away and so goes through `useConfirm({ danger: true })` naming how many ticks
+go. The header's three states (`columnTickState` in `lib/sheet.ts`) are drawn
+by the shared `SheetTickAll`, an indeterminate checkbox — "some" is shown
+honestly, never rounded to on or off. Which columns a month has, and in what order, is a pure function in
 `lib/sheet.ts` (unit-tested under a non-Malaysia `TZ`). On 全部堂会 the sheet
 simply lists **every** member — the old "pick a congregation" 400 is gone —
 while a tick is still filed under the member's **own** hall, so what was
@@ -66,9 +83,13 @@ Testing layers (in `apps/web`):
   roll-call sheet and the same for a hand-added meeting's own column,
   discipleship day-notes, the life-group card's own meetings sheet, a
   培训&活动 course/activity filter plus an
-  activity's single-column roll call, an interface-language round-trip, a
-  守望模块 create→edit→delete cycle, an add-on module off→on cycle on 教会设置,
-  a create→delete member write-cycle).
+  activity's single-column roll call, a column check-all on both sheets, a
+  member combobox typed→filtered→picked, an interface-language round-trip, the
+  absence of the 守望模块 manager in the UI *and* on the server, an add-on
+  module off→on cycle on 教会设置, a create→delete member write-cycle).
+  The check-all round trip is driven **only on a meeting column this run
+  created** — never on a Sunday, whose ticks are the congregation's real
+  attendance and would be genuinely deleted.
   It restores anything it changes — including the module states, which it
   reads first and puts back in a `finally`. It runs a tiny in-process reverse proxy so the browser
   works even behind an egress proxy. `UI_E2E_PASSWORD` is required (never
@@ -174,8 +195,11 @@ like 移除/清空/重置 that discards data) MUST go through the shared
 ### G4 — One mechanism, not per-page reimplementations (altitude)
 Reuse the shared primitives instead of re-rolling them per page:
 `Modal`, `Field`, `PasswordInput`, `useConfirm`, `useToast`, `RoleBadge`,
-`Avatar`, `PairProgressModal`, `MonthPicker`/`SheetTick` (the pieces the 聚会
-and 小组 attendance sheets share), `Segmented` (every segmented control),
+`Avatar`, `PairProgressModal`, `MonthPicker`/`SheetTick`/`SheetTickAll` (the
+pieces the 聚会 and 小组 attendance sheets share), `Segmented` (every segmented
+control), `Combobox` (**every** picker whose options are members — a native
+`<select>` is a system wheel with no search on a phone, and the member list only
+grows; its matching rules are `lib/combobox.ts`),
 `exportRows`/`exportMatrix` (`lib/export.ts`),
 `api` (`lib/api.ts`), and the label/style helpers in `lib/labels.ts`
 (`roleTagStyle`, `roleDot`, `memberRoleZh`, `positionZh`, status/category

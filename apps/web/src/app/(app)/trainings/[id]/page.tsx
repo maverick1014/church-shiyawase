@@ -6,7 +6,7 @@ import { useFetch } from '@/lib/hooks';
 import { useSortableRows } from '@/lib/sort';
 import { api } from '@/lib/api';
 import { usePageChrome, useMe } from '@/components/AppShell';
-import { BackButton, ErrorBanner, ExportButton, Field, LinkIcon, Modal, SkeletonCard, SkeletonScreen, SortTh, useConfirm, useToast } from '@/components/ui';
+import { BackButton, Combobox, ErrorBanner, ExportButton, Field, LinkIcon, Modal, SkeletonCard, SkeletonScreen, SortTh, useConfirm, useToast } from '@/components/ui';
 import { can } from '@/lib/perms';
 import { exportMatrix } from '@/lib/export';
 import { EnrollmentRow, MemberRow, NamelistResponse, SessionRow, TrainingDetail } from '@/lib/types';
@@ -42,6 +42,8 @@ export default function TrainingDetailPage() {
   const [editOpen, setEditOpen] = useState(false);
   const [sessionOpen, setSessionOpen] = useState(false);
   const [editSession, setEditSession] = useState<SessionRow | null>(null);
+  /** The enrolment picker's own selection; cleared once the person is added. */
+  const [enrolPick, setEnrolPick] = useState('');
 
   // Hooks must run unconditionally on every render (rules of hooks) — this
   // has to sit above the loading/error early-returns below, not after them.
@@ -109,6 +111,7 @@ export default function TrainingDetailPage() {
 
   const enrollMember = async (memberId: string) => {
     if (!memberId) return;
+    setEnrolPick('');
     try {
       await api.post(`/trainings/${id}/enroll`, { member_id: memberId });
       detail.reload();
@@ -314,14 +317,23 @@ export default function TrainingDetailPage() {
           </div>
           {perms.write && (
             <div className="flex gap-8 mb-14">
-              <select defaultValue="" onChange={(e) => { enrollMember(e.target.value); e.target.value = ''; }} style={{ flex: 1 }}>
-                <option value="">{tr('training.addEnrollee')}</option>
-                {(members.data ?? [])
+              {/* Type-to-search, like every other member field (rule G4).
+                  Picking somebody enrols them straight away and the field
+                  clears itself for the next one. */}
+              <Combobox
+                value={enrolPick}
+                onChange={enrollMember}
+                options={(members.data ?? [])
                   .filter((m) => !t.enrollments.some((e) => e.member_id === m.id))
-                  .map((m) => (
-                    <option key={m.id} value={m.id}>{m.full_name}</option>
-                  ))}
-              </select>
+                  .map((m) => ({
+                    value: m.id,
+                    label: m.full_name,
+                    hint: tr(roleKey(memberRole(m))),
+                  }))}
+                placeholder={tr('training.addEnrollee')}
+                ariaLabel={tr('training.addEnrollee')}
+                style={{ flex: 1 }}
+              />
             </div>
           )}
           <div className="enrol-list">

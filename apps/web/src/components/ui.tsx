@@ -6,11 +6,15 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useId,
+  useMemo,
   useRef,
   useState,
 } from 'react';
 import { initialOf, roleDot, roleKey, roleTagStyle } from '@/lib/labels';
+import { comboboxFilter, nextActiveIndex, type ComboOption } from '@/lib/combobox';
 import { useHallScope } from '@/lib/hall';
+import type { ColumnTickState } from '@/lib/sheet';
 import { useLang, useT } from '@/lib/i18n';
 
 /* -------------------------------------------------------------------------
@@ -678,6 +682,223 @@ export function HallSelect({
   );
 }
 
+/* -------------------------------------------------------------------------
+ * Combobox — the one "pick one out of many" control
+ * ---------------------------------------------------------------------- */
+
+export type { ComboOption };
+
+/**
+ * A `<select>` you can type into. EVERY member picker in the app is one of
+ * these (rule G4): a native `<select>` makes you scroll a list that is only
+ * going to get longer, and on a phone it is a system wheel with no search at
+ * all — which is exactly the complaint this answers.
+ *
+ * What it is, mechanically: a real `<input role="combobox">` over a
+ * `role="listbox"` of `role="option"` rows, wired with `aria-expanded` and
+ * `aria-activedescendant` so the highlighted row is announced without a mouse
+ * ever being involved. ↑/↓ move, Enter picks, Esc closes and puts the typed
+ * text back to the selected label, Tab leaves. The list is filtered by
+ * `comboboxFilter` (`lib/combobox.ts`, unit-tested there).
+ *
+ * Geometry comes from the shared control classes — the input is a plain
+ * `input`, so it is sized by `--control-h` (or `--control-h-sm` with
+ * `size="sm"`) like every other single-line control, and it draws the same
+ * chevron a `<select>` does (rule G9). Nothing here sets a height.
+ */
+export function Combobox({
+  value,
+  onChange,
+  options,
+  placeholder,
+  disabled,
+  clearable = true,
+  size,
+  className,
+  style,
+  ariaLabel,
+}: {
+  /** The selected option's value; '' = nothing chosen. */
+  value: string;
+  onChange: (value: string) => void;
+  options: readonly ComboOption[];
+  placeholder?: string;
+  disabled?: boolean;
+  /** Offer the ✕ that puts the field back to "nothing chosen". Default true. */
+  clearable?: boolean;
+  size?: 'sm';
+  className?: string;
+  style?: React.CSSProperties;
+  ariaLabel?: string;
+}) {
+  const t = useT();
+  const id = useId();
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [active, setActive] = useState(-1);
+  const boxRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const listRef = useRef<HTMLUListElement>(null);
+
+  const selected = options.find((o) => o.value === value) ?? null;
+  const selectedLabel = selected
+    ? selected.hint
+      ? `${selected.label} (${selected.hint})`
+      : selected.label
+    : '';
+  // Closed, the field READS as the selection; open, it is the search box. One
+  // input doing both is what keeps it a single control rather than a field
+  // plus a popover with its own search box inside it.
+  const shown = open ? query : selectedLabel;
+  const matches = useMemo(
+    () => (open ? comboboxFilter(options, query) : [...options]),
+    [open, options, query],
+  );
+
+  const close = useCallback(() => {
+    setOpen(false);
+    setQuery('');
+    setActive(-1);
+  }, []);
+
+  // Clicking anywhere else commits nothing and closes — the same as Esc. A
+  // blur handler alone would fire before the option's own click lands.
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent | TouchEvent) => {
+      if (!boxRef.current?.contains(e.target as Node)) close();
+    };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('touchstart', onDown);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('touchstart', onDown);
+    };
+  }, [open, close]);
+
+  // Keep the highlighted row inside the scroll box, so ↓ through 400 members
+  // does not walk off the bottom of a list that never moves.
+  useEffect(() => {
+    if (!open || active < 0) return;
+    listRef.current?.children[active]?.scrollIntoView({ block: 'nearest' });
+  }, [open, active]);
+
+  const pick = (option: ComboOption) => {
+    onChange(option.value);
+    close();
+    inputRef.current?.focus();
+  };
+
+  const optionId = (i: number) => `${id}-o${i}`;
+
+  const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (!open) {
+        setOpen(true);
+        setActive(e.key === 'ArrowDown' ? 0 : options.length - 1);
+        return;
+      }
+      setActive((i) => nextActiveIndex(i, matches.length, e.key === 'ArrowDown' ? 1 : -1));
+      return;
+    }
+    if (e.key === 'Enter') {
+      if (open && active >= 0 && matches[active]) {
+        // Only swallow the key when it actually picked something — otherwise a
+        // form's own Enter-to-submit still works.
+        e.preventDefault();
+        pick(matches[active]);
+      }
+      return;
+    }
+    if (e.key === 'Escape') {
+      if (open) {
+        e.preventDefault();
+        close();
+      }
+      return;
+    }
+    if (e.key === 'Tab') close();
+  };
+
+  return (
+    <div
+      className={`combo${size === 'sm' ? ' sm' : ''}${className ? ` ${className}` : ''}`}
+      style={style}
+      ref={boxRef}
+    >
+      <input
+        ref={inputRef}
+        className={size === 'sm' ? 'sm' : undefined}
+        type="text"
+        role="combobox"
+        aria-expanded={open}
+        aria-controls={`${id}-list`}
+        aria-autocomplete="list"
+        aria-activedescendant={open && active >= 0 ? optionId(active) : undefined}
+        aria-label={ariaLabel}
+        autoComplete="off"
+        disabled={disabled}
+        // Opening the field clears it back to a search box, so the greyed text
+        // becomes what is currently chosen — the selection is never lost from
+        // sight just because the list was opened to change it.
+        placeholder={open && selectedLabel ? selectedLabel : placeholder}
+        value={shown}
+        onChange={(e) => {
+          setQuery(e.target.value);
+          setOpen(true);
+          setActive(0);
+        }}
+        onFocus={() => setOpen(true)}
+        onClick={() => setOpen(true)}
+        onKeyDown={onKeyDown}
+      />
+      {clearable && !!value && !disabled && (
+        <button
+          type="button"
+          className="combo-clear"
+          title={t('combo.clear')}
+          aria-label={t('combo.clear')}
+          // Keep focus on the input, so clearing does not bounce focus to the
+          // button and back (which would re-fire onFocus and reopen the list).
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => {
+            onChange('');
+            close();
+            inputRef.current?.focus();
+          }}
+        >
+          ✕
+        </button>
+      )}
+      {open && (
+        <ul className="combo-list" id={`${id}-list`} role="listbox" ref={listRef}>
+          {matches.map((o, i) => (
+            <li
+              key={o.value}
+              id={optionId(i)}
+              role="option"
+              aria-selected={o.value === value}
+              className={`combo-option${i === active ? ' active' : ''}`}
+              // mousedown, not click: the input would blur first otherwise and
+              // the list would already be gone by the time click fired.
+              onMouseDown={(e) => {
+                e.preventDefault();
+                pick(o);
+              }}
+              onMouseEnter={() => setActive(i)}
+            >
+              <span>{o.label}</span>
+              {o.hint && <span className="faint combo-hint">{o.hint}</span>}
+            </li>
+          ))}
+          {matches.length === 0 && <li className="combo-empty">{t('combo.noMatch')}</li>}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 /**
  * Free-form tag entry: type a tag + Enter/comma to add it as a removable
  * chip. Reuses the existing `.chip` filter-chip look (no new CSS). Optional
@@ -901,6 +1122,53 @@ export function SheetTick({
       title={title}
       aria-label={title}
       style={{ width: 18, height: 18, cursor: disabled ? 'default' : 'pointer', accentColor: 'var(--brand)' }}
+    />
+  );
+}
+
+/**
+ * The check-all that sits in a sheet column's own header, under its date.
+ *
+ * Both roll-call sheets have one (rule G4): 十三个人 × 两个勾 × 五个主日 is 130
+ * taps for a Sunday where everybody came, and 全员到齐 is the normal case.
+ *
+ * It is a real checkbox in the INDETERMINATE state, not a button, because the
+ * column has three states and only two outcomes: everybody ticked reads as
+ * checked and clears the column; nobody or somebody reads as unchecked or mixed
+ * and fills it. Mixed is drawn honestly rather than rounded — the browser
+ * already announces `indeterminate` as "mixed" to a screen reader, which is the
+ * whole reason to use the native control instead of a glyph.
+ *
+ * Clearing a column destroys records, so the CALLER puts that behind the shared
+ * confirmation (rule G3); this component only reports the press.
+ */
+export function SheetTickAll({
+  state,
+  onToggle,
+  disabled,
+  title,
+}: {
+  state: ColumnTickState;
+  onToggle: () => void;
+  disabled?: boolean;
+  title: string;
+}) {
+  const ref = useRef<HTMLInputElement>(null);
+  // `indeterminate` is a property, never an attribute — React cannot set it
+  // from JSX, so it is written on the node after every render.
+  useEffect(() => {
+    if (ref.current) ref.current.indeterminate = state === 'some';
+  }, [state]);
+  return (
+    <input
+      ref={ref}
+      type="checkbox"
+      className="sheet-tick-all"
+      checked={state === 'all'}
+      onChange={onToggle}
+      disabled={disabled}
+      title={title}
+      aria-label={title}
     />
   );
 }

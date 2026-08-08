@@ -10,6 +10,7 @@ import {
   Avatar,
   BackBar,
   ChevronRightIcon,
+  Combobox,
   EntityHeader,
   ErrorBanner,
   Field,
@@ -477,7 +478,11 @@ function AccountDetail({
         <button className="btn danger" onClick={del}>{t('settings.deleteAccount')}</button>
       </div>
 
-      <div className="flex-between flex-wrap mt-16">
+      {/* Pinned to the foot of the viewport (`.detail-footer` in globals.css),
+          so Save is reachable from anywhere in a long form instead of only
+          after scrolling back down. It stays in the flow — sticky, not fixed —
+          so it can never sit on top of the last row of content. */}
+      <div className="detail-footer">
         <button className="btn ghost" onClick={onBack}>{t('common.cancel')}</button>
         <button className="btn" onClick={save} disabled={busy}>{busy ? t('common.saving') : t('settings.saveAccount')}</button>
       </div>
@@ -559,16 +564,21 @@ function AddAccountModal({
     <Modal title={t('settings.new.title')} onClose={onClose}>
       {err && <ErrorBanner message={err} />}
       <Field label={t('settings.linkMember')}>
-        <select value={memberId} onChange={(e) => pickMember(e.target.value)}>
-          <option value="">{t('settings.chooseMember')}</option>
-          {members
+        {/* Type-to-search, like every other member field (rule G4) — members
+            who already have an account are simply not in the list. */}
+        <Combobox
+          value={memberId}
+          onChange={pickMember}
+          options={members
             .filter((m) => !takenMembers.has(m.id))
-            .map((m) => (
-              <option key={m.id} value={m.id}>
-                {t('disc.memberOption', { name: m.full_name, role: t(roleKey(memberRole(m))) })}
-              </option>
-            ))}
-        </select>
+            .map((m) => ({
+              value: m.id,
+              label: m.full_name,
+              hint: t(roleKey(memberRole(m))),
+            }))}
+          placeholder={t('settings.chooseMember')}
+          ariaLabel={t('settings.linkMember')}
+        />
       </Field>
       <div className="form-row">
         <Field label={t('settings.emailFromMember')}>

@@ -13,6 +13,7 @@ import {
   MonthPicker,
   PageBar,
   SheetTick,
+  SheetTickAll,
   SkeletonScreen,
   SkeletonTable,
   useConfirm,
@@ -28,7 +29,7 @@ import {
   SheetMeeting,
   SheetTickName,
 } from '@/lib/types';
-import { sheetTicks } from '@/lib/sheet';
+import { columnTickState, sheetTicks, type ColumnTickState } from '@/lib/sheet';
 import { sheetTickKey } from '@/lib/labels';
 import { churchParts, fromChurchInput, toChurchInput } from '@/lib/time';
 import { useT } from '@/lib/i18n';
@@ -87,9 +88,11 @@ export default function EventsPage() {
     for (const name of column.ticks) next[name] = !!current[name];
     next[tick] = !next[tick];
     try {
+      // A list of one — the same shape the column shortcut below sends, so a
+      // single tick and 全员到齐 go down exactly the same path.
       await api.put('/attendance/sheet', {
         column: column.key,
-        member_id: row.member.id,
+        member_ids: [row.member.id],
         ...next,
       });
       sheet.reload();
@@ -100,6 +103,83 @@ export default function EventsPage() {
 
   /** A column's own heading: a Sunday's date, or the meeting's name. */
   const columnLabel = (c: SheetColumn) => c.meeting?.title ?? c.date.slice(5);
+
+  /** What one sub-column is called in a confirmation: "08-02 · Pre-service". */
+  const tickLabel = (c: SheetColumn, tick: SheetTickName) =>
+    `${columnLabel(c)} · ${t(sheetTickKey(tick))}`;
+
+  /**
+   * Every sub-column's all / none / some state, and how many ticks it holds —
+   * derived once per sheet rather than per header cell (rule G5). The count is
+   * what the untick confirmation quotes: a warning has to name the records it
+   * is about to throw away, not describe them.
+   */
+  const columnStates = useMemo(() => {
+    const map = new Map<string, { state: ColumnTickState; ticked: number }>();
+    for (const c of columns) {
+      for (const tick of c.ticks) {
+        const flags = rows.map((r) => !!r.cells[c.key]?.[tick]);
+        map.set(`${c.key}|${tick}`, {
+          state: columnTickState(flags),
+          ticked: flags.filter(Boolean).length,
+        });
+      }
+    }
+    return map;
+  }, [columns, rows]);
+
+  /**
+   * 全员到齐 — fill (or clear) one whole sub-column.
+   *
+   * Everybody already ticked means the press CLEARS the column, which destroys
+   * real records, so that direction goes through the shared confirmation with
+   * the number of ticks it will remove (rule G3). Filling one needs no
+   * confirmation: nothing is lost.
+   *
+   * The members are grouped by what their OTHER tick in this column already
+   * says, so filling 主日 can never rewrite somebody's 会前 — which is exactly
+   * what one flat "set the whole cell for everyone" call would have done. That
+   * is at most two requests for a Sunday and one for a meeting; never one per
+   * member.
+   */
+  const toggleColumn = async (column: SheetColumn, tick: SheetTickName) => {
+    const here = columnStates.get(`${column.key}|${tick}`);
+    if (!here || rows.length === 0) return;
+    const next = here.state !== 'all';
+    if (!next) {
+      const ok = await confirm({
+        title: t('sheet.tickAll.title'),
+        message: t('sheet.tickAll.message', {
+          column: tickLabel(column, tick),
+          n: here.ticked,
+        }),
+        confirmText: t('sheet.tickAll.confirm'),
+        danger: true,
+      });
+      if (!ok) return;
+    }
+    const groups = new Map<string, { cell: SheetCell; ids: string[] }>();
+    for (const r of rows) {
+      const current = r.cells[column.key] ?? {};
+      const cell: SheetCell = {};
+      for (const name of column.ticks) cell[name] = name === tick ? next : !!current[name];
+      const shape = column.ticks.map((name) => (cell[name] ? '1' : '0')).join('');
+      const group = groups.get(shape);
+      if (group) group.ids.push(r.member.id);
+      else groups.set(shape, { cell, ids: [r.member.id] });
+    }
+    try {
+      await Promise.all(
+        [...groups.values()].map((g) =>
+          api.put('/attendance/sheet', { column: column.key, member_ids: g.ids, ...g.cell }),
+        ),
+      );
+      sheet.reload();
+    } catch (e) {
+      toast((e as Error).message, 'error');
+      sheet.reload();
+    }
+  };
 
   const exportSheet = () => {
     if (!sheet.data) return;
@@ -222,11 +302,31 @@ export default function EventsPage() {
                   <th colSpan={ticks.length} style={{ textAlign: 'center' }}>{t('events.col.total')}</th>
                 </tr>
                 <tr>
+                  {/* Under the date, each sub-column carries its own check-all
+                      — a Sunday has two ticks, so 会前 and 主日 are filled
+                      independently. Hidden from a read-only account, whose
+                      press could only ever be refused (rule G2). */}
                   {columns.map((c) => (
                     <Fragment key={c.key}>
-                      {c.ticks.map((tick) => (
-                        <th key={tick} style={{ textAlign: 'center' }}>{t(sheetTickKey(tick))}</th>
-                      ))}
+                      {c.ticks.map((tick) => {
+                        const here = columnStates.get(`${c.key}|${tick}`);
+                        return (
+                          <th key={tick} style={{ textAlign: 'center' }}>
+                            <div>{t(sheetTickKey(tick))}</div>
+                            {perms.write && (
+                              <SheetTickAll
+                                state={here?.state ?? 'none'}
+                                onToggle={() => toggleColumn(c, tick)}
+                                disabled={rows.length === 0}
+                                title={t(
+                                  here?.state === 'all' ? 'sheet.tickAll.uncheck' : 'sheet.tickAll.check',
+                                  { column: tickLabel(c, tick) },
+                                )}
+                              />
+                            )}
+                          </th>
+                        );
+                      })}
                     </Fragment>
                   ))}
                   {ticks.map((tick) => (

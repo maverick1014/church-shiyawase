@@ -187,27 +187,32 @@ async function main() {
   // ---- 培训&活动: the ACTIVITY shape --------------------------------------
   await activityShape(admin, members, hallId);
 
-  // ---- Discipleship module CRUD + pair CRUD + public form ------------------
-  // 守望模块 (discipleship_programs) are creatable from the UI now, so this
-  // block brings its OWN module and works on that — the same create → use →
-  // delete shape as the training block above. The church's real module is
-  // never touched: deleting one cascades to every pair under it and to all of
-  // their daily records.
-  const programsBefore = (await req('GET', '/api/discipleship/programs', H)).json;
-  ok('discipleship modules list is an array', Array.isArray(programsBefore), JSON.stringify(programsBefore).slice(0, 120));
-  const mkProg = await req('POST', '/api/discipleship/programs', { ...H, body: { name: `E2E模块-${Date.now()}`, description: 'api-e2e fixture', total_days: 7 } });
-  ok('create discipleship module → 200 + id', mkProg.status === 200 && mkProg.json?.id, `status ${mkProg.status} ${JSON.stringify(mkProg.json).slice(0, 120)}`);
-  const programId = mkProg.json?.id;
+  // ---- Discipleship modules (read-only) + pair CRUD + public form ----------
+  // A 守望模块 is created once and then left alone: the module MANAGER that
+  // used to edit and delete them is gone, and so are the routes behind it. So
+  // this block reads the church's own module and pairs two members under it —
+  // it must not create a module of its own, because there is no longer any way
+  // to delete one and a leaked module would sit on the live database for good.
+  const programs = (await req('GET', '/api/discipleship/programs', H)).json;
+  ok('discipleship modules list is an array', Array.isArray(programs), JSON.stringify(programs).slice(0, 120));
+  const programId = programs?.[0]?.id;
   if (programId) {
-    ok('created module keeps its total_days', mkProg.json?.total_days === 7, String(mkProg.json?.total_days));
     const readProg = await req('GET', `/api/discipleship/programs/${programId}`, H);
     ok('read module by id → 200', readProg.status === 200 && readProg.json?.id === programId, `status ${readProg.status}`);
-    const patchProg = await req('PATCH', `/api/discipleship/programs/${programId}`, { ...H, body: { name: `E2E模块改-${Date.now()}`, total_days: 12 } });
-    ok('update module → 200 + new total_days', patchProg.status === 200 && patchProg.json?.total_days === 12, `status ${patchProg.status} ${patchProg.json?.total_days}`);
-    // total_days >= 1 is a DB check constraint; the UI validates it too, but
-    // the server must refuse a hand-rolled request all the same.
-    const badDays = await req('PATCH', `/api/discipleship/programs/${programId}`, { ...H, body: { total_days: 0 } });
-    ok('module with total_days < 1 → rejected', badDays.status >= 400, `status ${badDays.status}`);
+    // The manager's two write routes are GONE, not merely hidden in the UI: a
+    // hand-rolled PATCH must not edit a module, and a hand-rolled DELETE must
+    // not cascade away every pair under it and all of their daily records
+    // (rule G2 — the server is the authority). 404 because the route does not
+    // exist at all; both are checked against the church's REAL module, which
+    // is exactly the row that must survive them.
+    const patchProg = await req('PATCH', `/api/discipleship/programs/${programId}`, { ...H, body: { total_days: 12 } });
+    ok('PATCH a module → 404 (the module manager is gone)', patchProg.status === 404, `status ${patchProg.status}`);
+    const delProg = await req('DELETE', `/api/discipleship/programs/${programId}`, H);
+    ok('DELETE a module → 404 (the module manager is gone)', delProg.status === 404, `status ${delProg.status}`);
+    const survived = await req('GET', `/api/discipleship/programs/${programId}`, H);
+    ok('…and the module is untouched by either attempt',
+      survived.status === 200 && survived.json?.id === programId && survived.json?.total_days === readProg.json?.total_days,
+      `status ${survived.status} total_days ${survived.json?.total_days}`);
   }
   // The trainee must not already be paired (unique program_id+trainee_id).
   const existingPairs = (await req('GET', '/api/discipleship/pairs', H)).json || [];
@@ -225,12 +230,6 @@ async function main() {
       ok('public form submit progress → 200', prog.status === 200, `status ${prog.status}`);
     }
     if (mkPair.json?.id) ok('delete pair → 200', (await req('DELETE', `/api/discipleship/pairs/${mkPair.json.id}`, H)).status === 200);
-  }
-  if (programId) {
-    ok('delete module → 200', (await req('DELETE', `/api/discipleship/programs/${programId}`, H)).status === 200);
-    const after = (await req('GET', '/api/discipleship/programs', H)).json;
-    ok('the deleted module is gone from the list', Array.isArray(after) && !after.some((p) => p.id === programId));
-    ok('the church’s own modules survive', Array.isArray(after) && (programsBefore || []).every((p) => after.some((q) => q.id === p.id)));
   }
 
   // ---- Church record + add-on modules -------------------------------------
@@ -387,6 +386,15 @@ async function rollCallSheet(adminCookie, halls, hallId) {
   const memberId = mk.json?.id;
   if (!memberId) return;
 
+  // A second member, so the 全员到齐 shortcut below has a real column to fill
+  // rather than a list of one. Deleted alongside the first in the `finally`.
+  const mk2 = await req('POST', '/api/members', {
+    ...H,
+    body: { full_name: `E2E点名乙-${Date.now()}`, church_role: 'member', status: 'active', hall_id: hallId },
+  });
+  ok('second sheet fixture member created', mk2.status === 200 && mk2.json?.id, `status ${mk2.status}`);
+  const memberId2 = mk2.json?.id;
+
   // 15 January 2030, 20:00 in Malaysia — a night prayer meeting, which must
   // appear as its own column between the 13th and the 20th.
   const mkMeeting = await req('POST', '/api/events', {
@@ -495,6 +503,98 @@ async function rollCallSheet(adminCookie, halls, hallId) {
     const noMember = await req('PUT', '/api/attendance/sheet', { ...H, body: { column: SUNDAY, pre_service: true } });
     ok('a write with no member_id → 400', noMember.status === 400, `status ${noMember.status}`);
 
+    // ---- 全员到齐: one whole column in ONE call ---------------------------
+    // The column header's check-all sends the members as a LIST through the
+    // same PUT a single tick uses. What has teeth: every member really is
+    // written by the one call, clearing the column leaves NO rows behind (not
+    // rows of falses), and an id that is not a member is refused outright
+    // rather than half-written.
+    if (memberId2) {
+      const bothIds = [memberId, memberId2];
+      const rowsOf = async () => {
+        const r = await req('GET', sheetUrl, H);
+        return bothIds.map((id) => (r.json?.rows || []).find((x) => x.member?.id === id));
+      };
+
+      const fillAll = await req('PUT', '/api/attendance/sheet', {
+        ...H,
+        body: { column: SUNDAY, member_ids: bothIds, pre_service: true, service: true },
+      });
+      ok('ticking a whole column → 200 + the members it wrote',
+        fillAll.status === 200 && fillAll.json?.count === 2 &&
+          JSON.stringify((fillAll.json?.member_ids || []).slice().sort()) === JSON.stringify(bothIds.slice().sort()),
+        `status ${fillAll.status} ${JSON.stringify(fillAll.json)}`);
+      const filled = await rowsOf();
+      ok('…and every member in that one call is on the sheet',
+        filled.every((row) => row?.cells?.[SUNDAY]?.pre_service === true && row?.cells?.[SUNDAY]?.service === true),
+        JSON.stringify(filled.map((r) => r?.cells?.[SUNDAY])));
+
+      // Filling only 主日 must leave 会前 exactly as it was — the page sends
+      // the whole cell per group of members, so this is what proves the write
+      // never rewrites the tick beside the one being changed.
+      const onlyService = await req('PUT', '/api/attendance/sheet', {
+        ...H,
+        body: { column: SUNDAY, member_ids: bothIds, pre_service: true, service: false },
+      });
+      ok('re-writing a whole column updates rather than duplicating',
+        onlyService.status === 200 && onlyService.json?.service === false, `status ${onlyService.status}`);
+      const halfway = await rowsOf();
+      ok('…and the other tick in the same cell survives it',
+        halfway.every((row) => row?.cells?.[SUNDAY]?.pre_service === true && !row?.cells?.[SUNDAY]?.service),
+        JSON.stringify(halfway.map((r) => r?.cells?.[SUNDAY])));
+
+      const clearAll = await req('PUT', '/api/attendance/sheet', {
+        ...H,
+        body: { column: SUNDAY, member_ids: bothIds, pre_service: false, service: false },
+      });
+      ok('unticking a whole column → 200', clearAll.status === 200, `status ${clearAll.status}`);
+      const cleared = await rowsOf();
+      ok('…and leaves NO row behind for anybody, not rows of falses',
+        cleared.every((row) => row && !row.cells?.[SUNDAY]),
+        JSON.stringify(cleared.map((r) => r?.cells ?? null)));
+
+      // The meeting column, whose whole-column write lands in the other table.
+      if (meetingId) {
+        const allCame = await req('PUT', '/api/attendance/sheet', {
+          ...H, body: { column: MEETING, member_ids: bothIds, attended: true },
+        });
+        ok('ticking a whole meeting column → 200', allCame.status === 200 && allCame.json?.count === 2,
+          `status ${allCame.status} ${JSON.stringify(allCame.json)}`);
+        const came = await rowsOf();
+        ok('…and every member is marked on it', came.every((row) => row?.cells?.[MEETING]?.attended === true),
+          JSON.stringify(came.map((r) => r?.cells?.[MEETING])));
+        const noneCame = await req('PUT', '/api/attendance/sheet', {
+          ...H, body: { column: MEETING, member_ids: bothIds, attended: false },
+        });
+        ok('unticking a whole meeting column → 200', noneCame.status === 200, `status ${noneCame.status}`);
+        const wiped = await rowsOf();
+        ok('…and leaves no row behind for anybody there either',
+          wiped.every((row) => row && !row.cells?.[MEETING]),
+          JSON.stringify(wiped.map((r) => r?.cells ?? null)));
+      }
+
+      // A list that names somebody who does not exist is refused whole — a
+      // half-applied roll call is worse than a rejected one.
+      const ghost = await req('PUT', '/api/attendance/sheet', {
+        ...H,
+        body: {
+          column: SUNDAY,
+          member_ids: [memberId, '00000000-0000-0000-0000-000000000000'],
+          pre_service: true,
+          service: false,
+        },
+      });
+      ok('a whole-column write naming an unknown member → 400', ghost.status === 400, `status ${ghost.status}`);
+      const untouched = await rowsOf();
+      ok('…and wrote nothing at all', untouched.every((row) => row && !row.cells?.[SUNDAY]),
+        JSON.stringify(untouched.map((r) => r?.cells ?? null)));
+
+      const emptyList = await req('PUT', '/api/attendance/sheet', {
+        ...H, body: { column: SUNDAY, member_ids: [], pre_service: true },
+      });
+      ok('an empty member_ids → 400', emptyList.status === 400, `status ${emptyList.status}`);
+    }
+
     // ---- 全部堂会 answers now, instead of refusing -------------------------
     const merged = await req('GET', '/api/attendance/sheet?year=2030&month=1', H);
     ok('an all-congregations read → 200', merged.status === 200, `status ${merged.status} ${JSON.stringify(merged.json).slice(0, 120)}`);
@@ -513,6 +613,10 @@ async function rollCallSheet(adminCookie, halls, hallId) {
     }
     const del = await req('DELETE', `/api/members/${memberId}`, H);
     ok('the roll-call fixture member was deleted', del.status === 200, `status ${del.status}`);
+    if (memberId2) {
+      const del2 = await req('DELETE', `/api/members/${memberId2}`, H);
+      ok('the second roll-call fixture member was deleted', del2.status === 200, `status ${del2.status}`);
+    }
   }
 }
 
@@ -665,6 +769,22 @@ async function roleMatrix(freeMembers, hallId) {
             ...RH,
             body: { column: 'sunday:2030-01-06', member_id: freeMembers[0].id, pre_service: true, service: true },
           })).status === 403);
+        // The column header's 全员到齐 shortcut is the SAME verb on the same
+        // path with a list instead of one id — so it is refused by the same
+        // gate, before a single row is written. A bulk hole would be a bigger
+        // one than a single-cell hole, which is exactly why it is asserted.
+        const bulkIds = freeMembers.slice(0, 2).map((m) => m.id);
+        ok('readonly PUT a whole roll-call column → 403',
+          (await req('PUT', '/api/attendance/sheet', {
+            ...RH,
+            body: { column: 'sunday:2030-01-06', member_ids: bulkIds, pre_service: true, service: true },
+          })).status === 403);
+        const untouched = await req('GET', `/api/attendance/sheet?hall_id=${hallId}&year=2030&month=1`, RH);
+        ok('…and nothing was written by the refused whole-column write',
+          (untouched.json?.rows || [])
+            .filter((r) => bulkIds.includes(r.member?.id))
+            .every((r) => !r.cells?.['sunday:2030-01-06']),
+          JSON.stringify((untouched.json?.rows || []).filter((r) => bulkIds.includes(r.member?.id)).map((r) => r.cells)));
       }
       await churchRoleMatrix('readonly', RH);
       await selfProfileMatrix('readonly', RH, ro, co.id);
