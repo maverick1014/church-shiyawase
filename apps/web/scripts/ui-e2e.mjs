@@ -33,8 +33,9 @@
  *   PLAYWRIGHT_CHROMIUM_PATH  explicit Chromium binary (needed in the sandbox)
  *
  * Exits 0 if every check passes (or the run was superseded), 1 if a check
- * failed. Self-cleaning: the one write it performs (create a throwaway member)
- * is deleted again, with an API fallback.
+ * failed. Self-cleaning: every row it writes — the throwaway member of the
+ * write-cycle and the ZZ_UITEST_… fixtures the interaction modules stand on —
+ * is deleted again, per module and then swept once more in main()'s `finally`.
  */
 import { createServer } from 'node:http';
 import { chromium } from '@playwright/test';
@@ -167,6 +168,224 @@ async function main() {
   const shot = (n) => (SHOTS ? page.screenshot({ path: `${SHOTS}/ui-${n}.png`, fullPage: true }) : Promise.resolve());
   const mod = (m) => { currentModule = m; console.log(`▸ ${m}`); };
 
+  /* ---------------------------------------------------------------- fixtures */
+  /*
+   * The live database keeps only the church's standing records — people,
+   * groups, halls, accounts and the 守望 program's configuration. Every
+   * historical row (events, trainings, sessions, enrollments, meetings,
+   * attendance, pairs, progress) was deliberately emptied and is not coming
+   * back, because the attendance model is being rebuilt.
+   *
+   * So a module that needs something to click on MAKES it, uses it, and removes
+   * it again. It must never skip itself for want of data: a module that quietly
+   * passes on an empty page proves nothing, and that blind spot is exactly how a
+   * whole-page overflow bug once shipped green.
+   *
+   * Two rules keep that safe against a live church database:
+   *  - every fixture is named ZZ_UITEST_… — the same convention as the
+   *    throwaway member at the foot of this file — so a leaked row is
+   *    unmistakably a test artefact and can never be read as real church data;
+   *  - creating a fixture registers its DELETE path at once. Each module drops
+   *    its own in a `finally` so a failed check still cleans up, and whatever a
+   *    crash skipped is swept by main()'s `finally`, exactly like the member.
+   *
+   * Fixtures are built over the API using the browser's own session (the mirror
+   * carries the tog_session cookie), not through the forms: these modules are
+   * about the detail pages and the dialogs, so the create path is not what they
+   * are asserting — the write-cycle module at the end covers that, through the
+   * UI, on purpose.
+   */
+  const STAMP = String(Date.now()).slice(-7);
+  // Sequenced as well as stamped: several modules build the same KIND of
+  // fixture, and every name a locator matches on has to belong to exactly one
+  // row — including in the leak log, where two identical names would be
+  // indistinguishable.
+  let fixtureSeq = 0;
+  const fixtureName = (what) => `ZZ_UITEST_${what}_${STAMP}_${++fixtureSeq}`;
+  /** Fixtures created and not yet deleted, oldest first. */
+  const leftovers = [];
+
+  const apiGet = async (path) => {
+    const r = await ctx.request.get(`${BASE}/api${path}`);
+    if (!r.ok()) throw new Error(`fixture GET ${path} → ${r.status()}`);
+    return r.json();
+  };
+  const apiPost = async (path, data) => {
+    const r = await ctx.request.post(`${BASE}/api${path}`, { data });
+    if (!r.ok()) throw new Error(`fixture POST ${path} → ${r.status()} ${(await r.text()).slice(0, 200)}`);
+    return r.json();
+  };
+  /** DELETE one row; true only when the server confirms it is gone. */
+  const apiDelete = (path) =>
+    ctx.request
+      .delete(`${BASE}/api${path}`)
+      .then((r) => r.ok())
+      .catch(() => false);
+  /** Register a created row; returns a remover that is safe to call twice. */
+  const disposable = (label, path) => {
+    leftovers.push({ label, path });
+    return async () => {
+      if (!leftovers.some((f) => f.path === path)) return; // already gone
+      // Forget it only once the row is really deleted — a delete that failed
+      // has to stay on the list so main()'s sweep tries it again.
+      if (!(await apiDelete(path))) return;
+      const i = leftovers.findIndex((f) => f.path === path);
+      if (i >= 0) leftovers.splice(i, 1);
+    };
+  };
+
+  // Members and groups carry a NOT NULL hall. A hall-scoped account would have
+  // one forced on server-side, but this login is 全堂权限, so it must name one.
+  let hallIdCache;
+  const someHallId = async () => {
+    if (hallIdCache === undefined) hallIdCache = (await apiGet('/halls'))?.[0]?.id ?? null;
+    return hallIdCache;
+  };
+
+  /** A throwaway member; `extra` carries whatever the caller needs on the row. */
+  const makeMember = async (what, extra = {}) => {
+    const row = await apiPost('/members', {
+      full_name: fixtureName(what),
+      church_role: 'member',
+      status: 'active',
+      hall_id: await someHallId(),
+      ...extra,
+    });
+    return {
+      id: row.id,
+      name: row.full_name,
+      remove: disposable(`member ${row.full_name}`, `/members/${row.id}`),
+    };
+  };
+
+  /**
+   * A throwaway group with one throwaway member on its roster — the weekly
+   * attendance grid only draws rows for a group that HAS members.
+   */
+  const makeRosteredGroup = async () => {
+    const row = await apiPost('/groups', { name: fixtureName('GROUP'), hall_id: await someHallId() });
+    const removeGroup = disposable(`group ${row.name}`, `/groups/${row.id}`);
+    const member = await makeMember('ROSTER', { group_id: row.id, group_position: 'core_member' });
+    return {
+      id: row.id,
+      name: row.name,
+      member,
+      // Member first: a group can be deleted out from under its roster
+      // (group_id is ON DELETE SET NULL), which would strand the person.
+      remove: async () => { await member.remove(); await removeGroup(); },
+    };
+  };
+
+  /** A throwaway event starting now, so it lands in the page's "Today" section. */
+  const makeEvent = async () => {
+    const row = await apiPost('/events', {
+      title: fixtureName('EVENT'),
+      event_type: 'service',
+      starts_at: new Date().toISOString(),
+      hall_id: await someHallId(),
+    });
+    return { id: row.id, name: row.title, remove: disposable(`event ${row.title}`, `/events/${row.id}`) };
+  };
+
+  /**
+   * A throwaway course with one session and one pending enrolee — the two
+   * things the detail page's panels are made of, and the row shape (badge +
+   * Approve + Reject) that once pushed that page wider than the phone.
+   * Deleting the course takes its sessions and enrollments with it (FK
+   * cascade), so only the course and the person it enrolled need removing.
+   */
+  const makeTraining = async () => {
+    const row = await apiPost('/trainings', {
+      name: fixtureName('TRAINING'),
+      total_sessions: 1,
+      is_enrollable: true,
+      hall_id: await someHallId(),
+    });
+    const removeTraining = disposable(`training ${row.name}`, `/trainings/${row.id}`);
+    const sessionTitle = fixtureName('SESSION');
+    await apiPost(`/trainings/${row.id}/sessions`, { session_number: 1, title: sessionTitle });
+    const enrollee = await makeMember('ENROLEE');
+    await apiPost(`/trainings/${row.id}/enroll`, { member_id: enrollee.id });
+    return {
+      id: row.id,
+      name: row.name,
+      sessionTitle,
+      enrollee,
+      remove: async () => { await removeTraining(); await enrollee.remove(); },
+    };
+  };
+
+  /**
+   * A throwaway 循环聚会 rule — PAUSED on purpose. An active rule tops up the
+   * events calendar on every GET /events, and the occurrences it generates
+   * deliberately outlive it (they carry attendance), so an active fixture could
+   * not be cleaned up afterwards. Paused, it still renders its own row on
+   * /events/recurring and writes nothing else.
+   */
+  const makeRecurringRule = async () => {
+    const row = await apiPost('/recurring-events', {
+      title: fixtureName('RECURRING'),
+      event_type: 'prayer',
+      weekday: 'wednesday',
+      start_time: '20:00:00',
+      hall_id: await someHallId(),
+      active: false,
+    });
+    return {
+      id: row.id,
+      name: row.title,
+      remove: disposable(`recurring rule ${row.title}`, `/recurring-events/${row.id}`),
+    };
+  };
+
+  /**
+   * A throwaway 守望 pair. The program itself is configuration and survived the
+   * wipe, so it is read rather than created; the pair is built from two
+   * brand-new members, which also satisfies the unique program_id+trainee_id
+   * constraint without having to work out who in the church is already paired.
+   */
+  const makePair = async () => {
+    const programId = (await apiGet('/discipleship/programs'))?.[0]?.id;
+    if (!programId) throw new Error('no discipleship program configured — cannot build a pair fixture');
+    const mentor = await makeMember('MENTOR');
+    const trainee = await makeMember('TRAINEE');
+    const row = await apiPost('/discipleship/pairs', {
+      program_id: programId,
+      mentor_id: mentor.id,
+      trainee_id: trainee.id,
+    });
+    const removePair = disposable(`pair ${mentor.name} → ${trainee.name}`, `/discipleship/pairs/${row.id}`);
+    return {
+      id: row.id,
+      mentorName: mentor.name,
+      traineeName: trainee.name,
+      remove: async () => { await removePair(); await trainee.remove(); await mentor.remove(); },
+    };
+  };
+
+  /** One of everything, for the checks that sweep whole pages rather than one. */
+  const makeSample = async () => {
+    const group = await makeRosteredGroup();
+    const event = await makeEvent();
+    const recurring = await makeRecurringRule();
+    const training = await makeTraining();
+    const pair = await makePair();
+    return {
+      group,
+      event,
+      recurring,
+      training,
+      pair,
+      remove: async () => {
+        await pair.remove();
+        await training.remove();
+        await recurring.remove();
+        await event.remove();
+        await group.remove();
+      },
+    };
+  };
+
   let createdMemberId = null;
   // Restored in `finally` so a mid-run failure can never leave the account
   // parked on a language the operator didn't choose.
@@ -256,39 +475,26 @@ async function main() {
     await shot('03-member-detail');
 
     /* -- life groups ------------------------------------------------------ */
+    // The weekly-attendance grid only draws rows for a group that HAS members,
+    // and which of the church's own groups are populated is not this suite's
+    // business to depend on. So the module brings its own group with its own
+    // member, and opens exactly that one.
     mod('life groups · list · detail · weekly attendance');
-    await page.goto(`${BASE}/groups`, { waitUntil: 'domcontentloaded' });
-    // Mobile viewport → the groups list renders as .mtile tiles (the desktop
-    // table is .only-desktop / hidden). Each tile navigates to its detail page.
-    await page.locator('.mtile').first().waitFor({ timeout: 20000 });
-    const groupTiles = await page.locator('.mtile').count();
-    check('the group list renders', groupTiles > 0);
-    // The weekly-attendance grid only has rows for a group that HAS members, so
-    // open one that reports a non-zero count rather than whatever sorts first —
-    // an empty group is a perfectly normal state and must not fail the suite.
-    //
-    // The counts come from a second fetch (/members) than the list itself, so
-    // every tile reads "0 members" for a moment after the list paints — wait for
-    // the real numbers before scanning, or this always picks the wrong group.
-    const POPULATED = /\b[1-9]\d*\s+members\b/;
-    await page
-      .waitForFunction(
-        () => /\b[1-9]\d*\s+members\b/.test(document.body.innerText),
-        null,
-        { timeout: 15000 },
-      )
-      .catch(() => {});
-    let populatedTile = -1;
-    for (let i = 0; i < groupTiles; i++) {
-      if (POPULATED.test(await page.locator('.mtile').nth(i).innerText())) {
-        populatedTile = i;
-        break;
-      }
-    }
-    if (populatedTile < 0) {
-      check('a group with members exists to open', false, 'every group is empty — weekly attendance not covered');
-    } else {
-      await page.locator('.mtile').nth(populatedTile).click();
+    const fxGroup = await makeRosteredGroup();
+    try {
+      await page.goto(`${BASE}/groups`, { waitUntil: 'domcontentloaded' });
+      // Mobile viewport → the groups list renders as .mtile tiles (the desktop
+      // table is .only-desktop / hidden). Each tile navigates to its detail page.
+      await page.locator('.mtile').first().waitFor({ timeout: 20000 });
+      check('the group list renders', (await page.locator('.mtile').count()) > 0);
+      // Narrow to the fixture group so the tile that gets opened is the one
+      // known to have a roster — and prove the search filter works on the way.
+      await page.fill('.page-bar-filters input', fxGroup.name);
+      await w(600);
+      const groupTile = page.locator('.mtile', { hasText: fxGroup.name });
+      check('the group search box narrows the list to one group',
+        (await page.locator('.mtile').count()) === 1 && (await groupTile.count()) === 1);
+      await groupTile.first().click();
       await page.waitForURL(/\/groups\/[0-9a-f-]+/, { timeout: 15000 });
       await page.locator('text=Leadership trio').first().waitFor({ timeout: 15000 });
       check('group detail shows the leadership trio', true);
@@ -298,54 +504,94 @@ async function main() {
       check('weekly attendance renders a column per Sunday', (await page.locator('th:has-text("Week")').count()) > 0,
         `${await page.locator('th:has-text("Week")').count()} weeks`);
       check('weekly attendance has tick boxes', (await page.locator('input[type=checkbox]').count()) > 0);
+      check('the roster lists the member who is in this group',
+        (await page.locator(`td:has-text("${fxGroup.member.name}")`).count()) > 0);
+      await shot('04-group-detail');
+    } finally {
+      await fxGroup.remove();
     }
-    await shot('04-group-detail');
 
     /* -- events & attendance ---------------------------------------------- */
+    // Roll call and the edit dialog both need an event to open. The calendar is
+    // empty in the live database, so this module supplies one and works on it
+    // by name — never on "whatever sorts first".
     mod('events & attendance');
-    await page.goto(`${BASE}/events`, { waitUntil: 'domcontentloaded' });
-    await page.locator('button:has-text("Roll call")').first().waitFor({ timeout: 20000 });
-    await page.locator('button:visible:has-text("Roll call")').first().click();
-    await page.locator('.modal').waitFor({ timeout: 8000 });
-    check('roll call opens the attendance modal', true);
-    await page.locator('.modal .icon-btn, .modal button:has-text("Close")').first().click();
-    await w(300);
-    await page.locator('button:visible:has-text("Edit")').first().click();
-    await page.locator('.modal').waitFor({ timeout: 8000 });
-    check('the event edit modal opens', true);
-    await page.locator('.modal button:has-text("Cancel")').first().click();
-    await shot('05-events');
+    const fxEvent = await makeEvent();
+    try {
+      await page.goto(`${BASE}/events`, { waitUntil: 'domcontentloaded' });
+      const eventCard = page.locator('.card', { hasText: fxEvent.name });
+      await eventCard.first().waitFor({ timeout: 20000 });
+      check('a created event appears on the events page', (await eventCard.count()) === 1);
+      await eventCard.locator('button:visible:has-text("Roll call")').first().click();
+      await page.locator('.modal').waitFor({ timeout: 8000 });
+      check('roll call opens the attendance modal', true);
+      await page.locator('.modal .icon-btn, .modal button:has-text("Close")').first().click();
+      await w(300);
+      await eventCard.locator('button:visible:has-text("Edit")').first().click();
+      await page.locator('.modal').waitFor({ timeout: 8000 });
+      check('the event edit modal opens', true);
+      check('the edit modal opens on that event',
+        (await page.locator('.modal input').first().inputValue()) === fxEvent.name);
+      await page.locator('.modal button:has-text("Cancel")').first().click();
+      await shot('05-events');
+    } finally {
+      await fxEvent.remove();
+    }
 
     /* -- trainings -------------------------------------------------------- */
+    // The catalog is empty in the live database, so the course opened here is
+    // one this module creates — with a session and a pending enrolee, which is
+    // what makes the detail page's two panels worth asserting on at all.
     mod('trainings · detail');
-    await page.goto(`${BASE}/trainings`, { waitUntil: 'domcontentloaded' });
-    await page.locator('.card h3').first().waitFor({ timeout: 20000 });
-    await page.locator('.card h3').first().click();
-    await page.waitForURL(/\/trainings\/[0-9a-f-]+/, { timeout: 15000 });
-    await page.locator('.card-head h3:has-text("Sessions")').first().waitFor({ timeout: 15000 });
-    check('training detail shows the session list', true);
-    check('training detail shows the attendance sheet', (await page.locator('text=Attendance sheet').count()) > 0);
-    await shot('06-training-detail');
+    const fxTraining = await makeTraining();
+    try {
+      await page.goto(`${BASE}/trainings`, { waitUntil: 'domcontentloaded' });
+      const courseTitle = page.locator('.card h3', { hasText: fxTraining.name });
+      await courseTitle.first().waitFor({ timeout: 20000 });
+      check('a created course appears in the catalog', (await courseTitle.count()) === 1);
+      await courseTitle.first().click();
+      await page.waitForURL(/\/trainings\/[0-9a-f-]+/, { timeout: 15000 });
+      await page.locator('.card-head h3:has-text("Sessions")').first().waitFor({ timeout: 15000 });
+      check('training detail shows the session list', true);
+      check('the session list shows this course\'s session',
+        (await page.locator(`strong:has-text("${fxTraining.sessionTitle}")`).count()) > 0);
+      check('training detail shows the attendance sheet', (await page.locator('text=Attendance sheet').count()) > 0);
+      check('a pending enrolee is offered for approval',
+        (await page.locator('.enrol-row button:has-text("Approve")').count()) > 0);
+      await shot('06-training-detail');
+    } finally {
+      await fxTraining.remove();
+    }
 
     /* -- forty days ------------------------------------------------------- */
+    // Every 守望 pair was wiped, so the relay chart and the progress dialog have
+    // nothing to show unless this module pairs two throwaway members itself.
     mod('forty days · progress dialog');
-    await page.goto(`${BASE}/discipleship`, { waitUntil: 'domcontentloaded' });
-    await page.locator('.chip', { hasText: 'Active' }).first().waitFor({ timeout: 20000 });
-    await page.locator('.chip', { hasText: 'Completed' }).first().click();
-    await w(400);
-    await page.locator('.chip', { hasText: 'Active' }).first().click();
-    await w(400);
-    check('the relay chart state filter switches', true);
-    await page.locator('.mtile').first().click();
-    await page.locator('.modal .day-cell').first().waitFor({ timeout: 15000 });
-    check('opening a pair shows the 40-day grid', (await page.locator('.modal .day-cell').count()) >= 40);
-    await page.locator('.modal .day-cell').first().click();
-    await w(400);
-    check("clicking a day shows that day's entry", /Day\s*1\b/.test(await page.locator('.modal').innerText()));
-    await shot('07-pair-modal');
-    await page.locator('.modal .icon-btn').first().click();
-    await w(300);
-    check('✕ closes the dialog', (await page.locator('.modal').count()) === 0);
+    const fxPair = await makePair();
+    try {
+      await page.goto(`${BASE}/discipleship`, { waitUntil: 'domcontentloaded' });
+      await page.locator('.chip', { hasText: 'Active' }).first().waitFor({ timeout: 20000 });
+      await page.locator('.chip', { hasText: 'Completed' }).first().click();
+      await w(400);
+      await page.locator('.chip', { hasText: 'Active' }).first().click();
+      await w(400);
+      check('the relay chart state filter switches', true);
+      const pairTile = page.locator('.mtile', { hasText: fxPair.traineeName });
+      await pairTile.first().waitFor({ timeout: 20000 });
+      check('a created pair appears in the pastor overview', (await pairTile.count()) === 1);
+      await pairTile.first().click();
+      await page.locator('.modal .day-cell').first().waitFor({ timeout: 15000 });
+      check('opening a pair shows the 40-day grid', (await page.locator('.modal .day-cell').count()) >= 40);
+      await page.locator('.modal .day-cell').first().click();
+      await w(400);
+      check("clicking a day shows that day's entry", /Day\s*1\b/.test(await page.locator('.modal').innerText()));
+      await shot('07-pair-modal');
+      await page.locator('.modal .icon-btn').first().click();
+      await w(300);
+      check('✕ closes the dialog', (await page.locator('.modal').count()) === 0);
+    } finally {
+      await fxPair.remove();
+    }
 
     /* -- user management -------------------------------------------------- */
     mod('user management');
@@ -514,32 +760,47 @@ async function main() {
     // wider than the phone it is on — the training detail page did exactly
     // that and every button along its right edge was cut off. ui-e2e was green
     // throughout, because it only ever asked whether elements existed.
+    //
+    // An empty page cannot overflow, so measuring one proves nothing: this
+    // sweep only means something against a site that has rows to lay out. It
+    // therefore puts one of everything in place first — and the tile clicks
+    // below name their fixture instead of swallowing a miss with .catch(), so a
+    // detail page that never opened fails the run rather than quietly
+    // re-measuring the list page behind it.
     mod('no horizontal overflow at phone width');
-    const DETAIL_PAGES = [...LIST_PAGES, '/events/recurring'];
-    const overflowing = [];
-    for (const path of DETAIL_PAGES) {
-      await page.goto(`${BASE}${path}`, { waitUntil: 'domcontentloaded' });
-      await page.locator('h1').first().waitFor({ timeout: 20000 });
-      await w(700); // let the lists paint before measuring
-      const over = await page.evaluate(
-        () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
-      );
-      if (over > 1) overflowing.push(`${path} (+${over}px)`);
+    const fxSample = await makeSample();
+    try {
+      const DETAIL_PAGES = [...LIST_PAGES, '/events/recurring'];
+      const overflowing = [];
+      for (const path of DETAIL_PAGES) {
+        await page.goto(`${BASE}${path}`, { waitUntil: 'domcontentloaded' });
+        await page.locator('h1').first().waitFor({ timeout: 20000 });
+        await w(700); // let the lists paint before measuring
+        const over = await page.evaluate(
+          () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+        );
+        if (over > 1) overflowing.push(`${path} (+${over}px)`);
+      }
+      // …and the two detail pages whose rows carry the most controls.
+      for (const [listPath, tile] of [
+        ['/trainings', `.card h3:has-text("${fxSample.training.name}")`],
+        ['/groups', `.mtile:has-text("${fxSample.group.name}")`],
+      ]) {
+        await page.goto(`${BASE}${listPath}`, { waitUntil: 'domcontentloaded' });
+        await page.locator(tile).first().waitFor({ timeout: 20000 });
+        await page.locator(tile).first().click();
+        await page.waitForURL(/\/(trainings|groups)\/[0-9a-f-]+/, { timeout: 15000 });
+        await w(1200);
+        const over = await page.evaluate(
+          () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+        );
+        if (over > 1) overflowing.push(`${page.url().replace(BASE, '')} (+${over}px)`);
+      }
+      check('no page is wider than the phone viewport',
+        overflowing.length === 0, overflowing.join(', ') || `${DETAIL_PAGES.length + 2} pages fit`);
+    } finally {
+      await fxSample.remove();
     }
-    // …and the two detail pages whose rows carry the most controls.
-    for (const [listPath, tile] of [['/trainings', '.card h3'], ['/groups', '.mtile']]) {
-      await page.goto(`${BASE}${listPath}`, { waitUntil: 'domcontentloaded' });
-      await page.locator(tile).first().waitFor({ timeout: 20000 }).catch(() => {});
-      await page.locator(tile).first().click().catch(() => {});
-      await page.waitForURL(/\/(trainings|groups)\/[0-9a-f-]+/, { timeout: 15000 }).catch(() => {});
-      await w(1200);
-      const over = await page.evaluate(
-        () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
-      );
-      if (over > 1) overflowing.push(`${page.url().replace(BASE, '')} (+${over}px)`);
-    }
-    check('no page is wider than the phone viewport',
-      overflowing.length === 0, overflowing.join(', ') || `${DETAIL_PAGES.length + 2} pages fit`);
 
     /* -- interface language ----------------------------------------------- */
     mod('interface language');
@@ -625,6 +886,15 @@ async function main() {
         .catch(() => {});
       console.log(`  ↳ cleanup: restored account language to ${originalLanguage}`);
     }
+    // Belt and braces for the fixtures: each module already drops its own in a
+    // `finally`, so this only ever fires when a module died before it could —
+    // and it must, because this is the church's live database. Newest first, so
+    // a group outlives the member that sits on its roster.
+    for (const f of leftovers.slice().reverse()) {
+      const gone = await apiDelete(f.path);
+      console.log(`  ↳ cleanup: ${gone ? 'deleted' : 'COULD NOT DELETE'} leftover ${f.label} (${f.path})`);
+    }
+    leftovers.length = 0;
     // API-fallback cleanup: if the throwaway member survived, delete it.
     if (createdMemberId) {
       await ctx.request.delete(`${BASE}/api/members/${createdMemberId}`).catch(() => {});
