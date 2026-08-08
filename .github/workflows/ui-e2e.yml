@@ -7,6 +7,14 @@ name: UI E2E (browser interaction test)
 # coverage is the API E2E inside deploy.yml. Every write it performs (one
 # throwaway member) is deleted again, with an API fallback, so the target stays
 # clean.
+#
+# THE SCRIPT MUST COME FROM THE COMMIT THAT WAS DEPLOYED. A workflow_run job
+# checks out the default branch by default, but deploy.yml only ever runs on
+# feature branches — so main's script would be pointed at a branch's build and
+# fail on every UI change that hadn't landed yet. That is what turned this
+# workflow into a permanent red-email generator: every automatic run failed
+# while every manual dispatch passed. Pin the checkout to the deployed SHA and
+# make the script confirm that SHA is actually live before it asserts anything.
 on:
   workflow_dispatch:
     inputs:
@@ -37,8 +45,15 @@ jobs:
       # with "UI_E2E_PASSWORD is required" and the whole workflow shows red.
       UI_E2E_PASSWORD: ${{ secrets.SMOKE_PASSWORD || 'grace2026' }}
       UI_E2E_SHOTS: ${{ github.workspace }}/ui-shots
+      # Which build this run is allowed to test. Empty on a manual dispatch
+      # (test whatever is live); on workflow_run it is the deployed commit.
+      UI_E2E_EXPECT_BUILD: ${{ github.event.workflow_run.head_sha }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Empty on workflow_dispatch → checkout falls back to the ref the
+          # dispatch was made against, which is the behaviour we want there.
+          ref: ${{ github.event.workflow_run.head_sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
