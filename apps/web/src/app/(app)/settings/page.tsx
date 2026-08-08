@@ -14,7 +14,6 @@ import {
   ErrorBanner,
   Field,
   HallSelect,
-  InfoPopover,
   Loading,
   Modal,
   PageBar,
@@ -30,9 +29,9 @@ import { ChangePasswordModal } from '@/components/ChangePasswordModal';
 import { AccountRow, MemberRow } from '@/lib/types';
 import {
   ACCOUNT_ROLE_OPTIONS,
-  ACCOUNT_ROLE_PERMISSION_KEYS,
   accountRoleClass,
   accountRoleKey,
+  accountRoleOptionKey,
   accountStatusClass,
   accountStatusKey,
   churchDisplayRole,
@@ -131,30 +130,15 @@ export default function SettingsPage() {
     <>
       <ErrorBanner message={accounts.error} />
 
-      {/* Two controls only: the permission matrix behind an info icon (reference
-          material, so it must not push the account list down) and the one thing
-          this page creates. "Change my password" used to sit here too, which
-          wrapped the row onto two lines on a phone — and it was a duplicate:
-          the shell's account menu has had it all along. */}
+      {/* One control: the single thing this page creates. What each permission
+          role may do is now written into the 权限角色 dropdown itself (both the
+          create modal and the account form), where it is read at the moment the
+          role is chosen — a popover of reference text nobody opened is worse
+          than a label on the control. "Change my password" used to sit here
+          too, which wrapped the row onto two lines on a phone — and it was a
+          duplicate: the shell's account menu has had it all along. */}
       <PageBar
-        actions={
-          <>
-            <InfoPopover label={t('settings.permissions')}>
-              <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10 }}>{t('settings.permissions')}</div>
-              {ACCOUNT_ROLE_OPTIONS.map((ar) => (
-                <div key={ar} style={{ marginBottom: 12 }}>
-                  <span className={`badge ${accountRoleClass(ar)}`}>{t(accountRoleKey(ar))}</span>
-                  <ul style={{ margin: '7px 0 0', paddingLeft: 16, fontSize: 12, color: 'var(--muted)', lineHeight: 1.7 }}>
-                    {ACCOUNT_ROLE_PERMISSION_KEYS[ar].map((k) => (
-                      <li key={k}>{t(k)}</li>
-                    ))}
-                  </ul>
-                </div>
-              ))}
-            </InfoPopover>
-            <button className="btn" onClick={() => setAddOpen(true)}>{t('settings.add')}</button>
-          </>
-        }
+        actions={<button className="btn" onClick={() => setAddOpen(true)}>{t('settings.add')}</button>}
       />
 
       {/* Desktop — table */}
@@ -243,6 +227,24 @@ export default function SettingsPage() {
         />
       )}
     </>
+  );
+}
+
+/**
+ * The 权限角色 picker, shared by the create modal and the account form so both
+ * offer the same options with the same explanation (G4/G5). Each option reads
+ * "role — what it may do"; the badge elsewhere keeps the bare role name.
+ */
+function AccountRoleField({ value, onChange }: { value: AccountRole; onChange: (r: AccountRole) => void }) {
+  const t = useT();
+  return (
+    <Field label={t('settings.col.accountRole')}>
+      <select value={value} onChange={(e) => onChange(e.target.value as AccountRole)}>
+        {ACCOUNT_ROLE_OPTIONS.map((ar) => (
+          <option key={ar} value={ar}>{t(accountRoleOptionKey(ar))}</option>
+        ))}
+      </select>
+    </Field>
   );
 }
 
@@ -401,13 +403,7 @@ function AccountDetail({
           <Field label={t('settings.emailFromMember')}>
             <input value={email} readOnly disabled style={{ color: 'var(--muted)' }} />
           </Field>
-          <Field label={t('settings.col.accountRole')}>
-            <select value={role} onChange={(e) => setRole(e.target.value as AccountRole)}>
-              {ACCOUNT_ROLE_OPTIONS.map((ar) => (
-                <option key={ar} value={ar}>{t(accountRoleKey(ar))}</option>
-              ))}
-            </select>
-          </Field>
+          <AccountRoleField value={role} onChange={setRole} />
           <Field label={t('hall.label')}>
             <HallSelect value={hall} onChange={setHall} allowAll allLabel={t('hall.unlimited')} />
           </Field>
@@ -553,13 +549,7 @@ function AddAccountModal({
         <Field label={t('settings.emailFromMember')}>
           <input value={email} readOnly disabled placeholder={t('settings.noEmailPlaceholder')} style={{ color: 'var(--muted)' }} />
         </Field>
-        <Field label={t('settings.col.accountRole')}>
-          <select value={role} onChange={(e) => setRole(e.target.value as AccountRole)}>
-            {ACCOUNT_ROLE_OPTIONS.map((ar) => (
-              <option key={ar} value={ar}>{t(accountRoleKey(ar))}</option>
-            ))}
-          </select>
-        </Field>
+        <AccountRoleField value={role} onChange={setRole} />
       </div>
       <Field label={t('hall.label')}>
         <HallSelect value={hall} onChange={setHall} allowAll allLabel={t('hall.unlimited')} />
