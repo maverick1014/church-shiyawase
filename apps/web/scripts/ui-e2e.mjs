@@ -766,12 +766,16 @@ async function main() {
       // falses ("no row" already means "not recorded").
       const sheetRow = page.locator('tr', { has: page.locator(`td:has-text("${fxSheetMember.name}")`) });
       const firstTick = sheetRow.locator('input[type=checkbox]').first();
-      await firstTick.check();
+      // click, not check(): the tick is optimistic and the row re-renders from
+      // the server, so the checkbox's own state is not the fact worth
+      // asserting — the row in the sheet is, and that is what the next check
+      // reads back through the API. Same reasoning as the group tabs above.
+      await firstTick.click();
       await w(1500);
       const ticked = await sheetCells();
       check('ticking a cell records that Sunday',
         Object.values(ticked).some((c) => c.pre_service), JSON.stringify(ticked));
-      await firstTick.uncheck();
+      await firstTick.click();
       await w(1500);
       const cleared = await sheetCells();
       check('unticking it leaves no row behind', Object.keys(cleared).length === 0, JSON.stringify(cleared));
