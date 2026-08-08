@@ -1,6 +1,6 @@
 import type { Messages } from './en';
 
-/** 简体中文 — 主恩堂原始界面用语。 */
+/** 简体中文 — 界面用语。教会名称不在此处：它是 `church` 记录里的数据。 */
 export const zh: Messages = {
   /* ---- shared ---------------------------------------------------------- */
   'common.loading': '加载中…',

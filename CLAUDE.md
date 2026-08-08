@@ -7,6 +7,16 @@ theme only; mobile-first. The API is a single catch-all route handler at
 `apps/web/src/app/api/[...path]/route.ts`; auth is a signed HMAC cookie
 (`lib/server/auth.ts`).
 
+The church itself is **data**, not a hardcoded string: one `church` row
+(name / short name / description / logo) drives the sidebar brand, the login
+card and the public forms, and `church_modules` records which **add-on
+modules** this church runs. Both are edited on `/church` (教会设置,
+super_admin only). The catalog of what is switchable lives in code —
+`OPTIONAL_MODULES` in `packages/shared` — where each entry names its key, the
+nav href it owns and the API prefixes it owns; today the one entry is
+`discipleship` (四十天守望). Core surfaces are not switchable and are not in
+the registry.
+
 Run before every push: `npm run --workspace @tog/web -s build` (or in
 `apps/web`: `npx tsc --noEmit && npm test && npm run build`). Deploys are gated
 on unit tests + a post-deploy smoke test (`.github/workflows/deploy.yml`).
@@ -18,8 +28,10 @@ Testing layers (in `apps/web`):
 - `npm run test:ui-e2e` — **browser UI end-to-end**: drives the real site in
   Chromium and asserts each interaction's expected outcome (login, search,
   filters, modals, weekly attendance, discipleship day-notes, an
-  interface-language round-trip, a 守望模块 create→edit→delete cycle, a
-  create→delete member write-cycle). It restores anything it changes. It runs a tiny in-process reverse proxy so the browser
+  interface-language round-trip, a 守望模块 create→edit→delete cycle, an
+  add-on module off→on cycle on 教会设置, a create→delete member write-cycle).
+  It restores anything it changes — including the module states, which it
+  reads first and puts back in a `finally`. It runs a tiny in-process reverse proxy so the browser
   works even behind an egress proxy. `UI_E2E_PASSWORD` is required (never
   hardcode a real password); `UI_E2E_URL` / `UI_E2E_EMAIL` are optional. In this
   sandbox run it as:
@@ -57,8 +69,24 @@ Every entity page (成员、小组、聚会、培训、四十天守望模块与�
 the full set its users need: **Create, Read, Update, Delete**. If the API supports an
 operation, the UI must expose it (or the omission must be a deliberate,
 documented decision). A page that can only create + list is incomplete.
+The documented exception: 教会设置 (`/church`) is read + update only — the
+church row is a seeded singleton (one deployment, one church) and the module
+catalog is code, so neither can be created or deleted from the UI.
 
 ### G2 — Access control is enforced server-side AND reflected in the UI
+Three independent dimensions, all of them enforced in `route.ts` first and
+only then reflected in the UI: the account's **role**, its **hall**, and
+whether the **module** owning the path is enabled for this church.
+- **Module enablement (附加模块):** an add-on module (四十天守望 today) can be
+  switched off in 教会设置. A request for a path a disabled module owns is
+  refused **404** by the gate — including the public mentor form, whose links
+  must close with the feature. 404 rather than 403 on purpose: no role and no
+  hall can reach it, because for this church the feature does not exist.
+  Which paths a module owns comes from `moduleForApiPath` / `moduleForNavHref`
+  in `packages/shared` — never re-derive it. The UI's half: the shell hides the
+  nav entry (`visibleItems`), a page owned by a disabled module skips its
+  fetches and renders `<ModuleDisabled />` instead of an error, and
+  `/church*` + `/auth*` + every core path can never be gated.
 - **Hall scope (多堂会):** the session carries `hall` (null = 全堂权限). In
   `route.ts`, a hall-scoped account's reads are filtered to its own hall and its
   writes are **forced** onto that hall server-side — never trust a client-sent
@@ -80,15 +108,20 @@ documented decision). A page that can only create + list is incomplete.
   included — not just some pages.
 - **Server (authoritative):** every non-public API path goes through the gate in
   `route.ts`. Writes are denied for `readonly`; account management
-  (`/accounts*`, both **read and write**) is `super_admin` only; `DELETE` is
-  `super_admin`/`admin` only. Sensitive reads (account emails/roles) must be
-  role-gated too — never rely on "GET is harmless".
+  (`/accounts*`, both **read and write**) is `super_admin` only; church
+  settings (`/church*`) are readable by any signed-in account but **writable
+  only by `super_admin`** — changing the church's name or switching a module
+  off affects everyone; `DELETE` is `super_admin`/`admin` only. Sensitive reads
+  (account emails/roles) must be role-gated too — never rely on "GET is
+  harmless".
 - **Client (UX):** never render an action a user's role cannot perform. Fetch the
   session role (`/api/auth/me`) and hide/disable nav items, buttons, and whole
   pages the role isn't allowed to use. A button that only ever returns 403 is a
   bug. The public exceptions (no session) are the mentor daily form under
   `/api/discipleship/form/*`, the training self-enrollment form under
-  `/api/trainings/enroll/*` (+ `/api/auth/*`) — each a narrow, specific handler.
+  `/api/trainings/enroll/*`, **`GET /api/church`** (the login card and both
+  public forms render the church's name before anyone signs in; writes stay
+  super_admin) (+ `/api/auth/*`) — each a narrow, specific handler.
 
 ### G3 — Every destructive action shows a confirmation
 Any delete/remove/detach/irreversible action (`api.delete(...)`, or a mutation
@@ -174,7 +207,13 @@ and below. Light theme only — no dark-mode branches or `data-theme` code.
   a translated label. Use the stored code (e.g. `DisplayRole`), or the UI breaks
   the moment the language changes.
 - The public pages (`/login`, `/d/[token]`, `/enroll/[id]`) have no session and
-  so render in the default language; API error messages are English.
+  so render in the default language; API error messages are English. The
+  church's **name** is the one thing on them that is neither: it is data on the
+  `church` record, identical in all three languages, so those pages fetch the
+  public `GET /api/church` instead of translating it (`form.privacy` takes it
+  as a `{church}` placeholder). The build-time `<title>` (`app/layout.tsx`) and
+  the PWA manifest (`app/manifest.ts`) cannot read the database and stay
+  per-deployment literals — the only two left.
 - A user-facing rename stops at the API boundary. The 四十天守望 **模块 /
   module** is `discipleship_programs` in the database: the table, its columns,
   `program_id` and `/api/discipleship/programs` all keep the "program" name,
