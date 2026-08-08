@@ -32,9 +32,34 @@ roll call already are. One column tells the two shapes apart: `trainings.kind`
 (`course` | `activity`, migration 0014). A **course** runs over several
 sessions; an **activity** is ONE occasion, whose single `training_sessions` row
 is created by the API with it and exists only to give the roll call its one
-column to tick — its date is the record's own `starts_on`/`ends_on` (the same
-day twice), so there is no second place a date can be edited. The public
-self-sign-up link (`/enroll/[id]`, matching a full name) serves both.
+column to tick — its date, **its time and its meeting point** are the record's
+own `starts_on`/`ends_on` (the same day twice), `start_time` and `location`
+(migration 0016), so there is no second place any of them can be edited. `kind`
+is **convertible**: course → activity keeps only the FIRST session and deletes
+the rest with their attendance (`useConfirm({ danger: true })` names how many
+sessions and how many ticks go); activity → course simply lets the one session
+be session 1. The invariant is the server's — `ensureSingleSession` in
+`route.ts` — not the form's. The public self-sign-up link (`/enroll/[id]`,
+matching a full name) serves both.
+
+There is no 类别 any more, and no `trainer_id`: who runs a thing is **`pic` +
+`pic_contact`**, both plain text, because the person in charge is often an
+outside speaker with no member record and what people need is a number to ring
+before they sign up. Both show on the catalog card, the detail header and the
+public page — one line, built once by `trainingMeta` in `lib/labels.ts`.
+
+**报名费 (0016).** `trainings.fee` null/0 means free and nothing below it
+appears. A fee that IS set carries `payment_instructions` (free text — a bank
+account, a TnG number; one column, because a church will invent a method
+nobody modelled) and an optional `payment_qr_url` uploaded like every other
+image in the app. The public form then shows the amount, the instructions and
+the QR **above a required receipt upload**, and the receipt travels *with* the
+sign-up (one multipart POST to the same public path) rather than through an
+upload endpoint of its own — nothing is written to storage until the name has
+matched exactly one member, so the one unauthenticated upload path cannot be
+used as file storage. It stores `training_enrollments.payment_slip_url`, which
+the admin opens from the **enrolment review row, beside Approve**, because
+approving a paid sign-up means a person checked that the money arrived.
 
 **Attendance is ONE sheet with two kinds of column.** A Sunday is not an event:
 every Sunday simply happens, so `/events` (崇拜与祷告会) opens on a **sheet**
@@ -83,7 +108,9 @@ Testing layers (in `apps/web`):
   roll-call sheet and the same for a hand-added meeting's own column,
   discipleship day-notes, the life-group card's own meetings sheet, a
   培训&活动 course/activity filter plus an
-  activity's single-column roll call, a column check-all on both sheets, a
+  activity's single-column roll call and its time/place, a paid course's fee
+  block and the receipt link beside Approve (with a free one proving the same
+  fields are absent), a column check-all on both sheets, a
   member combobox typed→filtered→picked, an interface-language round-trip, the
   absence of the 守望模块 manager in the UI *and* on the server, an add-on
   module off→on cycle on 教会设置, a create→delete member write-cycle).

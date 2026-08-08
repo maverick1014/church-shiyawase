@@ -383,14 +383,26 @@ export interface Training {
   id: string;
   name: string;
   description: string | null;
-  category: string | null;
   /** 'course' | 'activity' — see TrainingKind. */
   kind: TrainingKind;
-  trainer_id: string | null;
+  /** 负责人 — free text: the person in charge is often not a member (0016). */
+  pic: string | null;
+  /** How to reach them — a phone number, usually. People ring before signing up. */
+  pic_contact: string | null;
   total_sessions: number;
   is_enrollable: boolean;
   starts_on: string | null;
   ends_on: string | null;
+  /** An ACTIVITY's start time, "HH:MM:SS" (Postgres `time`) — Malaysia, always. */
+  start_time: string | null;
+  /** An ACTIVITY's meeting point. A course's places live on its sessions. */
+  location: string | null;
+  /** 报名费. null (or 0) = free, and the payment fields below stay hidden. */
+  fee: string | number | null;
+  /** Free text: bank account, TnG number, "pay the treasurer on the day". */
+  payment_instructions: string | null;
+  /** Public URL of an uploaded payment QR image; null = none. */
+  payment_qr_url: string | null;
   /** null = 全堂开放（任何堂的成员都可报名）. */
   hall_id: string | null;
   created_at: string;
@@ -423,6 +435,12 @@ export interface TrainingEnrollment {
   enrolled_at: string;
   completed_at: string | null;
   notes: string | null;
+  /**
+   * The receipt uploaded with a sign-up for a course that charges a 报名费
+   * (0016). Null on a free one. The admin opens it BEFORE approving — that is
+   * what approval means on a paid course.
+   */
+  payment_slip_url: string | null;
 }
 
 export interface TrainingAttendance {

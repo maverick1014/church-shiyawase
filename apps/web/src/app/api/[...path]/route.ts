@@ -268,23 +268,13 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
       // resulting URL is stored on the row.
       const c = await churchRow(db);
       const form = await req.formData();
-      const file = form.get('file');
-      if (!(file instanceof File)) throw new HttpError(400, 'No file uploaded');
-      if (!(file.type || '').startsWith('image/')) throw new HttpError(400, 'Only image files are supported');
-      if (file.size > 5 * 1024 * 1024) throw new HttpError(400, 'The image must be 5MB or smaller');
-      const ext = (file.name.split('.').pop() || 'png').toLowerCase().replace(/[^a-z0-9]/g, '') || 'png';
-      const path = `${c.id}/${Date.now()}.${ext}`;
-      const bytes = new Uint8Array(await file.arrayBuffer());
-      const up = await db.storage
-        .from('branding')
-        .upload(path, bytes, { contentType: file.type || 'image/png', upsert: true });
-      if (up.error) throw new HttpError(500, up.error.message);
-      const { data: pub } = db.storage.from('branding').getPublicUrl(path);
+      const file = checkedFile(form.get('file'), IMAGE_UPLOAD);
+      const url = await storeFile(db, 'branding', `${c.id}/${Date.now()}.${fileExt(file, 'png')}`, file);
       return json(
         unwrap(
           await db
             .from('church')
-            .update({ logo_url: pub.publicUrl })
+            .update({ logo_url: url })
             .eq('id', c.id)
             .select(CHURCH_SELECT)
             .single(),
@@ -338,30 +328,20 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
         unwrap(
           await db
             .from('training_enrollments')
-            .select('*, training:trainings(id,name,category,total_sessions)')
+            .select('*, training:trainings(id,name,total_sessions)')
             .eq('member_id', r1)
             .order('enrolled_at', { ascending: false }),
         ),
       );
     } else if (r2 === 'avatar' && method === 'POST') {
       const form = await req.formData();
-      const file = form.get('file');
-      if (!(file instanceof File)) throw new HttpError(400, 'No file uploaded');
-      if (!(file.type || '').startsWith('image/')) throw new HttpError(400, 'Only image files are supported');
-      if (file.size > 5 * 1024 * 1024) throw new HttpError(400, 'The image must be 5MB or smaller');
-      const ext = (file.name.split('.').pop() || 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
-      const path = `${r1}/${Date.now()}.${ext}`;
-      const bytes = new Uint8Array(await file.arrayBuffer());
-      const up = await db.storage
-        .from('avatars')
-        .upload(path, bytes, { contentType: file.type || 'image/jpeg', upsert: true });
-      if (up.error) throw new HttpError(500, up.error.message);
-      const { data: pub } = db.storage.from('avatars').getPublicUrl(path);
+      const file = checkedFile(form.get('file'), IMAGE_UPLOAD);
+      const url = await storeFile(db, 'avatars', `${r1}/${Date.now()}.${fileExt(file, 'jpg')}`, file);
       return json(
         unwrap(
           await db
             .from('members')
-            .update({ avatar_url: pub.publicUrl })
+            .update({ avatar_url: url })
             .eq('id', r1)
             .select()
             .single(),
@@ -705,38 +685,42 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
     // tell them to contact the pastor (never auto-create a member — avoids
     // duplicates).
     if (r1 === 'enroll' && r2) {
-      const training = unwrap<{
-        id: string;
-        name: string;
-        category: string | null;
-        kind: string;
-        is_enrollable: boolean;
-        total_sessions: number;
-        starts_on: string | null;
-      }>(
-        await db
-          .from('trainings')
-          .select('id,name,category,kind,is_enrollable,total_sessions,starts_on')
-          .eq('id', r2)
-          .single(),
+      const training = unwrap<PublicTraining>(
+        await db.from('trainings').select(PUBLIC_TRAINING_SELECT).eq('id', r2).single(),
       );
       if (method === 'GET') {
-        // `kind` and `starts_on` ride along so the public page can read as an
-        // activity ("Saturday 12 Sept") instead of "1 sessions" (rule G8's
+        // `kind`, the date/time/place and the payment block ride along so the
+        // public page can read as an activity ("Saturday 12 Sept, 9am, the
+        // church car park") instead of "1 sessions", and can show what the
+        // 报名费 is and how to pay it BEFORE asking for a receipt (rule G8's
         // shape half: the wording follows the stored code, not a guess).
-        return json({
-          id: training.id,
-          name: training.name,
-          category: training.category,
-          kind: training.kind,
-          is_enrollable: training.is_enrollable,
-          total_sessions: training.total_sessions,
-          starts_on: training.starts_on,
-        });
+        // Deliberately these fields and no more: this endpoint answers without
+        // a session, so it must never hand out the whole row.
+        return json(training);
       }
       if (method === 'POST') {
+        // Two body shapes on one public path: JSON for a free sign-up (what it
+        // has always taken), multipart when a payment receipt rides along. The
+        // slip travels WITH the sign-up rather than through an upload endpoint
+        // of its own, which is what keeps this — the app's ONLY unauthenticated
+        // upload — from being usable as anonymous file storage: nothing reaches
+        // the bucket until every check below has passed.
+        const contentType = req.headers.get('content-type') ?? '';
+        let fullName = '';
+        let slip: File | null = null;
+        if (contentType.includes('multipart/form-data')) {
+          const form = await req.formData();
+          fullName = String(form.get('full_name') ?? '').trim();
+          const sent = form.get('slip');
+          slip = sent instanceof File && sent.size > 0 ? sent : null;
+        } else {
+          fullName = String((await body()).full_name ?? '').trim();
+        }
+
+        // Everything that can refuse this sign-up runs BEFORE a single byte is
+        // written to storage: the course must be open, the name must match one
+        // member, and that member must not already be on the list.
         if (!training.is_enrollable) return json({ status: 'closed' });
-        const fullName = String((await body()).full_name ?? '').trim();
         if (!fullName) return json({ status: 'no_member' });
         const matches = unwrap<Array<{ id: string; full_name: string }>>(
           await db.from('members').select('id,full_name').eq('full_name', fullName),
@@ -752,10 +736,38 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
             .eq('member_id', member.id),
         );
         if (existing.length > 0) return json({ status: 'already', name: member.full_name });
+
+        // A 报名费 makes the receipt part of the sign-up, not an afterthought:
+        // without it there is nothing for the admin to check before approving,
+        // so the request is refused rather than stored half-done.
+        let slipUrl: string | null = null;
+        if (isPaid(training.fee)) {
+          if (!slip)
+            throw new HttpError(
+              400,
+              'This sign-up has a fee — upload your payment receipt to complete it',
+            );
+          const file = checkedFile(slip, SLIP_UPLOAD);
+          slipUrl = await storeFile(
+            db,
+            'payments',
+            // A random name, not the member's or the training's: the bucket is
+            // public, so an object's URL must not be derivable from anything a
+            // stranger already knows.
+            `slips/${r2}/${crypto.randomUUID()}.${fileExt(file, 'jpg')}`,
+            file,
+          );
+        }
+
         unwrap(
           await db
             .from('training_enrollments')
-            .insert({ training_id: r2, member_id: member.id, status: 'pending' })
+            .insert({
+              training_id: r2,
+              member_id: member.id,
+              status: 'pending',
+              payment_slip_url: slipUrl,
+            })
             .select('id')
             .single(),
         );
@@ -822,7 +834,7 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
       if (method === 'GET') {
         let query = db
           .from('trainings')
-          .select('*, trainer:members(id,full_name), hall:halls(id,name)')
+          .select('*, hall:halls(id,name)')
           .order('created_at', { ascending: false });
         // A narrowed view sees that hall plus every 全堂开放 course.
         if (hallFilter) query = query.or(`hall_id.eq.${hallFilter},hall_id.is.null`);
@@ -837,14 +849,7 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
         // by the page: it is what gives the attendance sheet its single column
         // to tick, and the invariant "an activity always has exactly one
         // session" must not depend on a second request that can fail on its own.
-        if (row.kind === TrainingKind.Activity)
-          unwrap(
-            await db
-              .from('training_sessions')
-              .insert({ training_id: row.id, session_number: 1 })
-              .select('id')
-              .single(),
-          );
+        if (row.kind === TrainingKind.Activity) await ensureSingleSession(db, row.id);
         return json(row);
       }
     }
@@ -853,11 +858,7 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
       if (method === 'GET') {
         await assertRowReadable('trainings', r1);
         const training = unwrap<Record<string, unknown>>(
-          await db
-            .from('trainings')
-            .select('*, trainer:members(id,full_name), hall:halls(id,name)')
-            .eq('id', r1)
-            .single(),
+          await db.from('trainings').select('*, hall:halls(id,name)').eq('id', r1).single(),
         );
         const sessions = unwrap(
           await db.from('training_sessions').select('*').eq('training_id', r1).order('session_number'),
@@ -875,7 +876,22 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
         const dto = trainingWrite(await body());
         assertHallWritable(dto);
         await assertOwnsRow('trainings', r1);
-        return json(unwrap(await db.from('trainings').update(dto).eq('id', r1).select().single()));
+        const row = unwrap<{ id: string; kind: string }>(
+          await db.from('trainings').update(dto).eq('id', r1).select().single(),
+        );
+        // 形态可以互换 (0016): a course that turns out to be one afternoon
+        // becomes an activity, and an activity that grows becomes a course.
+        // Only one direction has anything to reconcile — an activity is ONE
+        // occasion, so its sessions above the first are removed here, taking
+        // their attendance with them (`training_attendance.session_id` is
+        // `on delete cascade`). The page names exactly what goes and asks
+        // first (rule G3); the invariant itself is the SERVER's, so a stale
+        // client can never leave a four-session activity behind (rule G2).
+        // The other way round needs nothing: the single session simply becomes
+        // session 1 of the course, keeping the roll call already taken.
+        if (dto.kind !== undefined && row.kind === TrainingKind.Activity)
+          await ensureSingleSession(db, row.id);
+        return json(row);
       }
       if (method === 'DELETE') {
         await assertOwnsRow('trainings', r1);
@@ -883,11 +899,37 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
         return json({ id: r1 });
       }
     }
-    // /trainings/:id/{namelist,sessions,enroll}
+    // /trainings/:id/{namelist,sessions,enroll,payment-qr}
     else if (r1 && r2) {
       if (r2 === 'namelist' && method === 'GET') {
         await assertRowReadable('trainings', r1);
         return json(await namelist(db, r1));
+      }
+      // The church's own payment QR (DuitNow / TnG). Same mechanism as a
+      // member's photo and the church logo — service-role upload into a public
+      // bucket, the URL onto the row (rule G4) — and the same hall rule as any
+      // other write to this training. Removing it is a PATCH with
+      // `payment_qr_url: null`, so there is no second delete path.
+      if (r2 === 'payment-qr' && method === 'POST') {
+        await assertOwnsRow('trainings', r1);
+        const form = await req.formData();
+        const file = checkedFile(form.get('file'), IMAGE_UPLOAD);
+        const url = await storeFile(
+          db,
+          'payments',
+          `qr/${r1}/${Date.now()}.${fileExt(file, 'png')}`,
+          file,
+        );
+        return json(
+          unwrap(
+            await db
+              .from('trainings')
+              .update({ payment_qr_url: url })
+              .eq('id', r1)
+              .select()
+              .single(),
+          ),
+        );
       }
       if (r2 === 'sessions' && method === 'POST')
         return json(
@@ -1372,23 +1414,199 @@ async function groupAttendance(db: ReturnType<typeof getDb>, groupId: string) {
 }
 
 /**
+ * What the PUBLIC sign-up page (`/enroll/:id`) is told about a training.
+ *
+ * An explicit list, never `*`: this endpoint answers with no session at all, so
+ * every column it hands out is a deliberate decision. What is here is what a
+ * visitor needs in order to decide and to pay — which shape it is, when and
+ * where, who to ring, and the 报名费 with the instructions and QR to settle it.
+ */
+const PUBLIC_TRAINING_SELECT =
+  'id,name,kind,is_enrollable,total_sessions,starts_on,ends_on,start_time,location,pic,pic_contact,fee,payment_instructions,payment_qr_url';
+
+type PublicTraining = {
+  id: string;
+  name: string;
+  kind: string;
+  is_enrollable: boolean;
+  total_sessions: number;
+  starts_on: string | null;
+  ends_on: string | null;
+  start_time: string | null;
+  location: string | null;
+  pic: string | null;
+  pic_contact: string | null;
+  fee: string | number | null;
+  payment_instructions: string | null;
+  payment_qr_url: string | null;
+};
+
+/** Does this training charge? `numeric` comes back as a string from PostgREST. */
+function isPaid(fee: string | number | null | undefined): boolean {
+  return fee !== null && fee !== undefined && Number(fee) > 0;
+}
+
+/**
  * Normalize a 培训&活动 create/update payload.
  *
- * Two things the server owns rather than trusting the client with (rule G2):
+ * What the server owns rather than trusting the client with (rule G2):
  *  - `kind` must be one the app actually ships. The table's CHECK would refuse
  *    anything else too, but a constraint name is not an answer anybody can act
  *    on — and a stale client must not be able to park a row on a third shape.
  *  - an activity is ONE occasion, so its `total_sessions` is 1 whatever was
- *    sent. That is the invariant the single auto-created session stands on.
+ *    sent, and it ends on the day it starts. That is the invariant the single
+ *    auto-created session stands on.
+ *  - `fee` is money: a blank field means FREE (null), and a negative number is
+ *    a typo rather than a discount. The table's CHECK says the same; this says
+ *    it in words.
+ *  - the free-text fields are trimmed, and an empty one is stored as null, so
+ *    "has a PIC" is one question rather than two.
  */
 function trainingWrite(dto: Record<string, unknown>): Record<string, unknown> {
   const patch = { ...dto };
   if (patch.kind !== undefined) {
     if (!isTrainingKind(patch.kind))
       throw new HttpError(400, `Unknown kind: ${String(patch.kind)} — expected course or activity`);
-    if (patch.kind === TrainingKind.Activity) patch.total_sessions = 1;
+    if (patch.kind === TrainingKind.Activity) {
+      patch.total_sessions = 1;
+      // One occasion: the same day twice, so "has it finished?" stays one
+      // question for both shapes and there is no second date to edit.
+      if (patch.starts_on !== undefined) patch.ends_on = patch.starts_on;
+    }
+  }
+  if ('fee' in patch) {
+    const raw = patch.fee;
+    if (raw === null || raw === undefined || String(raw).trim() === '') patch.fee = null;
+    else {
+      const amount = Number(raw);
+      if (!Number.isFinite(amount) || amount < 0)
+        throw new HttpError(400, 'The sign-up fee must be a number of 0 or more');
+      patch.fee = amount;
+    }
+  }
+  for (const key of ['pic', 'pic_contact', 'location', 'payment_instructions', 'payment_qr_url', 'start_time'] as const) {
+    if (key in patch) {
+      const value = String(patch[key] ?? '').trim();
+      patch[key] = value === '' ? null : value;
+    }
   }
   return patch;
+}
+
+/**
+ * An ACTIVITY is one occasion, and that occasion IS exactly one
+ * `training_sessions` row — the single column its roll call ticks.
+ *
+ * Called when an activity is created and when a course is converted into one,
+ * so the invariant lives in a single place rather than being re-derived at each
+ * write. Sessions beyond the first are deleted, which takes their attendance
+ * with them (`training_attendance.session_id` is `on delete cascade`); a
+ * conversion that would destroy anything is confirmed in the UI first (G3).
+ */
+async function ensureSingleSession(db: ReturnType<typeof getDb>, trainingId: string) {
+  const sessions = unwrap<Array<{ id: string; session_number: number }>>(
+    await db
+      .from('training_sessions')
+      .select('id,session_number')
+      .eq('training_id', trainingId)
+      .order('session_number'),
+  );
+  if (sessions.length === 0) {
+    unwrap(
+      await db
+        .from('training_sessions')
+        .insert({ training_id: trainingId, session_number: 1 })
+        .select('id')
+        .single(),
+    );
+    return;
+  }
+  const extra = sessions.slice(1).map((s) => s.id);
+  if (extra.length > 0)
+    unwrap(await db.from('training_sessions').delete().in('id', extra).select('id'));
+}
+
+/* -------------------------------------------------------------------------
+ * Uploads
+ *
+ * Four surfaces put a file in a public bucket — a member's photo, the church
+ * logo, a training's payment QR and a payment receipt — and they all go the
+ * same way (rule G4): validate the file HERE, write it with the service role,
+ * store the resulting public URL on the row. Only the rule differs, because
+ * only the rule should: a receipt may be a PDF, an avatar may not.
+ * ---------------------------------------------------------------------- */
+
+type UploadRule = {
+  maxBytes: number;
+  accepts: (contentType: string) => boolean;
+  typeError: string;
+  sizeError: string;
+};
+
+/** Avatars, the church logo, a payment QR — an image, 5MB at most. */
+const IMAGE_UPLOAD: UploadRule = {
+  maxBytes: 5 * 1024 * 1024,
+  accepts: (type) => type.startsWith('image/'),
+  typeError: 'Only image files are supported',
+  sizeError: 'The image must be 5MB or smaller',
+};
+
+/**
+ * A payment receipt: a photo of a transfer, or the PDF a banking app produces.
+ *
+ * An explicit list rather than `image/*` — this is the one upload path with NO
+ * session behind it, so it accepts exactly the formats a receipt actually comes
+ * in. `image/svg+xml` is deliberately absent: an SVG is a script that renders,
+ * and these objects are served from a public bucket.
+ */
+const SLIP_TYPES = [
+  'image/jpeg',
+  'image/pjpeg',
+  'image/png',
+  'image/webp',
+  'image/gif',
+  'image/heic',
+  'image/heif',
+  'application/pdf',
+];
+const SLIP_UPLOAD: UploadRule = {
+  maxBytes: 5 * 1024 * 1024,
+  accepts: (type) => SLIP_TYPES.includes(type),
+  typeError:
+    'The receipt must be a photo (JPG, PNG, WEBP, GIF or HEIC) or a PDF',
+  sizeError: 'The receipt must be 5MB or smaller',
+};
+
+/**
+ * The uploaded file, or a 400 that says what was wrong in words a person can
+ * act on. Both checks happen BEFORE the bytes are read, so an oversized upload
+ * is refused rather than buffered.
+ */
+function checkedFile(value: FormDataEntryValue | File | null, rule: UploadRule): File {
+  if (!(value instanceof File) || value.size === 0) throw new HttpError(400, 'No file uploaded');
+  if (!rule.accepts((value.type || '').toLowerCase())) throw new HttpError(400, rule.typeError);
+  if (value.size > rule.maxBytes) throw new HttpError(400, rule.sizeError);
+  return value;
+}
+
+/** A safe extension for the stored object — never the uploaded name itself. */
+function fileExt(file: File, fallback: string): string {
+  return (file.name.split('.').pop() || fallback).toLowerCase().replace(/[^a-z0-9]/g, '') || fallback;
+}
+
+/** Write a validated file into a public bucket and return its public URL. */
+async function storeFile(
+  db: ReturnType<typeof getDb>,
+  bucket: string,
+  path: string,
+  file: File,
+): Promise<string> {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const up = await db.storage
+    .from(bucket)
+    .upload(path, bytes, { contentType: file.type || 'application/octet-stream', upsert: true });
+  if (up.error) throw new HttpError(500, up.error.message);
+  return db.storage.from(bucket).getPublicUrl(path).data.publicUrl;
 }
 
 async function namelist(db: ReturnType<typeof getDb>, trainingId: string) {

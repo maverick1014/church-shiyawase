@@ -173,17 +173,28 @@ export interface TrainingRow {
   id: string;
   name: string;
   description: string | null;
-  category: string | null;
-  /** 课程 or 活动 — which shape this row is (migration 0014). */
+  /** 课程 or 活动 — which shape this row is (migration 0014, convertible 0016). */
   kind: TrainingKind;
-  trainer_id: string | null;
+  /** 负责人 — free text (0016): the person in charge is often not a member. */
+  pic: string | null;
+  /** How to reach them; people ring the PIC before signing up. */
+  pic_contact: string | null;
   total_sessions: number;
   is_enrollable: boolean;
   starts_on: string | null;
   ends_on: string | null;
+  /** An ACTIVITY's start time, "HH:MM:SS" — Malaysia, like every other time. */
+  start_time: string | null;
+  /** An ACTIVITY's meeting point. A course's places live on its sessions. */
+  location: string | null;
+  /** 报名费. null / 0 = free, and the payment fields below stay hidden. */
+  fee: string | number | null;
+  /** How to pay: bank account, TnG number, a note. One field, any method. */
+  payment_instructions: string | null;
+  /** Public URL of the uploaded payment QR; null = none. */
+  payment_qr_url: string | null;
   /** null = 全堂开放. */
   hall_id: string | null;
-  trainer?: { id: string; full_name: string } | null;
   hall?: { id: string; name: string } | null;
 }
 
@@ -205,13 +216,19 @@ export interface EnrollmentRow {
   progress: number;
   enrolled_at: string;
   completed_at: string | null;
+  /**
+   * The receipt uploaded with a paid sign-up (0016); null on a free one. The
+   * admin opens it from the review row and only then approves — that is what
+   * approving a paid sign-up means.
+   */
+  payment_slip_url: string | null;
   member?: {
     id: string;
     full_name: string;
     church_role: ChurchRole;
     group_position: GroupPosition | null;
   };
-  training?: { id: string; name: string; category: string | null; total_sessions: number };
+  training?: { id: string; name: string; total_sessions: number };
 }
 
 export interface TrainingDetail extends TrainingRow {

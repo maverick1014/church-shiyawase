@@ -8,13 +8,13 @@ import { usePageChrome, useMe } from '@/components/AppShell';
 import { ErrorBanner, PageBar, SkeletonCards, SkeletonScreen, useConfirm, useToast } from '@/components/ui';
 import { TrainingModal } from '@/components/TrainingModal';
 import { can } from '@/lib/perms';
-import { MemberRow, TrainingRow } from '@/lib/types';
+import { TrainingRow } from '@/lib/types';
 import {
-  categoryBadgeClass,
-  formatDate,
-  trainingCategoryLabel,
+  formatMoney,
+  hasFee,
   trainingKindClass,
   trainingKindKey,
+  trainingMeta,
 } from '@/lib/labels';
 import { endOfChurchDate } from '@/lib/time';
 import { useT } from '@/lib/i18n';
@@ -36,7 +36,6 @@ export default function TrainingsPage() {
   const confirm = useConfirm();
   const perms = can(useMe().role);
   const trainings = useFetch<TrainingRow[]>('/trainings');
-  const members = useFetch<MemberRow[]>('/members');
   // Which shape to CREATE — also what tells the modal apart from an edit.
   const [adding, setAdding] = useState<TrainingKind | null>(null);
   const [editing, setEditing] = useState<TrainingRow | null>(null);
@@ -89,51 +88,40 @@ export default function TrainingsPage() {
 
   const renderCards = (items: TrainingRow[], faded?: boolean) => (
     <div className="grid g3">
-      {items.map((course) => {
-        const isActivity = course.kind === TrainingKind.Activity;
-        return (
-          <div className="card" key={course.id} style={{ display: 'flex', flexDirection: 'column', opacity: faded ? 0.86 : 1 }}>
-            <div className="flex-between flex-wrap gap-8">
-              <div className="flex items-center gap-6 flex-wrap">
-                <span className={`badge ${trainingKindClass(course.kind)}`}>
-                  {t(trainingKindKey(course.kind))}
-                </span>
-                <span className={`badge ${categoryBadgeClass(course.category)}`}>
-                  {trainingCategoryLabel(course.category, t) || t('trainings.defaultCategory')}
-                </span>
-              </div>
-              <span className={`badge ${course.is_enrollable ? 'b-good' : 'b-gray'}`}>
-                {course.is_enrollable ? t('trainings.open') : t('trainings.closed')}
+      {items.map((course) => (
+        <div className="card" key={course.id} style={{ display: 'flex', flexDirection: 'column', opacity: faded ? 0.86 : 1 }}>
+          <div className="flex-between flex-wrap gap-8">
+            <div className="flex items-center gap-6 flex-wrap">
+              <span className={`badge ${trainingKindClass(course.kind)}`}>
+                {t(trainingKindKey(course.kind))}
               </span>
+              {/* 报名费 — only a paid row says anything, so a free one reads
+                  exactly as it did before (0016). */}
+              {hasFee(course.fee) && (
+                <span className="badge b-accent">
+                  {t('trainings.fee', { amount: formatMoney(course.fee) })}
+                </span>
+              )}
             </div>
-            <h3 style={{ margin: '12px 0 2px', fontSize: 16, cursor: 'pointer' }} className="serif" onClick={() => router.push(`/trainings/${course.id}`)}>
-              {course.name}
-            </h3>
-            <div className="muted" style={{ fontSize: 12.5 }}>
-              {isActivity
-                ? t('trainings.host', { name: course.trainer?.full_name ?? t('common.pending') })
-                : t('trainings.trainer', { name: course.trainer?.full_name ?? t('common.pending') })}
-              {' · '}
-              {isActivity
-                ? t('trainings.activityDate', { date: formatDate(course.starts_on) })
-                : t('trainings.sessions', { n: course.total_sessions })}
-            </div>
-            {!isActivity && (
-              <div className="muted" style={{ fontSize: 12, marginTop: 10 }}>
-                {t('trainings.dateRange', {
-                  from: formatDate(course.starts_on),
-                  to: formatDate(course.ends_on),
-                })}
-              </div>
-            )}
-            <div className="grow" />
-            <div className="flex gap-8 mt-14">
-              <button className="btn sm grow" onClick={() => router.push(`/trainings/${course.id}`)}>{t('trainings.roster')}</button>
-              {perms.write && <button className="btn ghost sm" onClick={() => setEditing(course)}>{t('common.edit')}</button>}
-            </div>
+            <span className={`badge ${course.is_enrollable ? 'b-good' : 'b-gray'}`}>
+              {course.is_enrollable ? t('trainings.open') : t('trainings.closed')}
+            </span>
           </div>
-        );
-      })}
+          <h3 style={{ margin: '12px 0 2px', fontSize: 16, cursor: 'pointer' }} className="serif" onClick={() => router.push(`/trainings/${course.id}`)}>
+            {course.name}
+          </h3>
+          {/* The same "who and when" line the detail page shows, built once in
+              lib/labels.ts so the two can never drift (rule G4). */}
+          <div className="muted" style={{ fontSize: 12.5, lineHeight: 1.7 }}>
+            {trainingMeta(course, t).join(' · ')}
+          </div>
+          <div className="grow" />
+          <div className="flex gap-8 mt-14">
+            <button className="btn sm grow" onClick={() => router.push(`/trainings/${course.id}`)}>{t('trainings.roster')}</button>
+            {perms.write && <button className="btn ghost sm" onClick={() => setEditing(course)}>{t('common.edit')}</button>}
+          </div>
+        </div>
+      ))}
     </div>
   );
 
@@ -198,24 +186,25 @@ export default function TrainingsPage() {
 
       {(adding || editing) && (
         <TrainingModal
-          members={members.data ?? []}
           initial={editing ?? undefined}
           kind={adding ?? undefined}
           onClose={() => {
             setAdding(null);
             setEditing(null);
           }}
-          onSaved={(id) => {
+          onSaved={(saved) => {
             const edited = editing;
-            const wasActivity = (edited?.kind ?? adding) === TrainingKind.Activity;
+            // The SAVED row's kind, never the one the modal opened on: a row
+            // that was just converted has to be reported as what it now is.
+            const isActivity = saved.kind === TrainingKind.Activity;
             setAdding(null);
             setEditing(null);
             trainings.reload();
             if (edited)
-              toast(wasActivity ? t('trainings.toast.activityUpdated') : t('trainings.toast.updated'));
+              toast(isActivity ? t('trainings.toast.activityUpdated') : t('trainings.toast.updated'));
             else {
-              toast(wasActivity ? t('trainings.toast.activityCreated') : t('trainings.toast.created'));
-              router.push(`/trainings/${id}`);
+              toast(isActivity ? t('trainings.toast.activityCreated') : t('trainings.toast.created'));
+              router.push(`/trainings/${saved.id}`);
             }
           }}
           onDelete={

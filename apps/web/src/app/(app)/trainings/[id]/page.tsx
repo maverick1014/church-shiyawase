@@ -11,16 +11,16 @@ import { can } from '@/lib/perms';
 import { exportMatrix } from '@/lib/export';
 import { EnrollmentRow, MemberRow, NamelistResponse, SessionRow, TrainingDetail } from '@/lib/types';
 import {
-  categoryBadgeClass,
   enrollmentStatusClass,
   enrollmentStatusKey,
-  formatDate,
   formatDateTime,
+  formatMoney,
+  hasFee,
   memberRole,
   roleKey,
-  trainingCategoryLabel,
   trainingKindClass,
   trainingKindKey,
+  trainingMeta,
 } from '@/lib/labels';
 import { fromChurchInput, toChurchInput } from '@/lib/time';
 import { useT } from '@/lib/i18n';
@@ -85,6 +85,8 @@ export default function TrainingDetailPage() {
 
   const t = detail.data;
   const pending = t.enrollments.filter((e) => e.status === EnrollmentStatus.Pending).length;
+  // Whether the review rows below have a receipt to offer at all (0016).
+  const paidCourse = hasFee(t.fee);
 
   // Real attendance rate for the enrolment-review bar: attended / total
   // sessions, read from the attendance sheet (only approved+ enrollees appear
@@ -233,26 +235,20 @@ export default function TrainingDetailPage() {
           <div>
             <div className="flex items-center gap-10 flex-wrap">
               <span className={`badge ${trainingKindClass(t.kind)}`}>{tr(trainingKindKey(t.kind))}</span>
-              <span className={`badge ${categoryBadgeClass(t.category)}`}>
-                {trainingCategoryLabel(t.category, tr) || tr('trainings.defaultCategory')}
-              </span>
+              {hasFee(t.fee) && (
+                <span className="badge b-accent">
+                  {tr('trainings.fee', { amount: formatMoney(t.fee) })}
+                </span>
+              )}
               <span className={`badge ${t.is_enrollable ? 'b-good' : 'b-gray'}`}>
                 {t.is_enrollable ? tr('trainings.open') : tr('trainings.closed')}
               </span>
             </div>
             <h2 style={{ margin: '10px 0 3px', fontSize: 22 }} className="serif">{t.name}</h2>
-            <div className="muted" style={{ fontSize: 12.5 }}>
-              {isActivity
-                ? tr('training.summaryActivity', {
-                    trainer: t.trainer?.full_name ?? tr('common.pending'),
-                    date: formatDate(t.starts_on),
-                  })
-                : tr('training.summary', {
-                    trainer: t.trainer?.full_name ?? tr('common.pending'),
-                    sessions: t.total_sessions,
-                    from: formatDate(t.starts_on),
-                    to: formatDate(t.ends_on),
-                  })}
+            {/* Who is in charge, how to reach them, and when / where — the same
+                line the catalog card shows, built once (rules G4/G5). */}
+            <div className="muted" style={{ fontSize: 12.5, lineHeight: 1.7 }}>
+              {trainingMeta(t, tr).join(' · ')}
             </div>
           </div>
           <div className="flex gap-8">
@@ -270,6 +266,37 @@ export default function TrainingDetailPage() {
           </div>
         </div>
       </div>
+
+      {/* 报名费 — shown only when there is one, and only as a reminder of what
+          the public page tells people: the amount, how to pay it and the QR.
+          It is EDITED in the same form as everything else (Edit above), so
+          there is one place a fee can be changed. */}
+      {hasFee(t.fee) && (
+        <div className="card mt-16">
+          <div className="card-head">
+            <div>
+              <h3>{tr('training.payment')}</h3>
+              <div className="muted" style={{ fontSize: 12.5, marginTop: 2 }}>{tr('training.paymentSub')}</div>
+            </div>
+            <span className="badge b-accent">{tr('trainings.fee', { amount: formatMoney(t.fee) })}</span>
+          </div>
+          <div className="flex gap-14 flex-wrap items-center">
+            {t.payment_qr_url && (
+              /* eslint-disable-next-line @next/next/no-img-element */
+              <img
+                src={t.payment_qr_url}
+                alt={tr('training.qrAlt')}
+                style={{ width: 120, height: 120, objectFit: 'contain', borderRadius: 10, border: '1px solid var(--border)', background: '#fff' }}
+              />
+            )}
+            {t.payment_instructions && (
+              <div className="muted" style={{ fontSize: 12.5, lineHeight: 1.8, whiteSpace: 'pre-wrap', minWidth: 200, flex: 1 }}>
+                {t.payment_instructions}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* An activity has ONE occasion and no session list, so it drops to a
           single full-width card instead of leaving half the row empty. */}
@@ -365,6 +392,29 @@ export default function TrainingDetailPage() {
                     overflow set the row's min-content — which propagated up
                     through the grid and scrolled the whole page sideways. */}
                 <div className="row-actions flex items-center gap-6">
+                  {/* The receipt, WHERE THE DECISION IS MADE: approving a paid
+                      sign-up means a person checked that the money arrived, so
+                      the slip opens from this row rather than another page.
+                      A paid course with no slip says so rather than staying
+                      silent — that enrolment predates the fee, or came in by
+                      hand, and the reviewer should know before approving. */}
+                  {paidCourse &&
+                    (e.payment_slip_url ? (
+                      <a
+                        className="btn ghost sm"
+                        style={{ flexShrink: 0 }}
+                        href={e.payment_slip_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title={tr('training.viewSlipTitle')}
+                      >
+                        {tr('training.viewSlip')}
+                      </a>
+                    ) : (
+                      <span className="badge b-warn" style={{ flexShrink: 0 }} title={tr('training.noSlipTitle')}>
+                        {tr('training.noSlip')}
+                      </span>
+                    ))}
                   <span className={`badge ${enrollmentStatusClass(e.status)}`} style={{ flexShrink: 0 }}>
                     {tr(enrollmentStatusKey(e.status))}
                   </span>
@@ -457,13 +507,19 @@ export default function TrainingDetailPage() {
 
       {editOpen && (
         <TrainingModal
-          members={members.data ?? []}
           initial={t}
           onClose={() => setEditOpen(false)}
-          onSaved={() => {
+          onSaved={(saved) => {
             setEditOpen(false);
             detail.reload();
-            toast(isActivity ? tr('trainings.toast.activityUpdated') : tr('trainings.toast.updated'));
+            // A conversion changes which shape this page is showing, so the
+            // namelist (one column or several) has to be re-read too.
+            namelist.reload();
+            toast(
+              saved.kind === TrainingKind.Activity
+                ? tr('trainings.toast.activityUpdated')
+                : tr('trainings.toast.updated'),
+            );
           }}
           onDelete={perms.delete ? del : undefined}
         />

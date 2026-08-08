@@ -407,10 +407,55 @@ async function main() {
   };
 
   /**
+   * A throwaway PAID course with one sign-up carrying a payment receipt
+   * (migration 0016) — what the admin has to be able to open BEFORE approving.
+   *
+   * The receipt is uploaded through the PUBLIC sign-up path, exactly as a
+   * visitor's would be, because that is the path that stores it; the sign-up
+   * therefore needs a member whose full name matches exactly one row, which is
+   * why it brings its own.
+   */
+  const makePaidTraining = async () => {
+    const row = await apiPost('/trainings', {
+      name: fixtureName('PAID'),
+      total_sessions: 1,
+      is_enrollable: true,
+      fee: 30,
+      payment_instructions: 'ZZ_UITEST Maybank 5123 4567 8901',
+      pic: 'ZZ_UITEST PIC',
+      pic_contact: '012-000 0000',
+      hall_id: await someHallId(),
+    });
+    const removeTraining = disposable(`paid training ${row.name}`, `/trainings/${row.id}`);
+    const payer = await makeMember('PAYER');
+    // A 1×1 PNG standing in for a photo of a bank transfer.
+    const receipt = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+      'base64',
+    );
+    const signUp = await ctx.request.post(`${BASE}/api/trainings/enroll/${row.id}`, {
+      multipart: {
+        full_name: payer.name,
+        slip: { name: 'receipt.png', mimeType: 'image/png', buffer: receipt },
+      },
+    });
+    const outcome = await signUp.json().catch(() => null);
+    if (outcome?.status !== 'ok')
+      throw new Error(`paid sign-up fixture failed: ${signUp.status()} ${JSON.stringify(outcome)}`);
+    return {
+      id: row.id,
+      name: row.name,
+      payer,
+      remove: async () => { await removeTraining(); await payer.remove(); },
+    };
+  };
+
+  /**
    * A throwaway ACTIVITY — the other shape in the same catalog (`kind`,
    * migration 0014): one occasion, one sign-up, one column to tick. Its single
    * session is created by the API with it, so nothing is added here; the
-   * approved sign-up is what puts a row on its roll call.
+   * approved sign-up is what puts a row on its roll call. It carries a time and
+   * a meeting point too (0016), which live on the training row itself.
    */
   const makeActivity = async () => {
     const row = await apiPost('/trainings', {
@@ -419,6 +464,8 @@ async function main() {
       is_enrollable: true,
       starts_on: KL_TODAY,
       ends_on: KL_TODAY,
+      start_time: '09:30',
+      location: 'ZZ_UITEST car park',
       hall_id: await someHallId(),
     });
     const removeActivity = disposable(`activity ${row.name}`, `/trainings/${row.id}`);
@@ -980,10 +1027,84 @@ async function main() {
       check('the page calls it an activity, not a course',
         /Activity/.test(activityBody) && !/Edit course/.test(activityBody),
         activityBody.replace(/\s+/g, ' ').slice(0, 120));
+      // An activity is one occasion with a TIME and a PLACE (0016), and both
+      // live on the training row — so both read off the header line, and the
+      // form has one field for each rather than a session to open.
+      check('an activity shows its time and its meeting point',
+        /09:30/.test(activityBody) && /ZZ_UITEST car park/.test(activityBody),
+        activityBody.replace(/\s+/g, ' ').slice(0, 200));
       await shot('06b-activity-detail');
     } finally {
       await fxActivity.remove();
       await fxTraining.remove();
+    }
+
+    /* -- 报名费: the fee fields, and the receipt behind an approval -------- */
+    // The fee is what turns a sign-up form into a payment: it must stay out of
+    // the way when there is none, and when there IS one the admin has to be
+    // able to open the receipt from the row where they approve — not from
+    // another page. Both halves are asserted here, on a paid course this run
+    // created and signs up for itself.
+    mod('trainings & activities · 报名费 · payment receipt');
+    const fxPaid = await makePaidTraining();
+    // A FREE course to compare against — the fee block and the receipt field
+    // must be absent, not merely empty.
+    const fxTrainingFree = await makeTraining();
+    try {
+      await page.goto(`${BASE}/trainings/${fxPaid.id}`, { waitUntil: 'domcontentloaded' });
+      await page.locator('.card-head h3:has-text("Sign-up fee")').first().waitFor({ timeout: 20000 });
+      const paidBody = await page.locator('.content').innerText();
+      check('a paid course shows the fee and how to pay it',
+        /RM\s*30\.00/.test(paidBody) && /ZZ_UITEST Maybank/.test(paidBody),
+        paidBody.replace(/\s+/g, ' ').slice(0, 200));
+      check('…and the PIC with a number to ring',
+        /ZZ_UITEST PIC/.test(paidBody) && /012-000 0000/.test(paidBody));
+
+      // The receipt opens from the review row, beside Approve.
+      const payerRow = page.locator('.enrol-row', { hasText: fxPaid.payer.name });
+      await payerRow.first().waitFor({ timeout: 20000 });
+      const slipLink = payerRow.locator('a:has-text("Receipt")');
+      check('the pending sign-up offers its receipt where the approval is made',
+        (await slipLink.count()) === 1);
+      const slipHref = await slipLink.first().getAttribute('href');
+      check('…as a real link the admin can open in a new tab',
+        !!slipHref && /^https?:\/\//.test(slipHref) &&
+          (await slipLink.first().getAttribute('target')) === '_blank',
+        String(slipHref).slice(0, 80));
+      check('…and it is next to the Approve button, not on another page',
+        (await payerRow.locator('button:has-text("Approve")').count()) === 1);
+      await shot('06c-paid-training');
+
+      // The public page a payer sees: the amount, how to pay, and a REQUIRED
+      // receipt with the copy that tells them to pay first.
+      await page.goto(`${BASE}/enroll/${fxPaid.id}`, { waitUntil: 'domcontentloaded' });
+      await page.locator('input[type=file]').first().waitFor({ timeout: 20000 });
+      const publicBody = await page.locator('.card').first().innerText();
+      check('the public sign-up page states the fee and how to pay it',
+        /RM\s*30\.00/.test(publicBody) && /ZZ_UITEST Maybank/.test(publicBody),
+        publicBody.replace(/\s+/g, ' ').slice(0, 200));
+      check('…with a line telling people to pay first and upload the receipt',
+        /pay the fee first/i.test(publicBody) && /before approving/i.test(publicBody),
+        publicBody.replace(/\s+/g, ' ').slice(0, 240));
+      check('…and a receipt field that takes a photo or a PDF',
+        (await page.locator('input[type=file]').first().getAttribute('accept'))?.includes('pdf') === true);
+      // The button waits for the receipt: a name alone is not a paid sign-up.
+      await page.locator('input[placeholder]').first().fill('ZZ_UITEST nobody');
+      await w(300);
+      check('the submit button stays disabled until a receipt is attached',
+        await page.locator('button:has-text("Submit enrolment")').first().isDisabled());
+
+      // …and a FREE one asks for none of it, which is the other half.
+      await page.goto(`${BASE}/enroll/${fxTrainingFree.id}`, { waitUntil: 'domcontentloaded' });
+      await page.locator('input[placeholder]').first().waitFor({ timeout: 20000 });
+      const freeBody = await page.locator('.card').first().innerText();
+      check('a free sign-up page shows no fee block and asks for no receipt',
+        !/Sign-up fee/i.test(freeBody) && (await page.locator('input[type=file]').count()) === 0,
+        freeBody.replace(/\s+/g, ' ').slice(0, 160));
+      await shot('06d-public-paid');
+    } finally {
+      await fxPaid.remove();
+      await fxTrainingFree.remove();
     }
 
     /* -- forty days ------------------------------------------------------- */

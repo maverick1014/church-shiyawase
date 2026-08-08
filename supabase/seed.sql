@@ -55,10 +55,13 @@ insert into donations (member_id, amount, fund, method, donated_at) values
   ('a0000000-0000-0000-0000-000000000008', 300.00, '十一奉献', 'bank_transfer', '2026-06-28');
 
 -- Trainings + sessions + enrollments.
-insert into trainings (id, name, description, category, trainer_id, total_sessions, is_enrollable, starts_on, ends_on) values
-  ('c0000000-0000-0000-0000-000000000001', '门徒训练 101', '信仰根基', '门徒', 'a0000000-0000-0000-0000-000000000001', 3, true,  '2026-06-01', '2026-08-15'),
-  ('c0000000-0000-0000-0000-000000000002', '新生命栽培课程', '初信栽培', '栽培', 'a0000000-0000-0000-0000-000000000002', 6, true,  '2026-05-10', '2026-07-20'),
-  ('c0000000-0000-0000-0000-000000000003', '事奉训练营', '事奉装备', '事奉', 'a0000000-0000-0000-0000-000000000003', 4, false, '2026-03-01', '2026-04-10');
+-- 负责人 (PIC) is free text: the person in charge is often not a member at all
+-- (migration 0016). The last one carries a 报名费 with the two things a payer
+-- needs — how much, and where to send it.
+insert into trainings (id, name, description, pic, pic_contact, total_sessions, is_enrollable, starts_on, ends_on, fee, payment_instructions) values
+  ('c0000000-0000-0000-0000-000000000001', '门徒训练 101', '信仰根基', '陈约翰', '012-345 6789', 3, true,  '2026-06-01', '2026-08-15', null, null),
+  ('c0000000-0000-0000-0000-000000000002', '新生命栽培课程', '初信栽培', '林恩慈', '012-345 6790', 6, true,  '2026-05-10', '2026-07-20', null, null),
+  ('c0000000-0000-0000-0000-000000000003', '事奉训练营', '事奉装备', '王大卫（外聘讲师）', '012-345 6791', 4, false, '2026-03-01', '2026-04-10', 80.00, 'Maybank 5123 4567 8901（主恩堂）· TnG 012-345 6791');
 
 insert into training_sessions (training_id, session_number, title, scheduled_at, location) values
   ('c0000000-0000-0000-0000-000000000001', 1, '得救确据', '2026-07-07 20:00+08', '副堂'),

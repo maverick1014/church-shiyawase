@@ -24,14 +24,18 @@ function ok(name, cond, detail) {
   else { fail++; fails.push(`${name}${detail ? ` — ${detail}` : ''}`); console.error(`  FAIL ${name}${detail ? ` — ${detail}` : ''}`); }
 }
 
-async function req(method, path, { cookie, body, raw } = {}) {
+/**
+ * One request. `body` is JSON; `form` is a multipart body (an upload) and is
+ * sent as-is so the runtime writes its own boundary — never both.
+ */
+async function req(method, path, { cookie, body, form, raw } = {}) {
   const headers = {};
   if (cookie) headers.cookie = cookie;
   if (body !== undefined) headers['content-type'] = 'application/json';
   const res = await fetch(`${BASE}${path}`, {
     method,
     headers,
-    body: body !== undefined ? JSON.stringify(body) : undefined,
+    body: form !== undefined ? form : body !== undefined ? JSON.stringify(body) : undefined,
   });
   const setCookie = res.headers.get('set-cookie') || '';
   let json;
@@ -186,6 +190,9 @@ async function main() {
 
   // ---- 培训&活动: the ACTIVITY shape --------------------------------------
   await activityShape(admin, members, hallId);
+
+  // ---- 培训&活动: a PAID course, from the fee to the receipt ---------------
+  await paidTraining(admin, hallId);
 
   // ---- Discipleship modules (read-only) + pair CRUD + public form ----------
   // A 守望模块 is created once and then left alone: the module MANAGER that
@@ -342,6 +349,222 @@ async function activityShape(adminCookie, members, hallId) {
   } finally {
     const del = await req('DELETE', `/api/trainings/${id}`, H);
     ok('the activity fixture was deleted', del.status === 200, `status ${del.status}`);
+  }
+}
+
+/** The smallest real PNG there is — a 1×1 pixel, for the upload paths. */
+const PNG_1PX = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+  'base64',
+);
+
+/** A multipart body carrying one file, the way a browser sends an upload. */
+function fileForm(field, bytes, name, type, extra = {}) {
+  const form = new FormData();
+  for (const [k, v] of Object.entries(extra)) form.append(k, v);
+  form.append(field, new Blob([bytes], { type }), name);
+  return form;
+}
+
+/**
+ * 报名费 — a PAID course, end to end (migration 0016).
+ *
+ * A fee changes what the public sign-up form IS: it has to say how much and
+ * how to pay before it can ask for proof, and the sign-up then only counts
+ * with a receipt attached. What has teeth here:
+ *  - the public payload carries the fee, the instructions and the QR — the
+ *    three things a payer needs, and still nothing else;
+ *  - a sign-up with NO receipt is refused outright, in words, rather than
+ *    stored as an enrolment nobody can check;
+ *  - a file that is neither an image nor a PDF is refused too — this is the
+ *    one upload path with no session behind it;
+ *  - a receipt that IS attached comes back to the ADMIN on the enrolment, and
+ *    resolves, because approving a paid sign-up means somebody opened it.
+ *
+ * It works on a course and a member it CREATES and deletes in a `finally`:
+ * this runs against the church's live database, and a stray paid course would
+ * show up in the catalog for everyone.
+ */
+async function paidTraining(adminCookie, hallId) {
+  const H = { cookie: adminCookie };
+  const FEE = 30;
+  const INSTRUCTIONS = 'Maybank 5123 4567 8901 (E2E) · TnG 012-000 0000';
+
+  const mk = await req('POST', '/api/trainings', {
+    ...H,
+    body: {
+      name: `E2E收费课程-${Date.now()}`,
+      total_sessions: 1,
+      is_enrollable: true,
+      fee: FEE,
+      payment_instructions: INSTRUCTIONS,
+      pic: 'E2E 负责人',
+      pic_contact: '012-000 0000',
+      hall_id: hallId,
+    },
+  });
+  ok('create a paid course → 200 + id', mk.status === 200 && mk.json?.id, `status ${mk.status} ${JSON.stringify(mk.json).slice(0, 140)}`);
+  const id = mk.json?.id;
+  if (!id) return;
+
+  // Its own signer-up, so the full-name match has exactly one answer and the
+  // enrolment disappears with the member (FK cascade).
+  const mkMember = await req('POST', '/api/members', {
+    ...H,
+    body: { full_name: `E2E报名者-${Date.now()}`, church_role: 'member', status: 'active', hall_id: hallId },
+  });
+  const memberId = mkMember.json?.id;
+  const memberName = mkMember.json?.full_name;
+  ok('paid-course fixture member created', mkMember.status === 200 && !!memberId, `status ${mkMember.status}`);
+
+  try {
+    ok('the fee is stored as money, not as text', Number(mk.json?.fee) === FEE, String(mk.json?.fee));
+    ok('the PIC is free text, with a number to ring',
+      mk.json?.pic === 'E2E 负责人' && mk.json?.pic_contact === '012-000 0000',
+      JSON.stringify({ pic: mk.json?.pic, contact: mk.json?.pic_contact }));
+
+    // ---- the church's payment QR ------------------------------------------
+    const qr = await req('POST', `/api/trainings/${id}/payment-qr`, {
+      ...H,
+      form: fileForm('file', PNG_1PX, 'qr.png', 'image/png'),
+    });
+    ok('upload a payment QR → 200 + a url on the row',
+      qr.status === 200 && typeof qr.json?.payment_qr_url === 'string' && qr.json.payment_qr_url.length > 0,
+      `status ${qr.status} ${String(qr.json?.payment_qr_url).slice(0, 80)}`);
+    const badQr = await req('POST', `/api/trainings/${id}/payment-qr`, {
+      ...H,
+      form: fileForm('file', Buffer.from('not an image'), 'notes.txt', 'text/plain'),
+    });
+    ok('a QR that is not an image → 400', badQr.status === 400, `status ${badQr.status}`);
+
+    // ---- what the PUBLIC page is told -------------------------------------
+    const pub = await req('GET', `/api/trainings/enroll/${id}`);
+    ok('the public payload carries the fee, the instructions and the QR',
+      pub.status === 200 &&
+        Number(pub.json?.fee) === FEE &&
+        pub.json?.payment_instructions === INSTRUCTIONS &&
+        typeof pub.json?.payment_qr_url === 'string' && pub.json.payment_qr_url.length > 0,
+      JSON.stringify(pub.json).slice(0, 200));
+    ok('…and the PIC and their contact, because people ring before signing up',
+      pub.json?.pic === 'E2E 负责人' && pub.json?.pic_contact === '012-000 0000',
+      JSON.stringify({ pic: pub.json?.pic, contact: pub.json?.pic_contact }));
+    // Still an allow-list: no hall, no timestamps, nothing else off the row.
+    ok('…and nothing else off the row',
+      pub.json && Object.keys(pub.json).sort().join(',') ===
+        'ends_on,fee,id,is_enrollable,kind,location,name,payment_instructions,payment_qr_url,pic,pic_contact,start_time,starts_on,total_sessions',
+      Object.keys(pub.json ?? {}).sort().join(','));
+
+    // ---- signing up (no auth), with and without a receipt ------------------
+    const noSlip = await req('POST', `/api/trainings/enroll/${id}`, { body: { full_name: memberName } });
+    ok('a paid sign-up with no receipt → 400', noSlip.status === 400, `status ${noSlip.status}`);
+    ok('…and says what to do about it, in words',
+      /receipt/i.test(noSlip.json?.message || ''), String(noSlip.json?.message));
+
+    const badType = await req('POST', `/api/trainings/enroll/${id}`, {
+      form: fileForm('slip', Buffer.from('MZ not a receipt'), 'payload.exe', 'application/x-msdownload', {
+        full_name: memberName,
+      }),
+    });
+    ok('a receipt that is neither an image nor a PDF → 400', badType.status === 400, `status ${badType.status}`);
+    ok('…and names the formats that are accepted',
+      /PDF/i.test(badType.json?.message || ''), String(badType.json?.message));
+
+    // Nothing was stored by either refusal — a half-done sign-up would be
+    // worse than none.
+    const beforeOk = await req('GET', `/api/trainings/${id}`, H);
+    ok('neither refusal left an enrolment behind',
+      (beforeOk.json?.enrollments || []).length === 0,
+      `${(beforeOk.json?.enrollments || []).length} enrolment(s)`);
+
+    const signedUp = await req('POST', `/api/trainings/enroll/${id}`, {
+      form: fileForm('slip', PNG_1PX, 'receipt.png', 'image/png', { full_name: memberName }),
+    });
+    ok('a paid sign-up WITH a receipt → ok', signedUp.json?.status === 'ok', JSON.stringify(signedUp.json));
+
+    // ---- what the ADMIN sees before approving ------------------------------
+    const detail = await req('GET', `/api/trainings/${id}`, H);
+    const enrolment = (detail.json?.enrollments || []).find((e) => e.member_id === memberId);
+    ok('the enrolment reaches the admin with its receipt attached',
+      !!enrolment?.payment_slip_url, JSON.stringify(enrolment ?? null).slice(0, 160));
+    if (enrolment?.payment_slip_url) {
+      const slip = await fetch(enrolment.payment_slip_url).catch((e) => ({ status: 0, error: e }));
+      ok('…and the receipt actually opens, which is the whole point',
+        slip.status === 200, `status ${slip.status}${slip.error ? ` ${slip.error}` : ''}`);
+      ok('…and the approval it gates still works',
+        (await req('PATCH', `/api/trainings/enrollments/${enrolment.id}`, { ...H, body: { status: 'approved' } })).status === 200);
+    }
+
+    // ---- what the server refuses on the fee itself -------------------------
+    const negative = await req('PATCH', `/api/trainings/${id}`, { ...H, body: { fee: -5 } });
+    ok('a negative fee → 400', negative.status === 400, `status ${negative.status}`);
+    const free = await req('PATCH', `/api/trainings/${id}`, { ...H, body: { fee: '' } });
+    ok('an empty fee means FREE, stored as null',
+      free.status === 200 && free.json?.fee === null, `status ${free.status} ${String(free.json?.fee)}`);
+    const nowFree = await req('POST', `/api/trainings/enroll/${id}`, {
+      body: { full_name: `查无此人-${Date.now()}` },
+    });
+    ok('…and a free course takes a plain sign-up again, with no receipt',
+      nowFree.status === 200 && nowFree.json?.status === 'no_member', JSON.stringify(nowFree.json));
+  } finally {
+    const del = await req('DELETE', `/api/trainings/${id}`, H);
+    ok('the paid-course fixture was deleted', del.status === 200, `status ${del.status}`);
+    if (memberId) {
+      const delMember = await req('DELETE', `/api/members/${memberId}`, H);
+      ok('the paid-course fixture member was deleted', delMember.status === 200, `status ${delMember.status}`);
+    }
+  }
+
+  await convertShape(adminCookie, hallId);
+}
+
+/**
+ * 形态互换 (0016): a course becomes an activity and back.
+ *
+ * The trap is the activity's single session — it is API-created plumbing, and
+ * a course may have several. Converting one way must therefore reduce to
+ * exactly one session (the FIRST, so the roll call already taken on it
+ * survives) and converting back must not manufacture a second. The UI asks
+ * before that destroys anything; the INVARIANT is the server's, which is what
+ * this asserts.
+ */
+async function convertShape(adminCookie, hallId) {
+  const H = { cookie: adminCookie };
+  const mk = await req('POST', '/api/trainings', {
+    ...H,
+    body: { name: `E2E形态-${Date.now()}`, total_sessions: 3, is_enrollable: false, hall_id: hallId },
+  });
+  ok('create a three-session course → 200 + id', mk.status === 200 && mk.json?.id, `status ${mk.status}`);
+  const id = mk.json?.id;
+  if (!id) return;
+  try {
+    for (const n of [1, 2, 3])
+      await req('POST', `/api/trainings/${id}/sessions`, { ...H, body: { session_number: n, title: `第 ${n} 堂` } });
+    const before = await req('GET', `/api/trainings/${id}`, H);
+    ok('…with all three sessions on it', (before.json?.sessions || []).length === 3,
+      `${(before.json?.sessions || []).length} sessions`);
+    const firstId = before.json?.sessions?.[0]?.id;
+
+    const toActivity = await req('PATCH', `/api/trainings/${id}`, { ...H, body: { kind: 'activity', starts_on: '2030-05-04' } });
+    ok('turning it into an activity → 200 + one occasion',
+      toActivity.status === 200 && toActivity.json?.kind === 'activity' && toActivity.json?.total_sessions === 1,
+      `status ${toActivity.status} ${JSON.stringify(toActivity.json).slice(0, 140)}`);
+    ok('…and an activity ends on the day it starts',
+      String(toActivity.json?.ends_on).startsWith('2030-05-04'), String(toActivity.json?.ends_on));
+    const converted = await req('GET', `/api/trainings/${id}`, H);
+    ok('the sessions above the first are gone, and the FIRST is the one kept',
+      (converted.json?.sessions || []).length === 1 && converted.json?.sessions?.[0]?.id === firstId,
+      JSON.stringify((converted.json?.sessions || []).map((s) => s.session_number)));
+
+    const backToCourse = await req('PATCH', `/api/trainings/${id}`, { ...H, body: { kind: 'course', total_sessions: 4 } });
+    ok('turning it back into a course → 200', backToCourse.status === 200 && backToCourse.json?.kind === 'course',
+      `status ${backToCourse.status}`);
+    const back = await req('GET', `/api/trainings/${id}`, H);
+    ok('…and its one session simply becomes session 1 again — nothing manufactured',
+      (back.json?.sessions || []).length === 1 && back.json?.sessions?.[0]?.id === firstId,
+      JSON.stringify((back.json?.sessions || []).map((s) => s.session_number)));
+  } finally {
+    const del = await req('DELETE', `/api/trainings/${id}`, H);
+    ok('the shape-conversion fixture was deleted', del.status === 200, `status ${del.status}`);
   }
 }
 

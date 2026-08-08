@@ -290,30 +290,55 @@ export function trainingKindClass(kind: TrainingKind | string): string {
 }
 
 /**
- * Category is a free-text column, so the three seeded values are stored as the
- * original Chinese words. They are mapped to a dictionary key for display; any
- * other value a church types in is shown verbatim.
+ * The one "who and when" line a 培训&活动 row shows — on the catalog card, on
+ * the detail header and on the public sign-up page, which is why it is built
+ * here once rather than three times (rules G4/G5).
+ *
+ * Each piece is a translated fragment or a bare date/time/place (data, not
+ * copy); the caller joins them with ` · `. Empty pieces are dropped, so a
+ * course with no location does not read "… ·  · …".
+ *
+ * The two shapes differ only in what they have to say: a COURSE runs over N
+ * sessions between two dates; an ACTIVITY happens once, at a time, somewhere.
  */
-const TRAINING_CATEGORY_KEYS: Record<string, MessageKey> = {
-  门徒: 'trainingCategory.discipleship',
-  栽培: 'trainingCategory.nurture',
-  事奉: 'trainingCategory.service',
-};
-
-export const TRAINING_CATEGORIES = Object.keys(TRAINING_CATEGORY_KEYS);
-
-export function trainingCategoryLabel(
-  category: string | null,
-  t: (key: MessageKey) => string,
-): string {
-  if (!category) return '';
-  const key = TRAINING_CATEGORY_KEYS[category];
-  return key ? t(key) : category;
+export function trainingMeta(
+  row: {
+    kind: TrainingKind | string;
+    pic: string | null;
+    pic_contact: string | null;
+    total_sessions: number;
+    starts_on: string | null;
+    ends_on: string | null;
+    start_time: string | null;
+    location: string | null;
+  },
+  t: (key: MessageKey, vars?: Record<string, string | number>) => string,
+): string[] {
+  const parts: string[] = [];
+  parts.push(t('trainings.pic', { name: row.pic || t('common.pending') }));
+  if (row.pic_contact) parts.push(t('trainings.picContact', { contact: row.pic_contact }));
+  if (row.kind === TrainingKind.Activity) {
+    // Date and time are one fact about one occasion, so they read as one:
+    // "2026-09-12 09:00". A bare `time` is a Malaysian wall-clock reading.
+    const when = [formatDate(row.starts_on), formatMeetingTime(row.start_time)]
+      .filter((s) => s && s !== '—')
+      .join(' ');
+    if (when) parts.push(t('trainings.activityWhen', { when }));
+    if (row.location) parts.push(t('trainings.atPlace', { place: row.location }));
+  } else {
+    parts.push(t('trainings.sessions', { n: row.total_sessions }));
+    parts.push(t('trainings.dateRange', { from: formatDate(row.starts_on), to: formatDate(row.ends_on) }));
+  }
+  return parts;
 }
 
-/** Training-category tag — the design uses the accent tone for all categories. */
-export function categoryBadgeClass(_cat: string | null): string {
-  return 'b-accent';
+/**
+ * 报名费 — is there one? `numeric` arrives as a string from PostgREST, and a
+ * blank field is stored as null, so "free" is one question asked in one place
+ * (the server asks the same one before demanding a receipt).
+ */
+export function hasFee(fee: string | number | null | undefined): boolean {
+  return fee !== null && fee !== undefined && String(fee).trim() !== '' && Number(fee) > 0;
 }
 
 export function enrollmentStatusKey(status: string): MessageKey {

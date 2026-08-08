@@ -13,7 +13,6 @@ import { useModuleEnabled } from '@/lib/church';
 import { EnrollmentRow, GroupDetail, GroupRow, MemberRow, PairRow } from '@/lib/types';
 import { ChurchRole, GroupPosition, LEADERSHIP_POSITIONS, MemberStatus, Gender, MODULE_DISCIPLESHIP } from '@tog/shared';
 import {
-  categoryBadgeClass,
   CHURCH_ROLE_OPTIONS,
   churchRoleKey,
   enrollmentStatusClass,
@@ -26,7 +25,6 @@ import {
   memberRole,
   memberStatusKey,
   positionKey,
-  trainingCategoryLabel,
 } from '@/lib/labels';
 import { useT } from '@/lib/i18n';
 
@@ -58,8 +56,6 @@ export default function MemberDetailPage() {
       records,
       (row, key) => {
         switch (key) {
-          case 'category':
-            return trainingCategoryLabel(row.training?.category ?? null, tr) || undefined;
           case 'status':
             return tr(enrollmentStatusKey(row.status));
           case 'completed':
@@ -200,7 +196,6 @@ export default function MemberDetailPage() {
             <thead>
               <tr>
                 <SortTh sortKey="course" activeKey={recSortKey} dir={recSortDir} onSort={toggleRecSort}>{tr('member.col.course')}</SortTh>
-                <SortTh sortKey="category" activeKey={recSortKey} dir={recSortDir} onSort={toggleRecSort}>{tr('member.col.category')}</SortTh>
                 <SortTh sortKey="status" activeKey={recSortKey} dir={recSortDir} onSort={toggleRecSort}>{tr('members.col.status')}</SortTh>
                 <th style={{ width: 200 }}>{tr('member.col.progress')}</th>
                 <SortTh sortKey="completed" activeKey={recSortKey} dir={recSortDir} onSort={toggleRecSort}>{tr('member.col.completed')}</SortTh>
@@ -210,11 +205,6 @@ export default function MemberDetailPage() {
               {sortedRecords.map((row) => (
                 <tr key={row.id}>
                   <td><strong>{row.training?.name ?? '—'}</strong></td>
-                  <td>
-                    <span className={`badge ${categoryBadgeClass(row.training?.category ?? null)}`}>
-                      {trainingCategoryLabel(row.training?.category ?? null, tr) || '—'}
-                    </span>
-                  </td>
                   <td>
                     <span className={`badge ${enrollmentStatusClass(row.status)}`}>
                       {tr(enrollmentStatusKey(row.status))}
@@ -226,7 +216,7 @@ export default function MemberDetailPage() {
               ))}
               {sortedRecords.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="empty-inline">
+                  <td colSpan={4} className="empty-inline">
                     {tr('member.noTraining')}
                   </td>
                 </tr>

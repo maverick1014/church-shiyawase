@@ -5,7 +5,8 @@ import {
   trainingKindKey,
   roleTagStyle,
   roleDot,
-  categoryBadgeClass,
+  hasFee,
+  trainingMeta,
   enrollmentStatusClass,
   memberStatusKey,
   formatDate,
@@ -36,13 +37,6 @@ describe('role palette', () => {
   });
 });
 
-describe('categoryBadgeClass', () => {
-  it('always returns b-accent', () => {
-    expect(categoryBadgeClass('门徒')).toBe('b-accent');
-    expect(categoryBadgeClass(null)).toBe('b-accent');
-    expect(categoryBadgeClass('anything')).toBe('b-accent');
-  });
-});
 
 describe('enrollmentStatusClass', () => {
   it('maps enrollment statuses to badge classes', () => {
@@ -171,6 +165,106 @@ describe('training kinds', () => {
     expect(isActivity({ kind: TrainingKind.Course })).toBe(false);
     expect(isActivity({})).toBe(false);
     expect(isActivity(null)).toBe(false);
+  });
+});
+
+/*
+ * The one "who and when" line (0016) — built once and shown on the catalog
+ * card, the detail header and the PUBLIC sign-up page, so what a visitor reads
+ * before ringing the PIC is the same thing the admin sees.
+ *
+ * `t` here renders the English dictionary through the same `{placeholder}`
+ * substitution the app uses, so a key that stopped existing (or a placeholder
+ * that drifted) fails this test rather than shipping a literal `{name}`.
+ */
+const t = ((key: keyof typeof en, vars?: Record<string, string | number>) =>
+  (en[key] as string).replace(/\{(\w+)\}/g, (whole, name: string) =>
+    vars?.[name] === undefined ? whole : String(vars[name]),
+  )) as Parameters<typeof trainingMeta>[1];
+
+const COURSE = {
+  kind: TrainingKind.Course,
+  pic: 'Pastor Tan',
+  pic_contact: '012-345 6789',
+  total_sessions: 4,
+  starts_on: '2026-06-01',
+  ends_on: '2026-08-15',
+  start_time: null,
+  location: null,
+};
+
+describe('trainingMeta', () => {
+  it('reads a course as its PIC, contact, session count and date range', () => {
+    expect(trainingMeta(COURSE, t)).toEqual([
+      'PIC: Pastor Tan',
+      'Contact 012-345 6789',
+      '4 sessions',
+      '2026-06-01 to 2026-08-15',
+    ]);
+  });
+
+  it('reads an activity as one occasion: when, and where', () => {
+    expect(
+      trainingMeta(
+        {
+          ...COURSE,
+          kind: TrainingKind.Activity,
+          total_sessions: 1,
+          starts_on: '2026-09-12',
+          ends_on: '2026-09-12',
+          // Postgres hands a `time` back with seconds; the line shows HH:MM.
+          start_time: '09:00:00',
+          location: 'the church car park',
+        },
+        t,
+      ),
+    ).toEqual([
+      'PIC: Pastor Tan',
+      'Contact 012-345 6789',
+      'On 2026-09-12 09:00',
+      'at the church car park',
+    ]);
+  });
+
+  it('drops the pieces a row does not have, rather than showing empty ones', () => {
+    expect(
+      trainingMeta(
+        {
+          ...COURSE,
+          kind: TrainingKind.Activity,
+          pic: null,
+          pic_contact: null,
+          starts_on: '2026-09-12',
+          ends_on: '2026-09-12',
+          start_time: null,
+          location: null,
+        },
+        t,
+      ),
+    ).toEqual(['PIC: TBD', 'On 2026-09-12']);
+  });
+});
+
+/*
+ * 报名费 — "does this charge?" is asked in three places (the form's payment
+ * block, the badges, and the server before it demands a receipt), so it is one
+ * function. `numeric` arrives from PostgREST as a STRING, which is the case
+ * that would otherwise read as NaN.
+ */
+describe('hasFee', () => {
+  it('is true for a real amount, as a number or as PostgREST’s string', () => {
+    expect(hasFee(30)).toBe(true);
+    expect(hasFee('30.00')).toBe(true);
+    expect(hasFee(0.5)).toBe(true);
+  });
+
+  it('is false for free — null, undefined, blank or zero', () => {
+    expect(hasFee(null)).toBe(false);
+    expect(hasFee(undefined)).toBe(false);
+    expect(hasFee('')).toBe(false);
+    expect(hasFee('   ')).toBe(false);
+    expect(hasFee(0)).toBe(false);
+    expect(hasFee('0.00')).toBe(false);
   });
 });
 

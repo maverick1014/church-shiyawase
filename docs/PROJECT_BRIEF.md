@@ -44,7 +44,7 @@ with a distinctive **40-day one-on-one discipleship (四十天一对一守望)**
 1. One system for **人 / 聚会 / 奉献 / 培训 / 门训**.
 2. Every member's **rank/身份** comes from a single place (the group setup page) — no double maintenance.
 3. Every member has a **personal training record** (what they attended + progress).
-4. Trainings are **fully customizable** (multiple sessions, a trainer, opt-in enrollment, admin-checked attendance, printable/checkable namelist).
+4. Trainings are **fully customizable** (multiple sessions, a named PIC with a contact, an optional 报名费 with payment instructions and a receipt, opt-in enrollment, admin-checked attendance, printable/checkable namelist).
 5. **40-day discipleship** is a **cascade** the pastor can monitor in real time, and the mentor fills a **daily form via a private link** (no login).
 
 ---
@@ -192,11 +192,13 @@ followed, in date order, by every meeting someone added for it.
 - **Summary** by fund + total.
 
 ### 5.5 Trainings & Activities (培训&活动) + personal record
-- **Two shapes, one catalog** (`kind`, migration 0014): a **course** runs over several sessions; an **activity** (兄弟团爬山, 姐妹团做蛋糕) is ONE occasion people sign up for and get ticked off at. Everything else — sign-ups, the roll call, the public link, the hall rule — is shared, so they are the same record and the same pages. An activity's single occasion is the one `training_sessions` row the API creates with it (it is what the roll call ticks); its date is the record's own `starts_on`/`ends_on`, and `total_sessions` is forced to 1 server-side.
-- **Catalog:** name, 说明, 类别, **kind**, **trainer**(讲师 / 活动负责人), **total_sessions**, **is_enrollable**, start/end dates. The catalog filters by kind (课程与活动 / 只看课程 / 只看活动).
+- **Two shapes, one catalog** (`kind`, migration 0014): a **course** runs over several sessions; an **activity** (兄弟团爬山, 姐妹团做蛋糕) is ONE occasion people sign up for and get ticked off at. Everything else — sign-ups, the roll call, the public link, the hall rule — is shared, so they are the same record and the same pages. An activity's single occasion is the one `training_sessions` row the API creates with it (it is what the roll call ticks); its **date, time and meeting point** are the record's own `starts_on`/`ends_on`, `start_time` and `location` (0016), and `total_sessions` is forced to 1 server-side.
+- **The shape is convertible** (0016). course → activity keeps only the FIRST session and deletes the rest **with their attendance**, behind a `useConfirm({ danger: true })` that names how many sessions and how many ticks go; activity → course simply lets the single session become session 1. The invariant lives in `ensureSingleSession` on the server, so a stale client can never leave a four-session activity behind.
+- **Catalog:** name, 说明, **kind**, **pic + pic_contact** (负责人 and a number to ring — free text since 0016, because the person in charge is often an outsider), **total_sessions**, **is_enrollable**, start/end dates, an activity's time + place, and the 报名费 block. 类别 is **gone** (0016): it was a display tag that described none of an activity. The catalog filters by kind (课程与活动 / 只看课程 / 只看活动).
+- **报名费 (0016):** `fee` null/0 = free and nothing below appears. A fee carries `payment_instructions` (free text — bank account, TnG number, a note; ONE column, because a church invents methods nobody modelled) and an optional uploaded `payment_qr_url`. Sign-ups then carry `training_enrollments.payment_slip_url` — the receipt, uploaded **with** the sign-up and opened by the admin **from the review row, beside Approve**, because approving a paid sign-up means somebody checked that the money arrived.
 - **Sessions:** a course can have **multiple sessions** (number, title, time, location, notes); an activity shows no session list at all.
 - **Enrollment:** member enrolls → `pending`; **admin approves** and tracks status (待审核/已通过/进行中/已完成/已退出). The 报名审核 progress bar shows each enrollee's **real attendance rate** (attended ÷ total sessions from the namelist).
-- **Public self-enrollment link (no login):** `/enroll/[id]` — sharable when the course **or activity** is 开放报名; the public payload carries `kind` + `starts_on` so an activity reads as "Activity on <date>" instead of "1 sessions". A visitor types their **full Chinese name**; the server enrolls them (`pending`) only if it matches **exactly one** existing member. No match / multiple matches → "请联系牧师加入成员系统" (never auto-creates a member, avoiding duplicates). Copy the link from the 培训详情 header (「🔗 报名链接」).
+- **Public self-enrollment link (no login):** `/enroll/[id]` — sharable when the course **or activity** is 开放报名; the public payload is an allow-list carrying `kind`, the date/time/place, the PIC and their contact, and the fee block, so an activity reads as "On <date> <time> at <place>" instead of "1 sessions" and a payer can see what to pay and where. On a PAID one the form shows the amount, the instructions and the QR **above a required receipt upload** (image or PDF, 5MB), and the receipt is posted as one multipart request WITH the sign-up — nothing reaches storage until the name has matched exactly one member, so the app's only unauthenticated upload path cannot be used as file storage. A visitor types their **full Chinese name**; the server enrolls them (`pending`) only if it matches **exactly one** existing member. No match / multiple matches → "请联系牧师加入成员系统" (never auto-creates a member, avoiding duplicates). Copy the link from the 培训详情 header (「🔗 报名链接」).
 - **Attendance / namelist:** admin marks attended per session; system **generates a checking namelist** (members × sessions grid with ✓).
 - **Personal training record:** on each member's detail page — every training they enrolled in + status + progress.
 
@@ -240,9 +242,9 @@ Tables:
 - ~~`recurring_events`~~ — **dropped by 0015**, together with `events.recurring_id`. The schedules only ever pre-created event rows for dates the calendar already had; the roll-call sheet builds its own columns, so nothing needed them.
 - `event_attendance(id, event_id, member_id, status, checked_in_at, notes, unique(event_id,member_id))`
 - `donations(id, member_id?, amount, currency, fund, method, donated_at, notes, created_at)`
-- `trainings(id, name, description, category, **kind** `course|activity` check, default `course`, trainer_id→members, total_sessions, is_enrollable, starts_on, ends_on, hall_id→halls **nullable**, created_at)` — `hall_id is null` = 全堂开放. `kind` (0014) is the only thing that tells a course from a one-off activity; the catalog of shapes is `TrainingKind` in `packages/shared`.
-- `training_sessions(id, training_id, session_number, title, scheduled_at, location, notes, unique(training_id,session_number))`
-- `training_enrollments(id, training_id, member_id, status, progress, enrolled_at, completed_at, notes, unique(training_id,member_id))`
+- `trainings(id, name, description, **kind** `course|activity` check, default `course`, **pic**, **pic_contact**, total_sessions, is_enrollable, starts_on, ends_on, **start_time**, **location**, **fee** numeric ≥ 0, **payment_instructions**, **payment_qr_url**, hall_id→halls **nullable**, created_at)` — `hall_id is null` = 全堂开放. `kind` (0014) is the only thing that tells a course from a one-off activity; the catalog of shapes is `TrainingKind` in `packages/shared`. 0016 dropped `category` and replaced `trainer_id→members` with free-text `pic` (+ its contact), copying each linked member's name forward first.
+- `training_sessions(id, training_id, session_number, title, scheduled_at, location, notes, unique(training_id,session_number))` — an ACTIVITY's single row is plumbing for the roll call: its `scheduled_at`/`location` stay null, because the occasion's time and place live on the training row.
+- `training_enrollments(id, training_id, member_id, status, progress, enrolled_at, completed_at, notes, **payment_slip_url**, unique(training_id,member_id))`
 - `training_attendance(id, session_id, member_id, attended, checked_at, notes, unique(session_id,member_id))`
 - `discipleship_programs(id, name, description, total_days=40 check ≥ 1, created_at)` — the
   **module** (模块) in the UI. It has no `hall_id`, so no hall gate applies. It is **created
@@ -292,7 +294,7 @@ Tables:
 | 聚会点名 | `GET /attendance/sheet?year&month[&hall_id]` → `{hall_id, columns[{key, kind, date, ticks[], meeting}], rows[{member, cells{key:{…ticks}}}]}` — no `hall_id` means every congregation's members; `PUT /attendance/sheet` `{column, member_ids[], …ticks}` → `{column, member_ids[], count, …ticks}` — the cells of **one or many** members in one call (`member_id` is the singular alias), created / updated / **deleted** (every tick false) by the same call, in `sunday_attendance` or `event_attendance` depending on the column. A list is the general shape so the column check-all cannot drift from a single tick: same gate, same hall rule (each row filed under **that member's own** hall), same delete-instead-of-false. 400 on a non-Sunday `sunday:` column, a column key the server never handed out, an empty list, or an id that is not a member (refused whole — never half-applied) |
 | Events | `GET/POST /events`, `GET/PATCH/DELETE /events/:id` — the hand-added meetings; their attendance is a column on the sheet above |
 | Donations | `GET/POST /donations`, `GET /donations/summary`, `PATCH/DELETE /donations/:id` |
-| Trainings & Activities | `GET/POST /trainings`, `GET/PATCH/DELETE /trainings/:id`, `GET /trainings/:id/namelist`, **public** `GET/POST /trainings/enroll/:id`. `kind` is validated server-side (400 on anything but `course`/`activity`); creating an `activity` forces `total_sessions: 1` and inserts its single session |
+| Trainings & Activities | `GET/POST /trainings`, `GET/PATCH/DELETE /trainings/:id`, `GET /trainings/:id/namelist`, `POST /trainings/:id/payment-qr` (image upload), **public** `GET/POST /trainings/enroll/:id` (JSON, or multipart when a receipt rides along). `kind` is validated server-side (400 on anything but `course`/`activity`); creating **or converting to** an `activity` forces `total_sessions: 1`, `ends_on = starts_on` and exactly one session; `fee` must be a number ≥ 0; a paid sign-up with no receipt is a 400 in words |
 | Sessions | `POST /trainings/:id/sessions`, `PATCH/DELETE /trainings/sessions/:sessionId`, `POST /trainings/sessions/:sessionId/attendance` |
 | Enrollment | `POST /trainings/:id/enroll`, `PATCH/DELETE /trainings/enrollments/:enrollmentId` |
 | Discipleship | `GET/POST /discipleship/programs`, **`GET` only** on `/discipleship/programs/:id` (the module — no hall column, so no hall gate; PATCH and DELETE were removed with the module manager and now 404), `GET /discipleship/programs/:id/overview`, `GET/POST /discipleship/pairs`, `GET/PATCH/DELETE /discipleship/pairs/:id`, `POST /discipleship/pairs/:id/progress` |
@@ -319,7 +321,7 @@ Groups: **恩典小组** (周六 15:00), **青年小组** (周五 20:00), **迦�
 | 郑喜乐 | 迦南小组 | 新成员 (慕道) |
 
 Discipleship cascade (program 四十天一对一守望): 陈约翰→林玛丽 (31/40) → 林玛丽→黄彼得 (22/40) → 黄彼得→吴恩慈 (12/40) → 吴恩慈→王但以理 (5/40) → 王但以理→陈路得 (0/40).
-Sample training: **门徒训练 101** (讲师 陈约翰, 3 场次: 得救确据 / 祷告 / 读经), enrollments with mixed statuses.
+Sample training: **门徒训练 101** (负责人 陈约翰 · 012-345 6789, 3 场次: 得救确据 / 祷告 / 读经), enrollments with mixed statuses; **事奉训练营** carries a RM 80 报名费 with bank/TnG instructions.
 Donations: 十一奉献/主日奉献/建堂/宣教, methods 现金/转账/线上; monthly total ~ RM 8,650.
 
 ---
@@ -330,7 +332,7 @@ Donations: 十一奉献/主日奉献/建堂/宣教, methods 现金/转账/线上
 | --- | --- | --- |
 | 1 | Currency | **RM (MYR)** |
 | 2 | Households module needed? | Modeled but optional; can hide in v1 |
-| 3 | Training categories preset | 门徒 / 栽培 / 事奉 (free text otherwise) |
+| 3 | ~~Training categories preset~~ | **Removed (0016)** — the tag described none of an activity and nobody filtered on it |
 | 4 | Donation fund presets | 十一奉献 / 主日奉献 / 建堂 / 宣教 / 感恩 |
 | 5 | Mentor can have multiple trainees? | **Yes** (multiple pairs) |
 | 6 | Auth now? | **No** — add Supabase Auth + role permissions later |

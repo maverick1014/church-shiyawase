@@ -898,6 +898,37 @@ input[type='checkbox']:focus,
 input[type='radio']:focus {
   box-shadow: none;
 }
+/* A file input is the one single-line control whose CONTENT is itself a
+   control: the browser draws a "Choose file" button inside it, sized from the
+   system font. Left alone inside our --control-h box that button sits hard
+   against the top edge and reads like a different design language from the
+   fields around it — which is exactly what the public sign-up form's payment
+   receipt picker sits next to. So pin the text to the same height token and
+   dress the inner button like a small ghost button (G9). It lives here with
+   the other shared control rules — never patched on one page. */
+input[type='file'] {
+  padding: 0 10px;
+  line-height: calc(var(--control-h) - 2px);
+  cursor: pointer;
+}
+input[type='file']::file-selector-button {
+  height: var(--control-h-sm);
+  margin-right: 10px;
+  padding: 0 11px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface-2);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+input[type='file']::file-selector-button:hover {
+  border-color: var(--brand);
+  color: var(--brand);
+}
+
 /* An empty date/datetime input shows a "dd/mm/yyyy"-style pattern by default
    (this is the browser's internal segment display, not the `placeholder`
    attribute — `:placeholder-shown` does not match it). `.date-empty` is added
