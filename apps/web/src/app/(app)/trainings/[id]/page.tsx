@@ -284,7 +284,7 @@ export default function TrainingDetailPage() {
               </select>
             </div>
           )}
-          <div style={{ maxHeight: 296, overflowY: 'auto' }}>
+          <div className="enrol-list">
             {t.enrollments.map((e) => {
               const att = attendanceOf(e.member_id);
               return (

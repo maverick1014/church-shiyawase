@@ -813,6 +813,21 @@ th.sortable:hover {
   }
 }
 
+/* The enrolment list scrolls within the card on desktop so it cannot push the
+   attendance sheet off the screen. On a phone the rows are three lines tall
+   (see .enrol-row below), so that cap cut the third row in half — and the
+   page already scrolls, so there is nothing to contain. */
+.enrol-list {
+  max-height: 296px;
+  overflow-y: auto;
+}
+@media (max-width: 640px) {
+  .enrol-list {
+    max-height: none;
+    overflow-y: visible;
+  }
+}
+
 /* The enrolment row carries the most controls in the app: name, role, a
    progress bar, a status badge and up to two buttons. On a phone they cannot
    share one line — squeezing the name column breaks a Chinese name one
