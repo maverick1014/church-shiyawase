@@ -17,9 +17,232 @@ import { useT } from '@/lib/i18n';
  * State helpers
  * ---------------------------------------------------------------------- */
 
+/**
+ * One centred line of text. Kept for the places where it is the right answer —
+ * inside a modal, which is already a small bounded box. A page uses the
+ * skeletons below instead: this line alone at the top of an empty page is
+ * followed by the whole page snapping in underneath it.
+ */
 export function Loading() {
   const t = useT();
   return <div className="loading">{t('common.loading')}</div>;
+}
+
+/* -------------------------------------------------------------------------
+ * Loading skeletons
+ *
+ * One composable set for every page (G4) — a page builds its loading state out
+ * of these rather than hand-rolling its own. The rule of thumb: render the
+ * page's real chrome (its `PageBar`, its `BackButton`, its section labels —
+ * they all work with empty data) and skeletonise only the body that is
+ * actually waiting on the fetch.
+ *
+ * Every block is decorative and `aria-hidden`; `SkeletonScreen` supplies the
+ * one accessible status, so screen-reader users still hear `common.loading`.
+ * ---------------------------------------------------------------------- */
+
+/** Column widths for a skeleton table, cycled across the columns. Fixed pixels
+ *  on purpose: a percentage inside an auto-layout `<td>` has no definite basis
+ *  to resolve against and can collapse to nothing. */
+const SKELETON_COL_W = [136, 92, 112, 76, 120, 96];
+
+// Builds an index array — `Array.from({ length: n }, (_, i) => i)` at every
+// skeleton call site read worse than naming it once.
+const times = (n: number) => Array.from({ length: n }, (_, i) => i);
+
+/**
+ * A single shimmering block. Defaults to one full-width line of body text;
+ * pass `width` / `height` / `radius` for anything else (an avatar is
+ * `<Skeleton width={72} height={72} radius="50%" />`).
+ */
+export function Skeleton({
+  width = '100%',
+  height = 13,
+  radius = 6,
+  style,
+}: {
+  width?: number | string;
+  height?: number | string;
+  radius?: number | string;
+  style?: React.CSSProperties;
+}) {
+  return <span className="sk" aria-hidden="true" style={{ width, height, borderRadius: radius, ...style }} />;
+}
+
+/**
+ * `lines` stacked text lines. The last one is short — that asymmetry is what
+ * makes a stack of bars read as a paragraph rather than as a table.
+ */
+export function SkeletonText({
+  lines = 3,
+  style,
+}: {
+  lines?: number;
+  style?: React.CSSProperties;
+}) {
+  return (
+    <div className="sk-lines" aria-hidden="true" style={style}>
+      {times(lines).map((i) => (
+        <Skeleton key={i} width={lines > 1 && i === lines - 1 ? '62%' : '100%'} />
+      ))}
+    </div>
+  );
+}
+
+/** A `.card`-shaped placeholder: a heading line over `lines` body lines. */
+export function SkeletonCard({
+  title = true,
+  lines = 3,
+  style,
+}: {
+  title?: boolean;
+  lines?: number;
+  style?: React.CSSProperties;
+}) {
+  return (
+    <div className="card" aria-hidden="true" style={style}>
+      {title && <Skeleton width="42%" height={16} style={{ marginBottom: 16 }} />}
+      <SkeletonText lines={lines} />
+    </div>
+  );
+}
+
+/** `count` cards in one of the shared grids — the shape the event and training
+ *  catalogs land in, so the catalog doesn't reflow around them. */
+export function SkeletonCards({
+  count = 3,
+  lines = 3,
+  className = 'grid g3',
+}: {
+  count?: number;
+  lines?: number;
+  className?: string;
+}) {
+  return (
+    <div className={className} aria-hidden="true">
+      {times(count).map((i) => (
+        <SkeletonCard key={i} lines={lines} />
+      ))}
+    </div>
+  );
+}
+
+/**
+ * The list-page workhorse: a header row over `rows` × `columns` body cells.
+ *
+ * It honours the same `.only-desktop` / `.only-mobile` split the real lists
+ * use (G7), so a phone gets tile-shaped skeletons rather than a squashed
+ * table. `bare` drops both the card chrome and the tile variant — for a table
+ * that already lives inside a card and scrolls sideways on a phone too (the
+ * weekly-attendance grid).
+ */
+export function SkeletonTable({
+  rows = 6,
+  columns = 5,
+  bare,
+}: {
+  rows?: number;
+  columns?: number;
+  bare?: boolean;
+}) {
+  const cols = times(columns);
+  const widthOf = (c: number) => SKELETON_COL_W[c % SKELETON_COL_W.length];
+  const table = (
+    <div className="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            {cols.map((c) => (
+              <th key={c}>
+                <Skeleton width={Math.round(widthOf(c) * 0.62)} height={10} />
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {times(rows).map((r) => (
+            <tr key={r}>
+              {cols.map((c) => (
+                <td key={c}>
+                  <Skeleton width={widthOf(c)} />
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+
+  if (bare) return <div aria-hidden="true">{table}</div>;
+
+  return (
+    <div aria-hidden="true">
+      <div className="card only-desktop" style={{ padding: 6 }}>
+        {table}
+      </div>
+      <div className="only-mobile">
+        {times(rows).map((r) => (
+          <div key={r} className="sk-tile">
+            <div className="mtile-row1">
+              <Skeleton width={148} height={15} />
+              <Skeleton width={16} height={16} radius={8} />
+            </div>
+            <div className="mtile-line">
+              <Skeleton width={196} height={11} />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The shape of a detail page's opening card: the record's identity header over
+ * its grid of fact tiles. Member detail and 我的资料 both render exactly that,
+ * so their loading state is one component rather than two (G4). The tiles come
+ * from `FactGrid` itself, so they can never drift from the real ones.
+ */
+export function SkeletonDetail({ facts = 8 }: { facts?: number }) {
+  return (
+    <div className="card" aria-hidden="true">
+      <div className="entity-header">
+        <div className="entity-header-id">
+          <Skeleton width={72} height={72} radius="50%" />
+          <div className="grow">
+            <Skeleton width="46%" height={20} />
+            <Skeleton width="62%" style={{ marginTop: 10 }} />
+          </div>
+        </div>
+      </div>
+      <FactGrid
+        style={{ marginTop: 18 }}
+        facts={times(facts).map(() => ({
+          label: <Skeleton width="58%" height={10} />,
+          value: <Skeleton width="76%" height={12} />,
+        }))}
+      />
+    </div>
+  );
+}
+
+/**
+ * A page's loading state: the decorative shapes plus the one visually-hidden
+ * live region that announces them. Every page goes through this rather than
+ * repeating the aria wiring, and it reuses `common.loading` — the same string
+ * the old `<Loading />` line showed — so nothing new had to be translated.
+ */
+export function SkeletonScreen({ children }: { children: ReactNode }) {
+  const t = useT();
+  return (
+    <>
+      <span className="sr-only" role="status" aria-live="polite">
+        {t('common.loading')}
+      </span>
+      <div aria-hidden="true">{children}</div>
+    </>
+  );
 }
 
 export function ErrorBanner({ message }: { message: string | null }) {
@@ -218,21 +441,42 @@ export function ChevronRightIcon({ size = 18 }: { size?: number }) {
   );
 }
 
+export function ChevronLeftIcon({ size = 18 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M15 6l-6 6 6 6" />
+    </svg>
+  );
+}
+
+export function RepeatIcon({ size = 16 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M17 2l4 4-4 4" />
+      <path d="M3 11V9a4 4 0 0 1 4-4h14" />
+      <path d="M7 22l-4-4 4-4" />
+      <path d="M21 13v2a4 4 0 0 1-4 4H3" />
+    </svg>
+  );
+}
+
+export function LinkIcon({ size = 16 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.5 1.5" />
+      <path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7L12 19" />
+    </svg>
+  );
+}
+
 export function DownloadIcon({ size = 17 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
       strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M12 3v12m0 0l-4.5-4.5M12 15l4.5-4.5M4 19h16" />
-    </svg>
-  );
-}
-
-export function InfoIcon({ size = 17 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
-      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <circle cx="12" cy="12" r="9" />
-      <path d="M12 11v5M12 7.6v.2" />
     </svg>
   );
 }
@@ -269,6 +513,39 @@ export function ExportButton({
     <button className="btn ghost" onClick={onClick} disabled={disabled} title={label} aria-label={label}>
       <DownloadIcon />
     </button>
+  );
+}
+
+/**
+ * The one way back out of a detail page. Every page said something different
+ * ("‹ Back to catalog", "‹ Back to accounts"…) at a non-standard height, in
+ * the right corner. It is one control now: a chevron, the word "Back", the
+ * shared `--control-h` like every other button, on the left where a back
+ * affordance belongs.
+ */
+export function BackButton({ onClick }: { onClick: () => void }) {
+  const t = useT();
+  return (
+    <button className="btn ghost back-btn" onClick={onClick}>
+      <ChevronLeftIcon size={16} />
+      {t('common.back')}
+    </button>
+  );
+}
+
+/**
+ * A detail page's top row: back on the left, that record's page-level actions
+ * in the right corner — the same left/right split as `PageBar`, so a detail
+ * page and a list page read the same way. Use this instead of a bare
+ * `BackButton` whenever the page has an action that belongs beside back
+ * rather than inside the record's card.
+ */
+export function BackBar({ onBack, actions }: { onBack: () => void; actions?: ReactNode }) {
+  return (
+    <div className="back-bar">
+      <BackButton onClick={onBack} />
+      {actions && <div className="back-bar-actions">{actions}</div>}
+    </div>
   );
 }
 
@@ -334,56 +611,33 @@ export function EntityHeader({
 }
 
 /**
- * Reference material that would otherwise push the real content down the page
- * (e.g. the permission matrix in 用户管理). Opens on hover and on click, so it
- * works on both a desktop pointer and a touch screen.
+ * The read-only "facts" tiles under a detail page's header (email, phone,
+ * congregation…). Member detail built this shape inline; the profile page needs
+ * the same one, so it lives here once rather than being retyped per page
+ * (rule G4). Values may be nodes, so a fact can carry a badge.
  */
-export function InfoPopover({ label, children }: { label: string; children: ReactNode }) {
-  // Hover and click are tracked separately on purpose. A single toggled flag
-  // breaks on a pointer device: hovering opens it, and the click that follows
-  // immediately closes it again. Clicking instead *pins* it open, so it
-  // survives the pointer leaving — and it still works on touch, where there
-  // is no hover at all.
-  const [pinned, setPinned] = useState(false);
-  const [hovered, setHovered] = useState(false);
-  const open = pinned || hovered;
-  const ref = useRef<HTMLSpanElement>(null);
-
-  useEffect(() => {
-    if (!pinned) return;
-    const onDocDown = (e: MouseEvent) => {
-      if (!ref.current?.contains(e.target as Node)) setPinned(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setPinned(false);
-    };
-    document.addEventListener('mousedown', onDocDown);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousedown', onDocDown);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [pinned]);
-
+export function FactGrid({
+  facts,
+  style,
+}: {
+  // The label is a node, not a string, so the loading skeleton can hand this
+  // component placeholder bars and get the real tile back (rule G4) — which
+  // also means the list is keyed by position rather than by its label text.
+  facts: { label: ReactNode; value: ReactNode }[];
+  style?: React.CSSProperties;
+}) {
   return (
-    <span
-      ref={ref}
-      className="info-pop"
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-    >
-      <button
-        type="button"
-        className="info-pop-trigger"
-        aria-label={label}
-        title={label}
-        aria-expanded={open}
-        onClick={() => setPinned((p) => !p)}
-      >
-        <InfoIcon />
-      </button>
-      {open && <span className="info-pop-body">{children}</span>}
-    </span>
+    <div className="grid g4" style={style}>
+      {facts.map((f, i) => (
+        <div
+          key={i}
+          style={{ background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 10, padding: '12px 14px' }}
+        >
+          <div className="muted" style={{ fontSize: 11.5 }}>{f.label}</div>
+          <div style={{ fontSize: 14, fontWeight: 600, marginTop: 3 }}>{f.value}</div>
+        </div>
+      ))}
+    </div>
   );
 }
 

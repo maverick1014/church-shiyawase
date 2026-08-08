@@ -30,6 +30,9 @@
      they always line up. See UI rule in CLAUDE.md. */
   --control-h: 40px;
   --control-h-sm: 32px;
+  /* Tint of a loading skeleton — the same neutral family as the borders and
+     the secondary surface, so a page of skeletons still reads as this app. */
+  --skeleton: var(--accent-soft);
   --font-serif: "Songti SC", "STSong", "Noto Serif CJK SC", "Source Han Serif SC",
     "SimSun", serif;
   --font-sans: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
@@ -201,13 +204,19 @@ button {
   color: #fff;
 }
 
+/* The account card at the foot of the sidebar. The rule above it separates it
+   from the navigation, because it is about who is signed in rather than where
+   to go. */
+.nav-user-card {
+  margin-top: 10px;
+  padding-bottom: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+}
 .nav-user {
   display: flex;
   align-items: center;
   gap: 10px;
   padding: 10px 12px;
-  margin-top: 10px;
-  border-top: 1px solid rgba(255, 255, 255, 0.12);
   cursor: pointer;
 }
 .nav-user:hover {
@@ -225,32 +234,23 @@ button {
   font-size: 11px;
   font-weight: 400;
 }
-.nav-user-menu {
-  position: absolute;
-  bottom: calc(100% + 6px);
-  left: 8px;
-  right: 8px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.28);
-  padding: 6px;
-  z-index: 20;
-}
-.nav-user-menu button {
+/* Sign-out belongs to the card, not to the navigation: small, no icon, and
+   indented to sit under the name (12px card padding + 30px avatar + 10px gap),
+   so it reads as a line of this account's block rather than as one more place
+   to go. It used to be a full nav row, which gave it the weight of a
+   destination. Before that it hid inside a popover the card toggled. */
+.nav-signout {
   display: block;
-  width: 100%;
-  text-align: left;
+  margin-left: 52px;
+  padding: 0;
   background: transparent;
   border: none;
-  padding: 9px 11px;
-  border-radius: 7px;
-  font-size: 13px;
-  color: var(--ink);
+  font-size: 11px;
+  color: var(--crit);
   cursor: pointer;
 }
-.nav-user-menu button:hover {
-  background: var(--surface-2);
+.nav-signout:hover {
+  text-decoration: underline;
 }
 
 .main {
@@ -676,46 +676,6 @@ th.sortable:hover {
   filter: none;
 }
 
-/* Info popover — reference material folded behind an icon so it doesn't push
-   the page's real content down. */
-.info-pop {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-}
-.info-pop-trigger {
-  display: grid;
-  place-items: center;
-  width: 26px;
-  height: 26px;
-  border-radius: 50%;
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--muted);
-  cursor: pointer;
-}
-.info-pop-trigger:hover {
-  color: var(--brand);
-  border-color: var(--brand);
-}
-.info-pop-body {
-  position: absolute;
-  z-index: 40;
-  top: calc(100% + 8px);
-  right: 0;
-  width: min(340px, calc(100vw - 40px));
-  max-height: 60vh;
-  overflow-y: auto;
-  padding: 14px 16px;
-  border-radius: 12px;
-  border: 1px solid var(--border);
-  background: var(--surface);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.13);
-  text-align: left;
-  font-weight: 400;
-  cursor: default;
-}
-
 /* The one bar at the top of a list page: filters on the left, the page's own
    action buttons on the right. Every page uses this same row, so the top of
    every list reads identically — the page actions used to live in a separate
@@ -778,6 +738,65 @@ th.sortable:hover {
   .page-bar-actions {
     margin-left: 0;
   }
+}
+
+/* A list row's trailing action group. Content-sized and allowed to wrap by
+   default; the fixed width that keeps desktop rows aligned applies only where
+   there is room for it. A flex-shrink:0 fixed width narrower than its own
+   contents is how a single row ends up wider than the phone it is on. */
+.row-actions {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+@media (min-width: 641px) {
+  .row-actions {
+    width: 172px;
+    flex-shrink: 0;
+    flex-wrap: nowrap;
+  }
+}
+
+/* The enrolment list scrolls within the card on desktop so it cannot push the
+   attendance sheet off the screen. On a phone the rows are three lines tall
+   (see .enrol-row below), so that cap cut the third row in half — and the
+   page already scrolls, so there is nothing to contain. */
+.enrol-list {
+  max-height: 296px;
+  overflow-y: auto;
+}
+@media (max-width: 640px) {
+  .enrol-list {
+    max-height: none;
+    overflow-y: visible;
+  }
+}
+
+/* The enrolment row carries the most controls in the app: name, role, a
+   progress bar, a status badge and up to two buttons. On a phone they cannot
+   share one line — squeezing the name column breaks a Chinese name one
+   character per line ("曾 / 勇 / 勒"), because CJK has no word boundaries to
+   wrap on. So give the identity its own full-width line and let the bar and
+   the buttons follow underneath. */
+@media (max-width: 640px) {
+  .enrol-row {
+    flex-wrap: wrap;
+  }
+  /* Name + role share the first line with the progress bar — the bar belongs
+     next to the person it describes. Only the buttons drop below. */
+  .enrol-row > :first-child {
+    flex: 1 1 auto;
+  }
+  .enrol-row .row-actions {
+    flex: 1 1 100%;
+  }
+}
+
+/* Grid and flex children default to min-width:auto, so one wide child does not
+   shrink — it widens its track and pushes the whole page into a sideways
+   scroll. Nothing in this app wants that: wide content scrolls inside its own
+   .table-wrap instead. */
+.grid > * {
+  min-width: 0;
 }
 
 /* The detail-page header (EntityHeader). The identity column keeps a real
@@ -887,6 +906,68 @@ input[type='radio']:focus {
    mid-entry (before a complete date exists) is still visible while editing. */
 input.date-empty:not(:focus) {
   color: transparent;
+}
+/* WebKit — and iOS/iPadOS Safari above all — dresses a date/time input in a
+   native box instead of the one we asked for: it takes its intrinsic size from
+   the system picker rather than from our height, and it paints the value
+   centred. That is why the 聚会时间 field on an iPad sat taller than the
+   weekday <select> beside it and read centre-aligned while every text input in
+   the same row read left. Drop that native box the same way <select> drops its
+   native chevron above, so these fields are sized by --control-h like every
+   other single-line control (G9). The picker itself is untouched: on iOS it
+   opens by tapping the field, and on desktop by the indicator kept below. */
+input[type='date'],
+input[type='time'],
+input[type='datetime-local'],
+input[type='month'],
+input[type='week'] {
+  -webkit-appearance: none;
+  appearance: none;
+  /* `height` alone loses to the native control's own intrinsic height on iOS;
+     the matching min-height is what actually pins the field to the token. */
+  min-height: var(--control-h);
+  /* ...and its intrinsic *width* would otherwise push a .form-row wider than
+     the modal, exactly as a <select>'s widest option does (see .trio-pick). */
+  min-width: 0;
+  text-align: left;
+}
+input.sm[type='date'],
+input.sm[type='time'],
+input.sm[type='datetime-local'],
+input.sm[type='month'],
+input.sm[type='week'] {
+  min-height: var(--control-h-sm);
+}
+/* WebKit paints the value through this shadow part and centres it there, so
+   text-align on the input alone never reaches it. Its UA margin also insets the
+   value from the field's own left padding and reserves a slab on the right,
+   which is the other half of the ragged edge; zeroing it puts the first glyph
+   on the same left edge as a plain text input, and the inherited line-height
+   keeps it on that input's baseline. Kept in its own block: browsers that do
+   not know this pseudo-element drop the rule, not the sizing above. */
+input[type='date']::-webkit-date-and-time-value,
+input[type='time']::-webkit-date-and-time-value,
+input[type='datetime-local']::-webkit-date-and-time-value,
+input[type='month']::-webkit-date-and-time-value,
+input[type='week']::-webkit-date-and-time-value {
+  display: block;
+  text-align: left;
+  margin: 0;
+  line-height: inherit;
+}
+/* The indicator is kept, not hidden: on a desktop pointer it is the only way to
+   open the picker (clicking the segments just edits them), while iOS does not
+   render it at all — so hiding it would cost the desktop its affordance and buy
+   the iPad nothing. Zero the UA spacing and let it sit at the end of the row,
+   in the field's own right padding, next to where a <select> draws its chevron. */
+input[type='date']::-webkit-calendar-picker-indicator,
+input[type='time']::-webkit-calendar-picker-indicator,
+input[type='datetime-local']::-webkit-calendar-picker-indicator,
+input[type='month']::-webkit-calendar-picker-indicator,
+input[type='week']::-webkit-calendar-picker-indicator {
+  margin: 0 0 0 auto;
+  padding: 0;
+  cursor: pointer;
 }
 textarea {
   resize: vertical;
@@ -1270,8 +1351,13 @@ textarea {
 .mb-16 {
   margin-bottom: 16px;
 }
+/* The flexible column in a row. min-width:0 is part of the job: without it a
+   flex child refuses to shrink below its longest word, so a long email or name
+   widens the row instead of truncating. Six of the nine call sites were
+   missing the inline override that the other three carried. */
 .grow {
   flex: 1;
+  min-width: 0;
 }
 
 /* Page-level empty state — a standalone panel where content would have been. */
@@ -1294,11 +1380,81 @@ td.empty-inline {
   padding: 26px 20px;
   font-size: 13px;
 }
+/* One line of text, centred — right for a modal, which is already a small
+   bounded box. Pages use the skeletons below instead: a lone "Loading…" line
+   at the top of an empty page is followed by the whole page snapping in
+   underneath it, and everything jumps. */
 .loading {
   text-align: center;
   color: var(--muted);
   padding: 48px 20px;
   font-size: 14px;
+}
+
+/* ==========================================================================
+   Loading skeletons
+   --------------------------------------------------------------------------
+   A skeleton occupies roughly the space the real content will, so the swap
+   when the fetch resolves is seamless rather than a jump. Every block is
+   decorative: <SkeletonScreen> hides them from assistive tech and carries the
+   accessible status in the .sr-only live region below.
+   ========================================================================== */
+.sk {
+  display: block;
+  position: relative;
+  overflow: hidden;
+  flex-shrink: 0;
+  border-radius: 6px;
+  background: var(--skeleton);
+}
+/* The sweep is a pseudo-element rather than an animated background-position,
+   so the block's own tint is never touched — and so reduced motion can drop
+   the movement by removing one element instead of restating the palette. */
+.sk::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  /* A narrow highlight rather than a full-width wash: at no point in the sweep
+     does the block lose its own tint and read as empty white space. */
+  background: linear-gradient(90deg, transparent 22%, var(--surface) 50%, transparent 78%);
+  opacity: 0.8;
+  animation: sk-sweep 1.5s ease-in-out infinite;
+}
+@keyframes sk-sweep {
+  to {
+    transform: translateX(100%);
+  }
+}
+/* Reduced motion: keep the shape, drop the movement entirely. The static
+   --skeleton tint still reads as "content is on its way". */
+@media (prefers-reduced-motion: reduce) {
+  .sk::after {
+    display: none;
+  }
+}
+/* A skeleton row borrows the real list tile's box (see `.mtile` below, which
+   this shares its rule with) so nothing resizes when the data lands — but
+   there is nothing to open yet. */
+.sk-tile {
+  cursor: default;
+}
+.sk-lines > .sk + .sk {
+  margin-top: 9px;
+}
+
+/* Hidden from the page, still read aloud — the live region that announces a
+   skeleton screen (same clip recipe as the stacked table's <thead>). */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 .error-banner {
   background: var(--crit-soft);
@@ -1309,19 +1465,29 @@ td.empty-inline {
   font-size: 13px;
 }
 
+/* Geometry only — `.btn ghost` supplies the look and the shared --control-h,
+   so back never drifts to its own height again. Left-aligned: a back
+   affordance belongs where reading starts. */
 .back-btn {
-  background: transparent;
-  color: var(--muted);
-  border: 1px solid var(--border);
-  padding: 6px 12px;
-  border-radius: 8px;
-  font-size: 12px;
-  font-weight: 600;
   margin-bottom: 14px;
-  /* Sits at the right edge of its row rather than the left. */
-  display: block;
-  width: fit-content;
+  padding-left: 11px;
+}
+/* Back on the left, the page's own actions in the right corner — the same
+   split as .page-bar, so a detail page reads like a list page. */
+.back-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.back-bar-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
   margin-left: auto;
+  margin-bottom: 14px;
 }
 
 /* ==========================================================================
@@ -1405,8 +1571,12 @@ td.empty-inline {
   }
 }
 
-/* Member list tiles (custom mobile layout) */
-.mtile {
+/* Member list tiles (custom mobile layout). `.sk-tile` is the loading
+   placeholder for one of these: same box, deliberately a different class name
+   so a `.mtile` selector — in a stylesheet or in ui-e2e — always means a real,
+   clickable row and never a skeleton standing in for one. */
+.mtile,
+.sk-tile {
   display: block;
   width: 100%;
   text-align: left;
@@ -1512,5 +1682,159 @@ td.empty-inline {
     right: auto;
     transform: translateX(-50%);
     align-items: center;
+  }
+}
+
+/* ==========================================================================
+   Leadership trio (铁三角) — group detail
+   --------------------------------------------------------------------------
+   The three seats used to be absolutely-positioned chips pinned to the corners
+   of a fixed 300×150 box, with a 132px cap on the picker under each. That only
+   ever fit three CJK glyphs: "Assistant leader" / "Penolong ketua" are ~2.5×
+   the width of 副组长, so the chips grew into one another and over the
+   triangle. Sizing a box to one language's glyph count is exactly what G7a
+   forbids.
+
+   Now every seat is an ordinary grid item, so overlap is impossible by
+   construction — a long label can only make its own box taller — and the
+   arrangement is chosen from the block's OWN width with a container query
+   rather than from the viewport's. That distinction matters here: this block
+   is 320px wide inside the 360px left column of a 1280px desktop but 330px
+   wide on a 402px phone, so a viewport media query would pick the wrong
+   layout on one of the two.
+
+     narrow (under 18rem of room, e.g. a 320px phone)
+         → one row per seat: role chip, then its picker
+     otherwise
+         → the triangle: the leader centred on top, the other two below
+   The narrow form is the *default* and the triangle is opted into, so a
+   browser without container queries still lands on a layout that cannot
+   overlap.
+   ========================================================================== */
+.trio-head {
+  margin: 16px 0 6px;
+}
+/* Long Malay copy ("Trio kepimpinan · pasukan kepimpinan") wraps to a second
+   line rather than squeezing itself to one word per line. */
+.trio-head .section-label {
+  flex-wrap: wrap;
+}
+.trio-sub {
+  font-weight: 400;
+  font-size: 12px;
+}
+.trio-count {
+  font-size: 11.5px;
+}
+
+.trio {
+  container: trio / inline-size;
+  margin: 2px 0 4px;
+}
+/* Narrow: a two-column grid the seats opt into with `display: contents`, so the
+   chips share one intrinsic column and the three pickers line up under each
+   other however long the role names are. Both tracks can shrink (`minmax(0,…)`
+   / a 6rem floor well under any real card), so the block cannot overflow. */
+.trio-grid {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, max-content) minmax(6rem, 1fr);
+  align-items: center;
+  gap: 8px 10px;
+  /* A cap for the decorative block only — every seat wraps and every picker
+     shrinks far below it, so nothing can ever be clipped by it. */
+  max-width: 32rem;
+}
+.trio-node {
+  display: contents;
+}
+/* .badge is nowrap by design (it must not break inside a table cell). Here a
+   long role name has to be allowed to wrap, or it pushes the card sideways.
+   `anywhere` rather than `break-word` because .badge is an inline-flex: its
+   text is an anonymous flex item whose automatic minimum size is its longest
+   word, and only `anywhere` lets that minimum shrink. Both values break inside
+   a word only when it cannot fit a line on its own, so real labels and names
+   still break at spaces — but without this, one long unbroken token took the
+   whole page sideways (measured at +151px on a 320px screen). */
+.trio-role {
+  justify-self: start;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  font-weight: 700;
+  text-align: center;
+  max-width: 100%;
+}
+/* Geometry is untouched: the picker keeps `select.sm`, so it is still sized by
+   --control-h-sm like every other compact control (G9). `min-width: 0` is what
+   lets it shrink — a <select>'s automatic minimum size is its widest option,
+   which on a 320px phone is an overflow waiting to happen. */
+.trio-pick,
+.trio-name {
+  min-width: 0;
+}
+.trio-name {
+  overflow-wrap: break-word;
+  font-size: 13px;
+  color: var(--ink);
+}
+.trio-name.vacant {
+  color: var(--faint);
+}
+.trio-frame {
+  display: none;
+}
+
+@container trio (min-width: 18rem) {
+  /* Two equal columns and `1fr` rows — which, in an auto-height grid, size
+     every row to the tallest — pin the three seats to 25% / 50% / 75% of the
+     box in both axes, whatever their content does. That fixed frame is what
+     lets .trio-frame be drawn in plain percentages and still land correctly
+     around the seats at every width and in every language: the block grows
+     taller for a wrapped Malay label, and the triangle grows with it. The
+     breathing room between the rows is each seat's own margin rather than a
+     grid gap, precisely so those percentages stay put. */
+  .trio-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-auto-rows: 1fr;
+    gap: 0;
+    justify-items: center;
+    margin-inline: auto;
+  }
+  .trio-node {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    gap: 5px;
+    width: 100%;
+    /* One column wide, and never so far apart that the trio stops reading as a
+       group on a large screen. Both are maxima — content decides the rest. */
+    max-width: 15rem;
+    margin: 13px 0;
+    /* Horizontal only — the vertical rhythm (and so the 25% / 75% row centres)
+       is the margin's job. Keeps the two base pickers from touching. */
+    padding: 0 8px;
+    position: relative;
+  }
+  .trio-apex {
+    grid-column: 1 / -1;
+    /* 50% of the grid is exactly one column, so the leader's picker is the
+       same width as the two under it and all three line up. */
+    max-width: min(50%, 15rem);
+  }
+  .trio-pick,
+  .trio-name {
+    width: 100%;
+  }
+  .trio-pick {
+    text-align: center;
+  }
+  .trio-frame {
+    display: block;
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
   }
 }

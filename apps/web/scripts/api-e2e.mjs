@@ -209,10 +209,28 @@ async function main() {
     ok('delete training → 200', (await req('DELETE', `/api/trainings/${trId}`, H)).status === 200);
   }
 
-  // ---- Discipleship pair CRUD + public form -------------------------------
-  const programs = (await req('GET', '/api/discipleship/programs', H)).json;
-  const programId = programs?.[0]?.id;
-  ok('has a discipleship program', !!programId);
+  // ---- Discipleship module CRUD + pair CRUD + public form ------------------
+  // 守望模块 (discipleship_programs) are creatable from the UI now, so this
+  // block brings its OWN module and works on that — the same create → use →
+  // delete shape as the training block above. The church's real module is
+  // never touched: deleting one cascades to every pair under it and to all of
+  // their daily records.
+  const programsBefore = (await req('GET', '/api/discipleship/programs', H)).json;
+  ok('discipleship modules list is an array', Array.isArray(programsBefore), JSON.stringify(programsBefore).slice(0, 120));
+  const mkProg = await req('POST', '/api/discipleship/programs', { ...H, body: { name: `E2E模块-${Date.now()}`, description: 'api-e2e fixture', total_days: 7 } });
+  ok('create discipleship module → 200 + id', mkProg.status === 200 && mkProg.json?.id, `status ${mkProg.status} ${JSON.stringify(mkProg.json).slice(0, 120)}`);
+  const programId = mkProg.json?.id;
+  if (programId) {
+    ok('created module keeps its total_days', mkProg.json?.total_days === 7, String(mkProg.json?.total_days));
+    const readProg = await req('GET', `/api/discipleship/programs/${programId}`, H);
+    ok('read module by id → 200', readProg.status === 200 && readProg.json?.id === programId, `status ${readProg.status}`);
+    const patchProg = await req('PATCH', `/api/discipleship/programs/${programId}`, { ...H, body: { name: `E2E模块改-${Date.now()}`, total_days: 12 } });
+    ok('update module → 200 + new total_days', patchProg.status === 200 && patchProg.json?.total_days === 12, `status ${patchProg.status} ${patchProg.json?.total_days}`);
+    // total_days >= 1 is a DB check constraint; the UI validates it too, but
+    // the server must refuse a hand-rolled request all the same.
+    const badDays = await req('PATCH', `/api/discipleship/programs/${programId}`, { ...H, body: { total_days: 0 } });
+    ok('module with total_days < 1 → rejected', badDays.status >= 400, `status ${badDays.status}`);
+  }
   // The trainee must not already be paired (unique program_id+trainee_id).
   const existingPairs = (await req('GET', '/api/discipleship/pairs', H)).json || [];
   const usedTrainees = new Set(existingPairs.map((p) => p.trainee_id));
@@ -229,6 +247,12 @@ async function main() {
       ok('public form submit progress → 200', prog.status === 200, `status ${prog.status}`);
     }
     if (mkPair.json?.id) ok('delete pair → 200', (await req('DELETE', `/api/discipleship/pairs/${mkPair.json.id}`, H)).status === 200);
+  }
+  if (programId) {
+    ok('delete module → 200', (await req('DELETE', `/api/discipleship/programs/${programId}`, H)).status === 200);
+    const after = (await req('GET', '/api/discipleship/programs', H)).json;
+    ok('the deleted module is gone from the list', Array.isArray(after) && !after.some((p) => p.id === programId));
+    ok('the church’s own modules survive', Array.isArray(after) && (programsBefore || []).every((p) => after.some((q) => q.id === p.id)));
   }
 
   // ---- Accounts CRUD + password (super_admin) -----------------------------
@@ -274,24 +298,29 @@ async function roleMatrix(freeMembers, hallId) {
   const H = { cookie: admin };
   const made = [];
   const originalEmails = new Map();
+  const originalPhones = new Map();
   const provision = async (role, member) => {
     const email = `e2e-${role}-${Date.now()}-${Math.floor(Math.random() * 1e4)}@grace.org`;
     if (!originalEmails.has(member.id)) originalEmails.set(member.id, member.email ?? null);
+    if (!originalPhones.has(member.id)) originalPhones.set(member.id, member.phone ?? null);
     await req('PATCH', `/api/members/${member.id}`, { ...H, body: { email } });
     const r = await req('POST', '/api/accounts', { ...H, body: { member_id: member.id, account_role: role, password: 'e2ePass2026' } });
     if (r.json?.id) made.push(r.json.id);
-    return { email, cookie: await login(email, 'e2ePass2026') };
+    return { id: r.json?.id, email, cookie: await login(email, 'e2ePass2026') };
   };
   try {
+    // Both are provisioned up front so each can stand in as "somebody else's
+    // account" for the other's cross-account checks below.
     const ro = await provision('readonly', freeMembers[0]);
+    const co = await provision('coworker', freeMembers[1]);
     ok('readonly can login', !!ro.cookie);
     if (ro.cookie) {
       const RH = { cookie: ro.cookie };
       ok('readonly GET members → 200', (await req('GET', '/api/members', RH)).status === 200);
       ok('readonly POST members → 403', (await req('POST', '/api/members', { ...RH, body: { full_name: 'x', church_role: 'member', status: 'active' } })).status === 403);
       ok('readonly GET accounts → 403', (await req('GET', '/api/accounts', RH)).status === 403);
+      await selfProfileMatrix('readonly', RH, ro, co.id);
     }
-    const co = await provision('coworker', freeMembers[1]);
     ok('coworker can login', !!co.cookie);
     if (co.cookie) {
       const CH = { cookie: co.cookie };
@@ -302,10 +331,55 @@ async function roleMatrix(freeMembers, hallId) {
         await req('DELETE', `/api/members/${mk.json.id}`, H); // cleanup as super_admin
       }
       ok('coworker GET accounts → 403', (await req('GET', '/api/accounts', CH)).status === 403);
+      await selfProfileMatrix('coworker', CH, co, ro.id);
     }
   } finally {
     for (const id of made) await req('DELETE', `/api/accounts/${id}`, H);
     for (const [id, email] of originalEmails) await req('PATCH', `/api/members/${id}`, { ...H, body: { email } });
+    for (const [id, phone] of originalPhones) await req('PATCH', `/api/members/${id}`, { ...H, body: { phone } });
+  }
+}
+
+/**
+ * `/auth/me/profile` — the self-service keyhole in the permission matrix, and
+ * the one thing here that would be a privilege-escalation bug if it were wrong.
+ *
+ * Two properties are asserted for EVERY non-super-admin role, `readonly`
+ * included: the account may edit its own member details (that is the whole
+ * point of the endpoint), and it may not use the same endpoint to hand itself a
+ * bigger role, a different congregation, or a re-enabled status. A silent
+ * no-op would be almost as bad as a write, so the role is read back afterwards
+ * rather than trusting the refusal.
+ *
+ * `otherAccountId` is the sibling role's account — somebody else's record, to
+ * prove the endpoint never widens into the super_admin-only /accounts path.
+ */
+async function selfProfileMatrix(role, RH, account, otherAccountId) {
+  const self = await req('GET', '/api/auth/me/profile', RH);
+  ok(`${role} GET own profile → 200`, self.status === 200 && self.json?.id === account.id, `status ${self.status}`);
+  ok(`${role} own profile carries its member`, !!self.json?.member?.id, JSON.stringify(self.json?.member ?? null).slice(0, 80));
+
+  const phone = `012-${Math.floor(1e6 + Math.random() * 8e6)}`;
+  const edit = await req('PATCH', '/api/auth/me/profile', { ...RH, body: { phone } });
+  ok(`${role} PATCH own profile → 200 + saved`, edit.status === 200 && edit.json?.member?.phone === phone, `status ${edit.status} ${edit.json?.member?.phone}`);
+
+  // The three fields the self-service path must never accept. Each is refused
+  // outright (403) rather than quietly dropped, so a client that tries gets told.
+  for (const [field, value] of [['account_role', 'super_admin'], ['hall_id', null], ['status', 'active']]) {
+    const r = await req('PATCH', '/api/auth/me/profile', { ...RH, body: { [field]: value } });
+    ok(`${role} cannot set own ${field} → 403`, r.status === 403, `status ${r.status} ${JSON.stringify(r.json)}`);
+  }
+  // …and a valid field alongside a forbidden one must not sneak the pair past.
+  const mixed = await req('PATCH', '/api/auth/me/profile', { ...RH, body: { phone, account_role: 'super_admin' } });
+  ok(`${role} cannot smuggle a role change beside a legal field → 403`, mixed.status === 403, `status ${mixed.status}`);
+
+  const after = await req('GET', '/api/auth/me/profile', RH);
+  ok(`${role} is still ${role} after the escalation attempts`, after.json?.account_role === role, String(after.json?.account_role));
+
+  // The admin path stays shut: no reading or writing anyone else's account.
+  if (otherAccountId) {
+    ok(`${role} PATCH another account → 403`, (await req('PATCH', `/api/accounts/${otherAccountId}`, { ...RH, body: { account_role: 'admin' } })).status === 403);
+    ok(`${role} GET another account → 403`, (await req('GET', `/api/accounts/${otherAccountId}`, RH)).status === 403);
   }
 }
 

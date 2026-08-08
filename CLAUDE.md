@@ -18,8 +18,8 @@ Testing layers (in `apps/web`):
 - `npm run test:ui-e2e` — **browser UI end-to-end**: drives the real site in
   Chromium and asserts each interaction's expected outcome (login, search,
   filters, modals, weekly attendance, discipleship day-notes, an
-  interface-language round-trip, a create→delete member write-cycle). It
-  restores anything it changes. It runs a tiny in-process reverse proxy so the browser
+  interface-language round-trip, a 守望模块 create→edit→delete cycle, a
+  create→delete member write-cycle). It restores anything it changes. It runs a tiny in-process reverse proxy so the browser
   works even behind an egress proxy. `UI_E2E_PASSWORD` is required (never
   hardcode a real password); `UI_E2E_URL` / `UI_E2E_EMAIL` are optional. In this
   sandbox run it as:
@@ -40,6 +40,10 @@ Testing layers (in `apps/web`):
   desktop). ui-e2e proves the pages *work*; it cannot see that two pages lay
   their header out differently. After any layout change, run this and **look at
   the images** — a green ui-e2e is not evidence the UI is consistent.
+  The `ui-e2e` workflow runs the `WIDE=1` sweep itself and uploads it under
+  `desktop/` in the same artifact, because ui-e2e drives a 402px phone and so
+  never photographs anything inside `.only-desktop` — which is every list
+  table, and therefore most column work.
 
 ---
 
@@ -49,8 +53,8 @@ These are hard requirements for this codebase. A change that breaks one is a
 review finding, not a preference. Cite the rule number in the finding.
 
 ### G1 — CRUD completeness on every management page
-Every entity page (成员、小组、聚会、培训、四十天守望配对、账户) must offer the
-full set its users need: **Create, Read, Update, Delete**. If the API supports an
+Every entity page (成员、小组、聚会、培训、四十天守望模块与配对、账户) must offer
+the full set its users need: **Create, Read, Update, Delete**. If the API supports an
 operation, the UI must expose it (or the omission must be a deliberate,
 documented decision). A page that can only create + list is incomplete.
 
@@ -60,9 +64,20 @@ documented decision). A page that can only create + list is incomplete.
   writes are **forced** onto that hall server-side — never trust a client-sent
   `hall_id`. Nullable-hall entities (培训 / 聚会) additionally expose their
   全堂开放 (`hall_id is null`) rows to every hall. `members`/`groups` always
-  carry a hall. New hall-scoped queries must go through the same gate helpers
-  (`withHall` / `assertHallWritable` / `assertOwnsRow`) rather than re-rolling
-  the check.
+  carry a hall. A pair (守望配对) has no hall column — its hall is its
+  **mentor's** hall (`discipleship_pair_summary.hall_id`).
+  New hall-scoped queries must go through the same gate helpers rather than
+  re-rolling the check: `hallFilter` (which hall a **list** read is narrowed
+  to), `withHall` / `assertHallWritable` / `assertOwnsRow` (writes), and
+  `assertRowReadable` / `assertPairInHall` (id-addressed detail reads).
+- **Congregation switcher:** a 全堂权限 account narrows its view with the
+  switcher, which appends `?hall_id=` to every request (`withHallParam`).
+  `hallFilter = hallScope ?? q.get('hall_id')` — the **session's own hall always
+  wins**, so a hall-pinned account can never widen its view by sending a
+  different `hall_id`; that precedence is the security property. Every
+  hall-owned list GET (成员/小组/聚会/循环聚会/培训/守望配对 + 牧养总览) reads
+  `hallFilter`, so switching congregation moves the whole app — dashboard KPIs
+  included — not just some pages.
 - **Server (authoritative):** every non-public API path goes through the gate in
   `route.ts`. Writes are denied for `readonly`; account management
   (`/accounts*`, both **read and write**) is `super_admin` only; `DELETE` is
@@ -160,6 +175,13 @@ and below. Light theme only — no dark-mode branches or `data-theme` code.
   the moment the language changes.
 - The public pages (`/login`, `/d/[token]`, `/enroll/[id]`) have no session and
   so render in the default language; API error messages are English.
+- A user-facing rename stops at the API boundary. The 四十天守望 **模块 /
+  module** is `discipleship_programs` in the database: the table, its columns,
+  `program_id` and `/api/discipleship/programs` all keep the "program" name,
+  while every dictionary key (`disc.module.*`) and everything on screen says
+  module. Renaming the wire too would be a migration's worth of churn for
+  nothing visible — but the boundary must stay in one place (the page's fetch),
+  not smeared through the file.
 - Match surrounding code: functional components, hooks at top, shared `ui.tsx`
   building blocks, no new CSS frameworks.
 - Keep `docs/` and this file in sync when a rule or flow changes.
@@ -174,6 +196,13 @@ and below. Light theme only — no dark-mode branches or `data-theme` code.
 - `<select>` uses `appearance: none` with the shared custom chevron (drawn via
   `background-image`, right-aligned padding). Never rely on the native arrow —
   its metrics differ per browser/device and break both height and alignment.
+- Date/time inputs (`date` / `time` / `datetime-local` / `month` / `week`) strip
+  WebKit's native box the same way — `appearance: none` plus a `min-height` on
+  the token, and `::-webkit-date-and-time-value` reset to left-aligned with no
+  UA margin. Without it iOS/iPadOS sizes the field from the system picker and
+  paints the value centred, so it sits taller than the `<select>` beside it and
+  reads centre while its neighbours read left. It lives in `globals.css` with
+  the other shared control rules — never patch one page's date field.
 - New controls inherit these by using the base element / `.btn` classes; page
   code should not restyle control geometry inline.
 

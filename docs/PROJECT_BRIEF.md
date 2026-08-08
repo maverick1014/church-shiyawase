@@ -206,7 +206,11 @@ Tables:
 - `training_sessions(id, training_id, session_number, title, scheduled_at, location, notes, unique(training_id,session_number))`
 - `training_enrollments(id, training_id, member_id, status, progress, enrolled_at, completed_at, notes, unique(training_id,member_id))`
 - `training_attendance(id, session_id, member_id, attended, checked_at, notes, unique(session_id,member_id))`
-- `discipleship_programs(id, name, description, total_days=40, created_at)`
+- `discipleship_programs(id, name, description, total_days=40 check ≥ 1, created_at)` — the
+  **module** (模块) in the UI; managed from `/discipleship`. It has no `hall_id`, so no hall
+  gate applies. Deleting one **cascades** to every pair under it (`program_id` is
+  `on delete cascade`) and from there to all their `discipleship_progress` rows, which is why
+  the UI's confirmation states the pair count before it calls `DELETE`.
 - `discipleship_pairs(id, program_id, mentor_id→members, trainee_id→members, parent_pair_id?, status, start_date, form_token uuid unique, created_at, unique(program_id,trainee_id), check mentor≠trainee)`
 - `discipleship_progress(id, pair_id, day_number, entry_date, completed, notes, timestamps, unique(pair_id,day_number))`
 - View `discipleship_pair_summary` — per-pair days_completed + percent_complete for the pastor overview.
@@ -247,7 +251,7 @@ Tables:
 | Trainings | `GET/POST /trainings`, `GET/PATCH/DELETE /trainings/:id`, `GET /trainings/:id/namelist`, **public** `GET/POST /trainings/enroll/:id` |
 | Sessions | `POST /trainings/:id/sessions`, `PATCH/DELETE /trainings/sessions/:sessionId`, `POST /trainings/sessions/:sessionId/attendance` |
 | Enrollment | `POST /trainings/:id/enroll`, `PATCH/DELETE /trainings/enrollments/:enrollmentId` |
-| Discipleship | `GET/POST /discipleship/programs`, `GET /discipleship/programs/:id/overview`, `GET/POST /discipleship/pairs`, `GET/PATCH/DELETE /discipleship/pairs/:id`, `POST /discipleship/pairs/:id/progress` |
+| Discipleship | `GET/POST /discipleship/programs`, `GET/PATCH/DELETE /discipleship/programs/:id` (the module — no hall column, so no hall gate), `GET /discipleship/programs/:id/overview`, `GET/POST /discipleship/pairs`, `GET/PATCH/DELETE /discipleship/pairs/:id`, `POST /discipleship/pairs/:id/progress` |
 | **Private form** | `GET /discipleship/form/:token`, `POST /discipleship/form/:token/progress` (no login) |
 
 ---

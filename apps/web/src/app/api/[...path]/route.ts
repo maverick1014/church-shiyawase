@@ -91,6 +91,20 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
   }
 
   /**
+   * The hall this request's list reads are narrowed to — `null` = 全部堂会
+   * (no narrowing). Two things can narrow a view, and the order matters:
+   *
+   *  1. The session's own hall (`hallScope`). It ALWAYS wins, so a hall-pinned
+   *     account can never widen its view by sending a different `hall_id`.
+   *  2. Only when the session has full access, the `?hall_id=` the congregation
+   *     switcher appends to every request (`withHallParam` in `lib/hall.tsx`).
+   *
+   * Every hall-scoped list GET reads this one value rather than re-deriving the
+   * precedence, so a new list can't accidentally trust the client (rule G2).
+   */
+  const hallFilter: string | null = hallScope ?? (q.get('hall_id') || null);
+
+  /**
    * Body for a hall-scoped INSERT. A single-hall account always writes into
    * its own hall (any hall_id the client sent is discarded); a full-access
    * account may pass one explicitly, and for trainings/events may leave it
@@ -118,10 +132,49 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
     if (row.hall_id !== hallScope) throw new HttpError(403, 'No permission to modify another congregation\u2019s records');
   };
 
+  /**
+   * Guard an id-addressed READ the same way `assertOwnsRow` guards a write:
+   * a single-hall account may only open its own hall's records. "GET is
+   * harmless" is not a defence (rule G2) \u2014 the list queries above already hide
+   * other halls, so a detail route must not hand the same row back by id.
+   * A null hall means \u5168\u5802\u5f00\u653e (trainings / events) and stays visible to
+   * everyone, exactly as the list queries expose it.
+   */
+  const assertRowReadable = async (table: string, id: string) => {
+    if (!hallScope) return;
+    const row = unwrap<{ hall_id: string | null }>(
+      await db.from(table).select('hall_id').eq('id', id).single(),
+    );
+    if (row.hall_id !== null && row.hall_id !== hallScope)
+      throw new HttpError(403, 'No permission to view another congregation\u2019s records');
+  };
+
+  /**
+   * Same guard for a \u5b88\u671b\u914d\u5bf9: a pair carries no hall column of its own \u2014 its
+   * hall is its MENTOR's hall (which is what `discipleship_pair_summary`
+   * exposes as `hall_id`). Used for read and write alike; `members.hall_id` is
+   * NOT NULL, so there is no \u5168\u5802 pair to make an exception for.
+   */
+  const assertPairInHall = async (pairId: string) => {
+    if (!hallScope) return;
+    const row = unwrap<{ mentor: { hall_id: string | null } | null }>(
+      await db
+        .from('discipleship_pairs')
+        .select('mentor:members!discipleship_pairs_mentor_id_fkey(hall_id)')
+        .eq('id', pairId)
+        .single(),
+    );
+    if ((row.mentor?.hall_id ?? null) !== hallScope)
+      throw new HttpError(403, 'No permission to view another congregation\u2019s records');
+  };
+
   // ---- Halls (堂会) ----------------------------------------------------------
   // Read-only for now: the three halls are seeded by migration 0008. Every
   // logged-in user may list them (needed to render hall labels); a single-hall
   // account only ever sees its own.
+  // Deliberately `hallScope`, never `hallFilter`: this list IS the congregation
+  // switcher's options. Narrowing it by the switcher's own selection would
+  // leave a single option and strand the user with no way back to 全部堂会.
   if (r0 === 'halls' && !r1 && method === 'GET') {
     let query = db.from('halls').select('id,name,sort_order').order('sort_order');
     if (hallScope) query = query.eq('id', hallScope);
@@ -136,8 +189,7 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
           .from('members')
           .select(MEMBER_SELECT)
           .order('full_name', { ascending: true });
-        if (hallScope) query = query.eq('hall_id', hallScope);
-        else if (q.get('hall_id')) query = query.eq('hall_id', q.get('hall_id'));
+        if (hallFilter) query = query.eq('hall_id', hallFilter);
         if (q.get('church_role')) query = query.eq('church_role', q.get('church_role'));
         if (q.get('group_position')) query = query.eq('group_position', q.get('group_position'));
         if (q.get('group_id')) query = query.eq('group_id', q.get('group_id'));
@@ -148,6 +200,7 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
         return json(unwrap(await db.from('members').insert(withHall(await body())).select().single()));
       }
     } else if (r2 === 'trainings' && method === 'GET') {
+      await assertRowReadable('members', r1);
       return json(
         unwrap(
           await db
@@ -182,8 +235,10 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
         ),
       );
     } else if (!r2) {
-      if (method === 'GET')
+      if (method === 'GET') {
+        await assertRowReadable('members', r1);
         return json(unwrap(await db.from('members').select(MEMBER_SELECT).eq('id', r1).single()));
+      }
       if (method === 'PATCH') {
         const dto = await body();
         assertHallWritable(dto);
@@ -225,13 +280,13 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
     } else if (!r1) {
       if (method === 'GET') {
         let query = db.from('groups').select('*, hall:halls(id,name)').order('name');
-        if (hallScope) query = query.eq('hall_id', hallScope);
-        else if (q.get('hall_id')) query = query.eq('hall_id', q.get('hall_id'));
+        if (hallFilter) query = query.eq('hall_id', hallFilter);
         return json(unwrap(await query));
       }
       if (method === 'POST')
         return json(unwrap(await db.from('groups').insert(withHall(await body())).select().single()));
     } else if (r2 === 'attendance' && method === 'GET') {
+      await assertRowReadable('groups', r1);
       return json(await groupAttendance(db, r1));
     } else if (r2 === 'meetings' && method === 'POST') {
       const dto = await body();
@@ -246,6 +301,7 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
       );
     } else if (!r2) {
       if (method === 'GET') {
+        await assertRowReadable('groups', r1);
         const group = unwrap<Record<string, unknown>>(
           await db.from('groups').select('*, hall:halls(id,name)').eq('id', r1).single(),
         );
@@ -281,9 +337,10 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
           .from('events')
           .select('*, hall:halls(id,name)')
           .order('starts_at', { ascending: false });
-        // A single-hall account sees its own hall plus every 全堂/联合 event.
-        if (hallScope) query = query.or(`hall_id.eq.${hallScope},hall_id.is.null`);
-        else if (q.get('hall_id')) query = query.eq('hall_id', q.get('hall_id'));
+        // A narrowed view sees that hall plus every 全堂/联合 event — the same
+        // rows a hall-pinned account sees, whether the narrowing came from the
+        // session's own hall or from the congregation switcher.
+        if (hallFilter) query = query.or(`hall_id.eq.${hallFilter},hall_id.is.null`);
         return json(unwrap(await query));
       }
       if (method === 'POST')
@@ -303,6 +360,7 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
       );
     } else if (!r2) {
       if (method === 'GET') {
+        await assertRowReadable('events', r1);
         const event = unwrap<Record<string, unknown>>(
           await db.from('events').select('*, hall:halls(id,name)').eq('id', r1).single(),
         );
@@ -339,8 +397,8 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
           .from('recurring_events')
           .select('*, hall:halls(id,name)')
           .order('created_at');
-        if (hallScope) query = query.or(`hall_id.eq.${hallScope},hall_id.is.null`);
-        else if (q.get('hall_id')) query = query.eq('hall_id', q.get('hall_id'));
+        // Same rule as the events they generate: own hall + every 全堂 rule.
+        if (hallFilter) query = query.or(`hall_id.eq.${hallFilter},hall_id.is.null`);
         return json(unwrap(await query));
       }
       if (method === 'POST')
@@ -484,9 +542,8 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
           .from('trainings')
           .select('*, trainer:members(id,full_name), hall:halls(id,name)')
           .order('created_at', { ascending: false });
-        // A single-hall account sees its own hall plus every 全堂开放 course.
-        if (hallScope) query = query.or(`hall_id.eq.${hallScope},hall_id.is.null`);
-        else if (q.get('hall_id')) query = query.eq('hall_id', q.get('hall_id'));
+        // A narrowed view sees that hall plus every 全堂开放 course.
+        if (hallFilter) query = query.or(`hall_id.eq.${hallFilter},hall_id.is.null`);
         return json(unwrap(await query));
       }
       if (method === 'POST')
@@ -495,6 +552,7 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
     // /trainings/:id ...
     else if (r1 && !r2) {
       if (method === 'GET') {
+        await assertRowReadable('trainings', r1);
         const training = unwrap<Record<string, unknown>>(
           await db
             .from('trainings')
@@ -528,7 +586,10 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
     }
     // /trainings/:id/{namelist,sessions,enroll}
     else if (r1 && r2) {
-      if (r2 === 'namelist' && method === 'GET') return json(await namelist(db, r1));
+      if (r2 === 'namelist' && method === 'GET') {
+        await assertRowReadable('trainings', r1);
+        return json(await namelist(db, r1));
+      }
       if (r2 === 'sessions' && method === 'POST')
         return json(
           unwrap(
@@ -566,26 +627,53 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
           return json(unwrap(await db.from('discipleship_programs').insert(await body()).select().single()));
       } else if (r3 === 'overview' && method === 'GET') {
         // A pair's hall is its mentor's hall, exposed on the view by 0008.
+        // Scoped by `hallFilter`, so the congregation switcher narrows the
+        // pastor overview (and the dashboard's 守望进行中 KPI, which counts
+        // these rows) exactly like every other list.
         let query = db
           .from('discipleship_pair_summary')
           .select('*')
           .eq('program_id', r2)
           .order('percent_complete', { ascending: false });
-        if (hallScope) query = query.eq('hall_id', hallScope);
+        if (hallFilter) query = query.eq('hall_id', hallFilter);
         return json(unwrap(await query));
-      } else if (!r3 && method === 'GET') {
-        return json(unwrap(await db.from('discipleship_programs').select('*').eq('id', r2).single()));
+      } else if (!r3) {
+        // A 守望模块 (discipleship_programs row) carries NO hall column — it is
+        // church-wide configuration, like a training session or an enrollment,
+        // so none of the hall helpers apply here. Access control is entirely
+        // the gate at the top of dispatch(): `readonly` cannot write at all,
+        // and DELETE is super_admin/admin only.
+        if (method === 'GET') {
+          return json(unwrap(await db.from('discipleship_programs').select('*').eq('id', r2).single()));
+        }
+        if (method === 'PATCH') {
+          return json(
+            unwrap(await db.from('discipleship_programs').update(await body()).eq('id', r2).select().single()),
+          );
+        }
+        if (method === 'DELETE') {
+          // This CASCADES: discipleship_pairs.program_id is `on delete
+          // cascade` and discipleship_progress.pair_id cascades from there, so
+          // every pair under the module and all their daily entries go with
+          // it. The 四十天守望 page names that blast radius (how many pairs,
+          // how many days of records) in its confirmation before calling this.
+          unwrap(await db.from('discipleship_programs').delete().eq('id', r2).select().single());
+          return json({ id: r2 });
+        }
       }
     } else if (r1 === 'pairs') {
       if (!r2) {
         if (method === 'GET') {
           // A pair belongs to its mentor's hall — an !inner join lets the
-          // filter run in the database rather than post-filtering here.
+          // filter run in the database rather than post-filtering here. The
+          // relay chart and the active/done/pending counts on /discipleship
+          // are built from these rows, so this is what makes the congregation
+          // switcher reach that page at all.
           let query = db
             .from('discipleship_pairs')
-            .select(hallScope ? PAIR_SELECT_SCOPED : PAIR_SELECT)
+            .select(hallFilter ? PAIR_SELECT_SCOPED : PAIR_SELECT)
             .order('created_at');
-          if (hallScope) query = query.eq('mentor.hall_id', hallScope);
+          if (hallFilter) query = query.eq('mentor.hall_id', hallFilter);
           if (q.get('program_id')) query = query.eq('program_id', q.get('program_id'));
           return json(unwrap(await query));
         }
@@ -595,6 +683,10 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
           // paper before this system existed — by marking days 1..N complete
           // immediately instead of starting the pair at 0%.
           const { backfill_days, ...pairDto } = (await body()) as Record<string, unknown>;
+          // The mentor decides the pair's hall, so a single-hall account may
+          // only pair up its own hall's mentors — otherwise it would create a
+          // pair inside another congregation (and never see it again).
+          if (pairDto.mentor_id) await assertOwnsRow('members', String(pairDto.mentor_id));
           const pair = unwrap<{ id: string; program_id: string }>(
             await db.from('discipleship_pairs').insert(pairDto).select(PAIR_SELECT).single(),
           );
@@ -622,9 +714,11 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
           return json(pair);
         }
       } else if (r3 === 'progress' && method === 'POST') {
+        await assertPairInHall(r2);
         return json(await upsertProgress(db, r2, await body()));
       } else if (!r3) {
         if (method === 'GET') {
+          await assertPairInHall(r2);
           const pair = unwrap<Record<string, unknown>>(
             await db
               .from('discipleship_pairs')
@@ -637,9 +731,12 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
           );
           return json({ ...pair, progress });
         }
-        if (method === 'PATCH')
+        if (method === 'PATCH') {
+          await assertPairInHall(r2);
           return json(unwrap(await db.from('discipleship_pairs').update(await body()).eq('id', r2).select().single()));
+        }
         if (method === 'DELETE') {
+          await assertPairInHall(r2);
           unwrap(await db.from('discipleship_pairs').delete().eq('id', r2).select().single());
           return json({ id: r2 });
         }
@@ -998,7 +1095,10 @@ async function authRoute(
   if (p[1] === 'logout' && method === 'POST') {
     return new Response(null, { status: 204, headers: { 'set-cookie': clearCookie() } });
   }
-  if (p[1] === 'me' && method === 'GET') {
+  // Self-service profile — the one write path every signed-in account has to
+  // its OWN record (a read-only account included). See selfProfileRoute.
+  if (p[1] === 'me' && p[2] === 'profile' && !p[3]) return selfProfileRoute(method, req, db);
+  if (p[1] === 'me' && !p[2] && method === 'GET') {
     const s = await getSession(req);
     if (!s) throw new HttpError(401, 'Not signed in');
     // The interface language is read live rather than baked into the session
@@ -1041,6 +1141,136 @@ async function authRoute(
   throw new HttpError(404, `No auth route for ${method} /api/${p.join('/')}`);
 }
 
+// --- Self-service profile (/auth/me/profile) --------------------------------
+
+/**
+ * The ONLY fields a signed-in account may write on its own records, split by
+ * the table they land in. Everything else is refused — see selfProfileRoute.
+ *
+ * `account_role`, `hall_id` and `status` are deliberately absent, and so is
+ * every other `app_users` column: the list is an allow-list, so a column added
+ * to the table later stays unwritable until someone puts it here on purpose.
+ */
+const SELF_MEMBER_FIELDS = [
+  'full_name',
+  'chinese_name',
+  'email',
+  'phone',
+  'gender',
+  'date_of_birth',
+] as const;
+const SELF_ACCOUNT_FIELDS = ['language'] as const;
+
+/** The signed-in account plus its linked member — always read by account id. */
+async function readSelfProfile(db: ReturnType<typeof getDb>, accountId: string) {
+  const account = unwrap<Record<string, unknown> & { member_id: string | null }>(
+    await db
+      .from('app_users')
+      .select(
+        'id,member_id,email,account_role,hall_id,status,language,last_sign_in_at, hall:halls(id,name)',
+      )
+      .eq('id', accountId)
+      .single(),
+  );
+  const member = account.member_id
+    ? unwrap(await db.from('members').select(MEMBER_SELECT).eq('id', account.member_id).single())
+    : null;
+  return { ...account, language: normalizeLanguage(account.language as string | null), member };
+}
+
+/**
+ * `GET`/`PATCH /api/auth/me/profile` — a user reading and editing their own
+ * account and member record, and the one exception to "a read-only account
+ * cannot make changes".
+ *
+ * It lives under `/auth` (dispatched ahead of the role gate) and is safe by
+ * construction rather than by a chain of `if`s a later edit could miss
+ * (rule G2):
+ *
+ *  1. **Whose row** comes from the signed session cookie — `s.sub` for the
+ *     account, and the `member_id` read off that account row for the member.
+ *     No id is taken from the URL or the body, so there is no request shape
+ *     that can address somebody else's record. Nothing here widens `/accounts`,
+ *     which stays super_admin-only for reads and writes.
+ *  2. **Which fields** come from the allow-lists above, and an unknown key is
+ *     a 403 rather than a silent drop — so `account_role`, `hall_id` and
+ *     `status` are refused loudly and a read-only account cannot promote
+ *     itself, move congregation, or re-enable a disabled login.
+ */
+async function selfProfileRoute(
+  method: string,
+  req: Request,
+  db: ReturnType<typeof getDb>,
+): Promise<Response> {
+  const s = await getSession(req);
+  if (!s) throw new HttpError(401, 'Not signed in');
+  if (method === 'GET') return json(await readSelfProfile(db, s.sub));
+  if (method !== 'PATCH') throw new HttpError(404, `No route for ${method} /api/auth/me/profile`);
+
+  const dto = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+  const memberPatch: Record<string, unknown> = {};
+  const accountPatch: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(dto)) {
+    if ((SELF_MEMBER_FIELDS as readonly string[]).includes(key)) memberPatch[key] = value;
+    else if ((SELF_ACCOUNT_FIELDS as readonly string[]).includes(key)) accountPatch[key] = value;
+    else throw new HttpError(403, `You may not change ${key} on your own profile`);
+  }
+
+  // Read the account first: its `member_id` — not the session's cached copy —
+  // decides which member row this may touch.
+  const account = unwrap(
+    await db.from('app_users').select('member_id').eq('id', s.sub).single<{ member_id: string | null }>(),
+  );
+
+  if ('email' in memberPatch) {
+    const email = normalizeEmail(memberPatch.email);
+    if (!email) throw new HttpError(400, 'Your email is also your sign-in name and cannot be removed');
+    memberPatch.email = email;
+    // The login email always mirrors the member's own email (the same rule
+    // accountWrite enforces on the admin path), so move both together.
+    accountPatch.email = email;
+    // app_users.email is unique. Checked before either write so a clash leaves
+    // nothing half-saved; the 23505 mapping below still covers the race.
+    const clash = unwrap<Array<{ id: string }>>(
+      await db.from('app_users').select('id').eq('email', email).neq('id', s.sub),
+    );
+    if (clash.length > 0)
+      throw new HttpError(409, 'That email already belongs to another login account');
+  }
+  if (accountPatch.language !== undefined) assertSupportedLanguage(accountPatch.language);
+
+  if (Object.keys(memberPatch).length > 0) {
+    if (!account.member_id)
+      throw new HttpError(400, 'This account is not linked to a member profile');
+    unwrap(
+      await db.from('members').update(memberPatch).eq('id', account.member_id).select('id').single(),
+    );
+  }
+  if (Object.keys(accountPatch).length > 0) {
+    const res = await db.from('app_users').update(accountPatch).eq('id', s.sub).select('id').single();
+    // app_users.email is unique — a clash is the user's mistake, not a 500.
+    if (res.error?.code === '23505')
+      throw new HttpError(409, 'That email already belongs to another login account');
+    unwrap(res);
+  }
+  return json(await readSelfProfile(db, s.sub));
+}
+
+/** Sign-in matches on a lower-cased address, so stored emails are too. */
+function normalizeEmail(value: unknown): string {
+  return String(value ?? '').trim().toLowerCase();
+}
+
+/**
+ * Only the three shipped interface languages may be stored, so a stale client
+ * (or a hand-rolled request) can never park an account on a language the app
+ * has no dictionary for.
+ */
+function assertSupportedLanguage(value: unknown): void {
+  if (!(LANGUAGES as readonly string[]).includes(String(value)))
+    throw new HttpError(400, `Unsupported language: ${String(value)}`);
+}
+
 /**
  * Normalize an account create/update payload: a plaintext `password` field is
  * hashed into `password_hash` and stripped, so passwords are never stored raw.
@@ -1064,15 +1294,9 @@ async function accountWrite(
       await db.from('members').select('email').eq('id', memberId).single<{ email: string | null }>(),
     );
     if (!member.email) throw new HttpError(400, 'This member has no email yet \u2014 add one to their profile first');
-    rest.email = member.email;
+    rest.email = normalizeEmail(member.email);
   }
-  // Only the three supported interface languages may be stored, so a stale
-  // client (or a hand-rolled request) can never park an account on a language
-  // the app has no dictionary for.
-  if (rest.language !== undefined) {
-    if (!(LANGUAGES as readonly string[]).includes(String(rest.language)))
-      throw new HttpError(400, `Unsupported language: ${String(rest.language)}`);
-  }
+  if (rest.language !== undefined) assertSupportedLanguage(rest.language);
   return rest;
 }
 

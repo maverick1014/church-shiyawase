@@ -6,7 +6,7 @@ import { useFetch } from '@/lib/hooks';
 import { useSortableRows } from '@/lib/sort';
 import { api } from '@/lib/api';
 import { usePageChrome, useMe } from '@/components/AppShell';
-import { ErrorBanner, ExportButton, Field, Loading, Modal, SortTh, useConfirm, useToast } from '@/components/ui';
+import { BackButton, ErrorBanner, ExportButton, Field, LinkIcon, Modal, SkeletonCard, SkeletonScreen, SortTh, useConfirm, useToast } from '@/components/ui';
 import { can } from '@/lib/perms';
 import { exportMatrix } from '@/lib/export';
 import { EnrollmentRow, MemberRow, NamelistResponse, SessionRow, TrainingDetail } from '@/lib/types';
@@ -53,7 +53,21 @@ export default function TrainingDetailPage() {
 
   usePageChrome({ title: tr('training.title') }, [id, tr]);
 
-  if (detail.initialLoading) return <Loading />;
+  // Course header card over the sessions/roster pair — the same three boxes
+  // the loaded page draws.
+  if (detail.initialLoading)
+    return (
+      <>
+        <BackButton onClick={() => router.push('/trainings')} />
+        <SkeletonScreen>
+          <SkeletonCard lines={2} />
+          <div className="grid g2 mt-16">
+            <SkeletonCard lines={5} />
+            <SkeletonCard lines={5} />
+          </div>
+        </SkeletonScreen>
+      </>
+    );
   if (detail.error || !detail.data)
     return <ErrorBanner message={detail.error ?? tr('training.notFound')} />;
 
@@ -197,7 +211,7 @@ export default function TrainingDetailPage() {
 
   return (
     <>
-      <button className="back-btn" onClick={() => router.push('/trainings')}>{tr('training.back')}</button>
+      <BackButton onClick={() => router.push('/trainings')} />
 
       <div className="card">
         <div className="flex-between flex-wrap">
@@ -223,6 +237,7 @@ export default function TrainingDetailPage() {
           <div className="flex gap-8">
             {t.is_enrollable && (
               <button className="btn ghost" onClick={copyEnrollLink} title={tr('training.enrollLinkTitle')}>
+                <LinkIcon />
                 {tr('training.enrollLink')}
               </button>
             )}
@@ -243,7 +258,7 @@ export default function TrainingDetailPage() {
               <div style={{ width: 30, height: 30, borderRadius: 8, background: 'var(--brand-soft)', color: 'var(--brand)', display: 'grid', placeItems: 'center', fontWeight: 700, fontSize: 13, flexShrink: 0 }} className="serif">
                 {s.session_number}
               </div>
-              <div className="grow" style={{ minWidth: 0 }}>
+              <div className="grow">
                 <strong style={{ fontSize: 13 }}>
                   {s.title ?? tr('training.session.default', { n: s.session_number })}
                 </strong>
@@ -284,12 +299,12 @@ export default function TrainingDetailPage() {
               </select>
             </div>
           )}
-          <div style={{ maxHeight: 296, overflowY: 'auto' }}>
+          <div className="enrol-list">
             {t.enrollments.map((e) => {
               const att = attendanceOf(e.member_id);
               return (
-              <div key={e.id} className="flex items-center gap-10" style={{ padding: '9px 0', borderBottom: '1px solid var(--border)' }}>
-                <div className="grow" style={{ minWidth: 0 }}>
+              <div key={e.id} className="enrol-row flex items-center gap-10" style={{ padding: '9px 0', borderBottom: '1px solid var(--border)' }}>
+                <div className="grow">
                   <strong style={{ fontSize: 13 }}>{e.member?.full_name ?? '—'}</strong>
                   <div className="muted" style={{ fontSize: 11.5 }}>
                     {e.member ? tr(roleKey(memberRole(e.member))) : ''}
@@ -305,9 +320,14 @@ export default function TrainingDetailPage() {
                   </div>
                   <span className="faint tnum" style={{ fontSize: 11, minWidth: 26 }}>{att.attended}/{att.total}</span>
                 </div>
-                {/* Fixed-width, right-aligned so the bar to its left always lands
-                    in the same spot regardless of which buttons this row shows. */}
-                <div className="flex items-center gap-6" style={{ width: 172, flexShrink: 0, justifyContent: 'flex-end' }}>
+                {/* Right-aligned, and a fixed width on desktop only, so the bar
+                    to its left always lands in the same spot regardless of
+                    which buttons this row shows. The fixed width must not
+                    apply on a phone: "Pending review + Approve + Reject" is
+                    wider than 172px, and because this was flex-shrink:0 the
+                    overflow set the row's min-content — which propagated up
+                    through the grid and scrolled the whole page sideways. */}
+                <div className="row-actions flex items-center gap-6">
                   <span className={`badge ${enrollmentStatusClass(e.status)}`} style={{ flexShrink: 0 }}>
                     {tr(enrollmentStatusKey(e.status))}
                   </span>

@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useFetch } from '@/lib/hooks';
 import { api } from '@/lib/api';
 import { usePageChrome, useMe, useHallScope } from '@/components/AppShell';
-import { Empty, ErrorBanner, Field, HallSelect, Loading, Modal, PageBar, useConfirm, useToast } from '@/components/ui';
+import { Empty, ErrorBanner, Field, HallSelect, Modal, PageBar, RepeatIcon, Skeleton, SkeletonCards, SkeletonScreen, useConfirm, useToast } from '@/components/ui';
 import { can } from '@/lib/perms';
 import { EventDetail, EventRow, MemberRow } from '@/lib/types';
 import {
@@ -133,8 +133,9 @@ export default function EventsPage() {
     </>
   );
 
-  if (events.initialLoading) return <Loading />;
-
+  // The page's own action row needs no data, so it goes up immediately and the
+  // sections below it carry the skeleton — the cards then fade in where the
+  // placeholders already were instead of pushing the page down.
   return (
     <>
       <ErrorBanner message={events.error} />
@@ -144,6 +145,7 @@ export default function EventsPage() {
           actions={
             <>
               <button className="btn ghost" onClick={() => router.push('/events/recurring')}>
+                <RepeatIcon />
                 {t('events.recurring')}
               </button>
               <button className="btn" onClick={() => setAddOpen(true)}>{t('events.add')}</button>
@@ -152,7 +154,14 @@ export default function EventsPage() {
         />
       )}
 
-      {total === 0 ? (
+      {events.initialLoading ? (
+        <SkeletonScreen>
+          <Skeleton width={150} style={{ margin: '28px 0 14px' }} />
+          <SkeletonCards count={3} lines={2} />
+          <Skeleton width={150} style={{ margin: '28px 0 14px' }} />
+          <SkeletonCards count={3} lines={2} />
+        </SkeletonScreen>
+      ) : total === 0 ? (
         <Empty>{t('events.empty')}</Empty>
       ) : (
         <>
@@ -262,7 +271,16 @@ function AttendancePanel({
       </div>
 
       {detail.loading ? (
-        <div style={{ padding: 24 }}><Loading /></div>
+        <SkeletonScreen>
+          <div style={{ margin: '14px 0 4px' }}>
+            {[0, 1, 2, 3, 4, 5].map((i) => (
+              <div key={i} className="flex-between" style={{ padding: '10px 4px', borderBottom: '1px solid var(--border)' }}>
+                <Skeleton width={132} height={14} />
+                <Skeleton width={186} height={32} radius={8} />
+              </div>
+            ))}
+          </div>
+        </SkeletonScreen>
       ) : (
         <div style={{ maxHeight: '54vh', overflowY: 'auto', margin: '14px 0 4px' }}>
           {members.map((m) => {

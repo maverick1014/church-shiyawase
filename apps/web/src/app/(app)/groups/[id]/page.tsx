@@ -6,7 +6,7 @@ import { useFetch } from '@/lib/hooks';
 import { useSortableRows } from '@/lib/sort';
 import { api } from '@/lib/api';
 import { usePageChrome, useMe } from '@/components/AppShell';
-import { ErrorBanner, ExportButton, Field, HallSelect, Loading, RoleBadge, SortTh, TagsInput, useConfirm, useToast } from '@/components/ui';
+import { BackButton, ErrorBanner, ExportButton, Field, HallSelect, RoleBadge, SkeletonCard, SkeletonScreen, SkeletonTable, SortTh, TagsInput, useConfirm, useToast } from '@/components/ui';
 import { can } from '@/lib/perms';
 import { exportMatrix } from '@/lib/export';
 import { GroupAttendanceResponse, GroupDetail, GroupRow, MemberRow } from '@/lib/types';
@@ -48,14 +48,30 @@ export default function GroupDetailPage() {
     return [...set].sort((a, b) => a.localeCompare(b, 'zh'));
   }, [allGroups.data]);
 
-  if (detail.initialLoading) return <Loading />;
+  // The roll-call card sits above the two-column profile/roster split — the
+  // skeleton mirrors that stack, including the same collapse-on-tablet grid.
+  if (detail.initialLoading)
+    return (
+      <>
+        <BackButton onClick={() => router.push('/groups')} />
+        <SkeletonScreen>
+          <SkeletonCard lines={4} />
+          <div
+            className="grid mt-16"
+            style={{ gridTemplateColumns: '360px 1fr', gap: 16, alignItems: 'start' }}
+            data-glayout
+          >
+            <SkeletonCard lines={6} />
+            <SkeletonCard lines={6} />
+          </div>
+        </SkeletonScreen>
+      </>
+    );
   if (detail.error || !detail.data) return <ErrorBanner message={detail.error ?? t('group.notFound')} />;
 
   return (
     <>
-      <button className="back-btn" onClick={() => router.push('/groups')}>
-        {t('group.back')}
-      </button>
+      <BackButton onClick={() => router.push('/groups')} />
 
       <GroupPanel
         group={detail.data}
@@ -218,24 +234,27 @@ function GroupPanel({
     }
   };
 
-  const renderTriNode = (pos: GroupPosition, style: React.CSSProperties) => {
+  /*
+   * One seat of the 铁三角. The node is a plain grid item — never absolutely
+   * positioned — so however long its role label runs ("Penolong ketua" and
+   * "Assistant leader" are three times the width of 副组长) it can only ever
+   * push its own box taller, not slide on top of a neighbour or the triangle.
+   * The corner it occupies and the triangle behind it are decided in CSS
+   * (`.trio*` in globals.css), from the block's own width.
+   */
+  const renderTriNode = (pos: GroupPosition, apex = false) => {
     const holder = groupMembers.find((m) => m.group_position === pos);
-    const roleLabel = t(positionKey(pos));
     return (
-      <div style={{ position: 'absolute', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5, background: 'var(--surface)', padding: '3px 8px', borderRadius: 8, ...style }}>
-        <span
-          className={`badge ${holder ? '' : 'b-gray'}`}
-          style={holder ? { ...roleTagStyle(pos), fontWeight: 700 } : { fontWeight: 700 }}
-        >
+      <div className={apex ? 'trio-node trio-apex' : 'trio-node'}>
+        <span className={`badge trio-role ${holder ? '' : 'b-gray'}`} style={holder ? roleTagStyle(pos) : undefined}>
           {holder && <i className="dot" style={{ background: roleDot(pos) }} />}
-          {roleLabel}
+          {t(positionKey(pos))}
         </span>
         {perms.write ? (
           <select
-            className="sm"
+            className="sm trio-pick"
             value={holder?.id ?? ''}
             onChange={(e) => assignLeadership(pos, e.target.value)}
-            style={{ maxWidth: 132, textAlign: 'center' }}
           >
             <option value="">{t('common.vacant')}</option>
             {groupMembers.map((m) => (
@@ -243,7 +262,7 @@ function GroupPanel({
             ))}
           </select>
         ) : (
-          <strong style={{ fontSize: 13, color: holder ? 'var(--ink)' : 'var(--faint)' }}>
+          <strong className={`trio-name${holder ? '' : ' vacant'}`}>
             {holder?.full_name ?? t('common.vacant')}
           </strong>
         )}
@@ -254,7 +273,12 @@ function GroupPanel({
   return (
     <>
       {err && <ErrorBanner message={err} />}
-      <div className="grid" style={{ gridTemplateColumns: '360px 1fr', gap: 16, alignItems: 'start' }} data-glayout>
+
+      {/* Roll-call first: once a group is set up, marking attendance is what
+          leaders open this page for. Profile + roster follow below. */}
+      <WeeklyAttendance groupId={group.id} />
+
+      <div className="grid mt-16" style={{ gridTemplateColumns: '360px 1fr', gap: 16, alignItems: 'start' }} data-glayout>
         {/* Left — group info + leadership trio */}
         <div className="card">
           <div className="card-head">
@@ -289,19 +313,36 @@ function GroupPanel({
             <TagsInput value={tags} onChange={setTags} suggestions={allTags} placeholder={t('groups.tagsPlaceholder')} />
           </Field>
 
-          <div className="flex-between" style={{ margin: '16px 0 4px' }}>
+          <div className="flex-between flex-wrap trio-head">
             <div className="section-label">
-              {t('group.triangle')} <span style={{ fontWeight: 400, fontSize: 12 }} className="muted">{t('group.triangleSub')}</span>
+              {t('group.triangle')} <span className="muted trio-sub">{t('group.triangleSub')}</span>
             </div>
-            <span className="faint" style={{ fontSize: 11.5 }}>{t('group.filled', { n: leadFilled })}</span>
+            <span className="faint trio-count">{t('group.filled', { n: leadFilled })}</span>
           </div>
-          <div style={{ position: 'relative', height: 150, margin: '2px 0 4px' }}>
-            <svg viewBox="0 0 300 150" preserveAspectRatio="none" width="100%" height="100%" style={{ position: 'absolute', inset: 0 }}>
-              <path d="M150 28 L54 122 L246 122 Z" fill="var(--brand)" fillOpacity="0.04" stroke="var(--border)" strokeWidth="1.5" strokeDasharray="5 5" />
-            </svg>
-            {renderTriNode(GroupPosition.Leader, { top: 8, left: '50%', transform: 'translateX(-50%)' })}
-            {renderTriNode(GroupPosition.AssistantLeader, { bottom: 6, left: 0 })}
-            {renderTriNode(GroupPosition.InternLeader, { bottom: 6, right: 0 })}
+          <div className="trio">
+            <div className="trio-grid">
+              {/* Decoration only: the triangle the three seats sit on. It is
+                  stretched to whatever box the grid ends up being (hence the
+                  percentage viewBox and `preserveAspectRatio="none"`), so it
+                  follows the layout instead of assuming a fixed 300×150 box
+                  the way the old absolutely-positioned version did.
+                  `non-scaling-stroke` keeps the dashes even under that
+                  non-uniform stretch. */}
+              <svg className="trio-frame" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true" focusable="false">
+                <path
+                  d="M50 10 L3 97 L97 97 Z"
+                  fill="var(--brand)"
+                  fillOpacity="0.07"
+                  stroke="var(--border)"
+                  strokeWidth="1.5"
+                  strokeDasharray="5 5"
+                  vectorEffect="non-scaling-stroke"
+                />
+              </svg>
+              {renderTriNode(GroupPosition.Leader, true)}
+              {renderTriNode(GroupPosition.AssistantLeader)}
+              {renderTriNode(GroupPosition.InternLeader)}
+            </div>
           </div>
 
           <div className="hint" style={{ margin: '12px 0 14px' }}>{t('group.hint')}</div>
@@ -371,8 +412,6 @@ function GroupPanel({
           </div>
         </div>
       </div>
-
-      <WeeklyAttendance groupId={group.id} />
     </>
   );
 }
@@ -506,7 +545,7 @@ function WeeklyAttendance({ groupId }: { groupId: string }) {
   };
 
   return (
-    <div className="card mt-16">
+    <div className="card">
       <div className="card-head">
         <div>
           <h3>{t('group.weekly')}</h3>
@@ -529,7 +568,9 @@ function WeeklyAttendance({ groupId }: { groupId: string }) {
       </div>
 
       {initialLoading ? (
-        <Loading />
+        <SkeletonScreen>
+          <SkeletonTable rows={5} columns={6} bare />
+        </SkeletonScreen>
       ) : !data || data.rows.length === 0 ? (
         <div className="empty">{t('group.noMembers')}</div>
       ) : (

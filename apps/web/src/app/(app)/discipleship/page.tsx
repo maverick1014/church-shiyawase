@@ -5,9 +5,9 @@ import { useFetch } from '@/lib/hooks';
 import { useSortableRows } from '@/lib/sort';
 import { api } from '@/lib/api';
 import { usePageChrome, useMe } from '@/components/AppShell';
-import { ErrorBanner, ExportButton, Field, Loading, Modal, PageBar, SortTh, useConfirm, useToast } from '@/components/ui';
+import { ErrorBanner, ExportButton, Field, LinkIcon, Modal, PageBar, Skeleton, SkeletonScreen, SkeletonTable, SkeletonText, SortTh, useConfirm, useToast } from '@/components/ui';
 import { PairProgressModal } from '@/components/PairProgressModal';
-import { can } from '@/lib/perms';
+import { can, type Perms } from '@/lib/perms';
 import { exportRows } from '@/lib/export';
 import { MemberRow, OverviewRow, PairRow, ProgramRow } from '@/lib/types';
 import {
@@ -32,23 +32,58 @@ interface Node {
   total: number;
 }
 
+/** Stable empty list, so `nodes` doesn't re-memo on every render. */
+const NO_PAIRS: PairRow[] = [];
+
 export default function DiscipleshipPage() {
   const t = useT();
   const toast = useToast();
   const confirm = useConfirm();
   const perms = can(useMe().role);
-  const programs = useFetch<ProgramRow[]>('/discipleship/programs');
-  const programId = programs.data?.[0]?.id;
+  // NAMING: everything a user reads calls this a MODULE (模块); the wire and
+  // the database still say "program" (`/discipleship/programs`, `program_id`,
+  // `ProgramRow`) because renaming those is a migration's worth of churn for
+  // nothing visible. This line is the boundary — an API row goes in, module
+  // wording comes out.
+  const modules = useFetch<ProgramRow[]>('/discipleship/programs');
+  // Deliberately unfiltered: the page shows ONE module's pairs but needs every
+  // module's pair count, for the module list and for the delete confirmation's
+  // blast radius — so it is fetched once and grouped here rather than costing
+  // a round-trip per module.
   const pairs = useFetch<PairRow[]>('/discipleship/pairs');
-  const overview = useFetch<OverviewRow[]>(
-    programId ? `/discipleship/programs/${programId}/overview` : null,
-  );
   const members = useFetch<MemberRow[]>('/members');
 
   const [filter, setFilter] = useState<Filter>('active');
   const [popup, setPopup] = useState<Node | null>(null);
   const [fullscreen, setFullscreen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
+  const [modulesOpen, setModulesOpen] = useState(false);
+  /** null = closed · 'new' = create form · a row = edit form for that module. */
+  const [moduleForm, setModuleForm] = useState<ProgramRow | 'new' | null>(null);
+  /** Which module is being viewed. Nothing is persisted across reloads. */
+  const [picked, setPicked] = useState<string | null>(null);
+
+  const moduleList = modules.data ?? [];
+  // The default is the first module, and a picked id that no longer exists
+  // (it was just deleted) falls back to the first one too.
+  const activeModule = moduleList.find((m) => m.id === picked) ?? moduleList[0];
+  const programId = activeModule?.id;
+
+  const overview = useFetch<OverviewRow[]>(
+    programId ? `/discipleship/programs/${programId}/overview` : null,
+  );
+
+  const pairsByModule = useMemo(() => {
+    const m = new Map<string, PairRow[]>();
+    for (const p of pairs.data ?? []) {
+      const arr = m.get(p.program_id);
+      if (arr) arr.push(p);
+      else m.set(p.program_id, [p]);
+    }
+    return m;
+  }, [pairs.data]);
+  const pairCountOf = (id: string) => pairsByModule.get(id)?.length ?? 0;
+  const modulePairs = (programId && pairsByModule.get(programId)) || NO_PAIRS;
 
   usePageChrome({ title: t('disc.title') }, [t]);
 
@@ -75,6 +110,49 @@ export default function DiscipleshipPage() {
     }
   };
 
+  /**
+   * Deleting a module CASCADES — `discipleship_pairs.program_id` is
+   * `on delete cascade` and `discipleship_progress.pair_id` cascades from
+   * there — so the confirmation names the blast radius in rows, not in
+   * adjectives: how many pairs go with it and how many days of daily records
+   * that is (rule G3).
+   */
+  const delModule = async (m: ProgramRow) => {
+    const n = pairCountOf(m.id);
+    const ok = await confirm({
+      title: t('disc.module.delete.title'),
+      message:
+        n === 0
+          ? t('disc.module.delete.messageEmpty', { name: m.name })
+          : t('disc.module.delete.message', { name: m.name, pairs: n, days: n * m.total_days }),
+      confirmText: t('common.delete'),
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await api.delete(`/discipleship/programs/${m.id}`);
+      if (picked === m.id) setPicked(null);
+      modules.reload();
+      pairs.reload();
+      toast(t('disc.module.toast.deleted'));
+    } catch (e) {
+      toast((e as Error).message, 'error');
+    }
+  };
+
+  const onModuleSaved = (saved: ProgramRow, created: boolean) => {
+    setModuleForm(null);
+    // Land on what was just saved — including a brand-new module, which is
+    // what the empty state's button exists to reach.
+    setPicked(saved.id);
+    modules.reload();
+    // A changed total_days re-scores every pair in the module, so the overview
+    // (percent_complete) and the day grids have to come back too.
+    pairs.reload();
+    overview.reload();
+    toast(created ? t('disc.module.toast.created') : t('disc.module.toast.saved'));
+  };
+
   const ovByPair = useMemo(() => {
     const m = new Map<string, OverviewRow>();
     (overview.data ?? []).forEach((o) => m.set(o.pair_id, o));
@@ -82,7 +160,7 @@ export default function DiscipleshipPage() {
   }, [overview.data]);
 
   const nodes = useMemo<Node[]>(() => {
-    const list = pairs.data ?? [];
+    const list = modulePairs;
     const byId = new Map(list.map((p) => [p.id, p]));
     const depthOf = (p: PairRow): number => {
       let d = 0;
@@ -98,11 +176,14 @@ export default function DiscipleshipPage() {
     };
     return list.map((p) => {
       const ov = ovByPair.get(p.id);
-      const total = ov?.total_days ?? 40;
+      // The overview row knows the module's length; before it lands, fall back
+      // to the selected module's own figure rather than a hard-coded 40 — a
+      // module is free to be any number of days.
+      const total = ov?.total_days ?? activeModule?.total_days ?? 40;
       const days = ov?.days_completed ?? 0;
       return { pair: p, ov, depth: depthOf(p), pct: Number(ov?.percent_complete ?? 0), days, total };
     });
-  }, [pairs.data, ovByPair]);
+  }, [modulePairs, ovByPair, activeModule]);
 
   const classify = (n: Node): Filter =>
     n.pct >= 100 ? 'done' : n.days > 0 ? 'active' : 'pending';
@@ -219,20 +300,70 @@ export default function DiscipleshipPage() {
     </div>
   );
 
-  if (pairs.initialLoading || programs.initialLoading) return <Loading />;
+  // The chain and the pastor overview both hang off these two fetches; the
+  // page's action row does not, so it renders straight away and only the two
+  // sections below it are skeletons.
+  const booting = pairs.initialLoading || modules.initialLoading;
 
-  if (!programId) {
-    return <div className="empty">{t('disc.noProgram')}</div>;
+  // A church with no 守望 module at all is a different state from a slow
+  // fetch — decide it only once the modules have actually arrived. Deleting
+  // the last module is allowed, and this is what makes it recoverable from the
+  // UI instead of from raw SQL.
+  if (!booting && !programId) {
+    return (
+      <>
+        <ErrorBanner message={modules.error} />
+        <PageBar
+          actions={
+            perms.write ? (
+              <button className="btn" onClick={() => setModuleForm('new')}>{t('disc.module.add')}</button>
+            ) : undefined
+          }
+        />
+        <div className="empty">
+          {perms.write ? t('disc.noModule') : t('disc.noModule.readonly')}
+        </div>
+        {moduleForm && (
+          <ModuleFormModal
+            initial={moduleForm === 'new' ? undefined : moduleForm}
+            pairCount={moduleForm === 'new' ? 0 : pairCountOf(moduleForm.id)}
+            onClose={() => setModuleForm(null)}
+            onSaved={onModuleSaved}
+          />
+        )}
+      </>
+    );
   }
 
   return (
     <>
-      <ErrorBanner message={pairs.error || overview.error} />
+      <ErrorBanner message={pairs.error || overview.error || modules.error} />
 
       <PageBar
+        filters={
+          // One module is the normal case and gets no selector at all. From two
+          // up, the picker is a dropdown and so belongs in the filters half —
+          // never among the actions (rule G7a).
+          moduleList.length > 1 ? (
+            <select
+              aria-label={t('disc.module.selector')}
+              value={programId ?? ''}
+              onChange={(e) => setPicked(e.target.value)}
+            >
+              {moduleList.map((m) => (
+                <option key={m.id} value={m.id}>{m.name}</option>
+              ))}
+            </select>
+          ) : undefined
+        }
         actions={
           <>
             <ExportButton onClick={exportPairs} disabled={nodes.length === 0} />
+            {perms.write && (
+              <button className="btn ghost" onClick={() => setModulesOpen(true)}>
+                {t('disc.module.manage')}
+              </button>
+            )}
             {perms.write && (
               <button className="btn" onClick={() => setAddOpen(true)} disabled={!programId}>
                 {t('disc.add')}
@@ -268,20 +399,33 @@ export default function DiscipleshipPage() {
           </div>
         </div>
 
-        {filter === 'active' &&
-          (forest.length === 0 ? (
-            <div className="empty">{t('disc.emptyActive')}</div>
-          ) : (
-            <>
-              <div className="only-mobile faint" style={{ fontSize: 11.5, marginTop: 10 }}>
-                {t('disc.swipeHint')}
-              </div>
-              {renderForest(false)}
-            </>
-          ))}
+        {booting ? (
+          <SkeletonScreen>
+            <div className="flex gap-10 flex-wrap" style={{ marginTop: 10 }}>
+              {[132, 132, 132].map((w, i) => (
+                <Skeleton key={i} width={w} height={62} radius={10} />
+              ))}
+            </div>
+            <SkeletonText lines={2} style={{ marginTop: 14 }} />
+          </SkeletonScreen>
+        ) : (
+          <>
+            {filter === 'active' &&
+              (forest.length === 0 ? (
+                <div className="empty">{t('disc.emptyActive')}</div>
+              ) : (
+                <>
+                  <div className="only-mobile faint" style={{ fontSize: 11.5, marginTop: 10 }}>
+                    {t('disc.swipeHint')}
+                  </div>
+                  {renderForest(false)}
+                </>
+              ))}
 
-        {filter === 'done' && <DiscList list={doneList} kind="done" onOpen={setPopup} t={t} />}
-        {filter === 'pending' && <DiscList list={pendingList} kind="pending" onOpen={setPopup} t={t} />}
+            {filter === 'done' && <DiscList list={doneList} kind="done" onOpen={setPopup} t={t} />}
+            {filter === 'pending' && <DiscList list={pendingList} kind="pending" onOpen={setPopup} t={t} />}
+          </>
+        )}
       </div>
 
       {/* Pastor overview */}
@@ -289,78 +433,86 @@ export default function DiscipleshipPage() {
         <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--good)', display: 'inline-block' }} />
         {t('disc.pastorOverview')}
       </div>
-      <div className="card">
-        {/* Desktop — table */}
-        <div className="table-wrap only-desktop">
-          <table>
-            <thead>
-              <tr>
-                <SortTh sortKey="name" activeKey={nodeSortKey} dir={nodeSortDir} onSort={toggleNodeSort}>{t('disc.col.pair')}</SortTh>
-                <SortTh sortKey="pct" activeKey={nodeSortKey} dir={nodeSortDir} onSort={toggleNodeSort} style={{ width: 200 }}>{t('disc.col.progress')}</SortTh>
-                <SortTh sortKey="status" activeKey={nodeSortKey} dir={nodeSortDir} onSort={toggleNodeSort}>{t('groups.col.status')}</SortTh>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {sortedNodes.map((n) => (
-                <tr key={n.pair.id}>
-                  <td>
+      {booting ? (
+        // The skeleton brings its own card on desktop and its own tiles on a
+        // phone, so it stands in for the whole panel rather than nesting a
+        // second card inside this one.
+        <SkeletonTable rows={5} columns={4} />
+      ) : (
+        <div className="card">
+          {/* Desktop — table */}
+          <div className="table-wrap only-desktop">
+            <table>
+              <thead>
+                <tr>
+                  <SortTh sortKey="name" activeKey={nodeSortKey} dir={nodeSortDir} onSort={toggleNodeSort}>{t('disc.col.pair')}</SortTh>
+                  <SortTh sortKey="pct" activeKey={nodeSortKey} dir={nodeSortDir} onSort={toggleNodeSort} style={{ width: 200 }}>{t('disc.col.progress')}</SortTh>
+                  <SortTh sortKey="status" activeKey={nodeSortKey} dir={nodeSortDir} onSort={toggleNodeSort}>{t('groups.col.status')}</SortTh>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {sortedNodes.map((n) => (
+                  <tr key={n.pair.id}>
+                    <td>
+                      <strong>{n.pair.trainee?.full_name}</strong>
+                      <span className="faint"> ← {n.pair.mentor?.full_name}</span>
+                    </td>
+                    <td>
+                      <div className="progress-row">
+                        <div className="bar"><span style={{ width: `${n.pct}%` }} /></div>
+                        <span className="pct">{n.days}/{n.total}</span>
+                      </div>
+                    </td>
+                    <td><span className={`badge ${pairStatusClass(n.pair.status)}`}>{t(pairStatusKey(n.pair.status))}</span></td>
+                    <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                      <button className="btn ghost sm" style={{ marginRight: 6 }} onClick={() => setPopup(n)}>{t('disc.progressBtn')}</button>
+                      <button className="btn ghost sm" style={{ color: 'var(--brand)' }} onClick={() => window.open(`/d/${n.pair.form_token}`, '_blank')}><LinkIcon size={14} />{t('disc.form')}</button>
+                    </td>
+                  </tr>
+                ))}
+                {sortedNodes.length === 0 && (
+                  <tr><td colSpan={4} className="empty-inline">{t('disc.empty')}</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Mobile — list tiles: trainee ← mentor + form, then progress · status */}
+          <div className="only-mobile" style={{ marginTop: 4 }}>
+            {sortedNodes.map((n) => (
+              <div key={n.pair.id} className="mtile" onClick={() => setPopup(n)}>
+                <div className="mtile-row1">
+                  <div style={{ minWidth: 0 }}>
                     <strong>{n.pair.trainee?.full_name}</strong>
                     <span className="faint"> ← {n.pair.mentor?.full_name}</span>
-                  </td>
-                  <td>
-                    <div className="progress-row">
-                      <div className="bar"><span style={{ width: `${n.pct}%` }} /></div>
-                      <span className="pct">{n.days}/{n.total}</span>
-                    </div>
-                  </td>
-                  <td><span className={`badge ${pairStatusClass(n.pair.status)}`}>{t(pairStatusKey(n.pair.status))}</span></td>
-                  <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
-                    <button className="btn ghost sm" style={{ marginRight: 6 }} onClick={() => setPopup(n)}>{t('disc.progressBtn')}</button>
-                    <button className="btn ghost sm" style={{ color: 'var(--brand)' }} onClick={() => window.open(`/d/${n.pair.form_token}`, '_blank')}>{t('disc.form')}</button>
-                  </td>
-                </tr>
-              ))}
-              {sortedNodes.length === 0 && (
-                <tr><td colSpan={4} className="empty-inline">{t('disc.empty')}</td></tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        {/* Mobile — list tiles: trainee ← mentor + form, then progress · status */}
-        <div className="only-mobile" style={{ marginTop: 4 }}>
-          {sortedNodes.map((n) => (
-            <div key={n.pair.id} className="mtile" onClick={() => setPopup(n)}>
-              <div className="mtile-row1">
-                <div style={{ minWidth: 0 }}>
-                  <strong>{n.pair.trainee?.full_name}</strong>
-                  <span className="faint"> ← {n.pair.mentor?.full_name}</span>
+                  </div>
+                  <div className="flex gap-10" style={{ flexShrink: 0 }}>
+                    <button
+                      className="tile-action"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        window.open(`/d/${n.pair.form_token}`, '_blank');
+                      }}
+                    >
+                      <LinkIcon size={14} />
+                      {t('disc.form')}
+                    </button>
+                  </div>
                 </div>
-                <div className="flex gap-10" style={{ flexShrink: 0 }}>
-                  <button
-                    className="tile-action"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      window.open(`/d/${n.pair.form_token}`, '_blank');
-                    }}
-                  >
-                    {t('disc.form')}
-                  </button>
+                <div className="mtile-line" style={{ marginTop: 9 }}>
+                  <div className="bar" style={{ flex: 1 }}><span style={{ width: `${n.pct}%` }} /></div>
+                  <span className="pct" style={{ whiteSpace: 'nowrap' }}>{n.days}/{n.total}</span>
+                  <span className={`badge ${pairStatusClass(n.pair.status)}`}>{t(pairStatusKey(n.pair.status))}</span>
                 </div>
               </div>
-              <div className="mtile-line" style={{ marginTop: 9 }}>
-                <div className="bar" style={{ flex: 1 }}><span style={{ width: `${n.pct}%` }} /></div>
-                <span className="pct" style={{ whiteSpace: 'nowrap' }}>{n.days}/{n.total}</span>
-                <span className={`badge ${pairStatusClass(n.pair.status)}`}>{t(pairStatusKey(n.pair.status))}</span>
-              </div>
-            </div>
-          ))}
-          {sortedNodes.length === 0 && (
-            <div className="empty-inline">{t('disc.empty')}</div>
-          )}
+            ))}
+            {sortedNodes.length === 0 && (
+              <div className="empty-inline">{t('disc.empty')}</div>
+            )}
+          </div>
         </div>
-      </div>
+      )}
 
       {popup && (
         <PairProgressModal
@@ -404,9 +556,12 @@ export default function DiscipleshipPage() {
       {addOpen && programId && (
         <AddPairModal
           programId={programId}
-          totalDays={programs.data?.[0]?.total_days ?? 40}
+          totalDays={activeModule?.total_days ?? 40}
           members={members.data ?? []}
-          existing={pairs.data ?? []}
+          // The unique constraint is (program_id, trainee_id), so only the
+          // selected module's pairs may hide a member from the trainee list —
+          // somebody paired under another module is still free here.
+          existing={modulePairs}
           onClose={() => setAddOpen(false)}
           onSaved={() => {
             setAddOpen(false);
@@ -416,7 +571,196 @@ export default function DiscipleshipPage() {
           }}
         />
       )}
+
+      {/* Module management. The list and the form are one dialog at a time —
+          closing the form drops back to the list it was opened from. */}
+      {modulesOpen && !moduleForm && (
+        <ModuleListModal
+          modules={moduleList}
+          pairCountOf={pairCountOf}
+          perms={perms}
+          onNew={() => setModuleForm('new')}
+          onEdit={setModuleForm}
+          onDelete={delModule}
+          onClose={() => setModulesOpen(false)}
+        />
+      )}
+      {moduleForm && (
+        <ModuleFormModal
+          initial={moduleForm === 'new' ? undefined : moduleForm}
+          pairCount={moduleForm === 'new' ? 0 : pairCountOf(moduleForm.id)}
+          onClose={() => setModuleForm(null)}
+          onSaved={onModuleSaved}
+        />
+      )}
     </>
+  );
+}
+
+/* ---- Modules (守望模块) --------------------------------------------------
+ * The module is the definition a pair hangs off: its name and how many days
+ * the pair follows. There was no way to touch one from the app at all, so
+ * deleting the single row during a data cleanup took the whole feature down
+ * and only raw SQL could bring it back (rule G1).
+ * ---------------------------------------------------------------------- */
+
+function ModuleListModal({
+  modules,
+  pairCountOf,
+  perms,
+  onNew,
+  onEdit,
+  onDelete,
+  onClose,
+}: {
+  modules: ProgramRow[];
+  pairCountOf: (id: string) => number;
+  perms: Perms;
+  onNew: () => void;
+  onEdit: (m: ProgramRow) => void;
+  onDelete: (m: ProgramRow) => void;
+  onClose: () => void;
+}) {
+  const t = useT();
+  return (
+    <Modal title={t('disc.module.list.title')} onClose={onClose}>
+      <p className="muted" style={{ margin: '0 0 14px', fontSize: 12.5, lineHeight: 1.6 }}>
+        {t('disc.module.list.intro')}
+      </p>
+      {modules.map((m) => (
+        <div
+          key={m.id}
+          className="flex items-center gap-12"
+          style={{ padding: '11px 4px', borderBottom: '1px solid var(--border)' }}
+        >
+          <div className="grow" style={{ minWidth: 0 }}>
+            <strong style={{ fontSize: 13.5 }}>{m.name}</strong>
+            <div className="faint" style={{ fontSize: 11.5, marginTop: 1 }}>
+              {t('disc.module.meta', { days: m.total_days, pairs: pairCountOf(m.id) })}
+              {m.description ? ` · ${m.description}` : ''}
+            </div>
+          </div>
+          <div className="flex gap-6" style={{ flexShrink: 0 }}>
+            {perms.write && (
+              <button className="btn ghost sm" onClick={() => onEdit(m)}>{t('common.edit')}</button>
+            )}
+            {/* Delete only where the role may delete — a button that can only
+                ever return 403 is a bug (rule G2). */}
+            {perms.delete && (
+              <button className="btn ghost sm" style={{ color: 'var(--crit)' }} onClick={() => onDelete(m)}>
+                {t('common.delete')}
+              </button>
+            )}
+          </div>
+        </div>
+      ))}
+      <div className="modal-actions">
+        {perms.write && (
+          <button className="btn" style={{ marginRight: 'auto' }} onClick={onNew}>
+            {t('disc.module.add')}
+          </button>
+        )}
+        <button className="btn ghost" onClick={onClose}>{t('common.close')}</button>
+      </div>
+    </Modal>
+  );
+}
+
+function ModuleFormModal({
+  initial,
+  pairCount,
+  onClose,
+  onSaved,
+}: {
+  initial?: ProgramRow;
+  /** Pairs already following this module — 0 when creating. */
+  pairCount: number;
+  onClose: () => void;
+  onSaved: (saved: ProgramRow, created: boolean) => void;
+}) {
+  const t = useT();
+  const toast = useToast();
+  const [form, setForm] = useState({
+    name: initial?.name ?? '',
+    description: initial?.description ?? '',
+    // Kept as a string so the field can be cleared while typing; validated below.
+    total_days: String(initial?.total_days ?? 40),
+  });
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const save = async () => {
+    const name = form.name.trim();
+    if (!name) {
+      setErr(t('disc.module.err.name'));
+      return;
+    }
+    // The table carries `check (total_days >= 1)`, so a bad figure would come
+    // back as a Postgres error — check it here so the user reads it in their
+    // own language, and still surface the server's word if it refuses anyway.
+    const days = Number(form.total_days);
+    if (!Number.isInteger(days) || days < 1) {
+      setErr(t('disc.module.err.days'));
+      return;
+    }
+    setSaving(true);
+    setErr(null);
+    const dto = { name, description: form.description.trim() || null, total_days: days };
+    try {
+      const saved = initial
+        ? await api.patch<ProgramRow>(`/discipleship/programs/${initial.id}`, dto)
+        : await api.post<ProgramRow>('/discipleship/programs', dto);
+      onSaved(saved, !initial);
+    } catch (e) {
+      setErr((e as Error).message);
+      toast((e as Error).message, 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal title={initial ? t('disc.module.edit.title') : t('disc.module.new.title')} onClose={onClose}>
+      {err && <ErrorBanner message={err} />}
+      <Field label={t('disc.module.field.name')}>
+        <input
+          value={form.name}
+          onChange={(e) => setForm({ ...form, name: e.target.value })}
+          placeholder={t('disc.module.namePlaceholder')}
+        />
+      </Field>
+      <Field label={t('disc.module.field.description')}>
+        <input
+          value={form.description}
+          onChange={(e) => setForm({ ...form, description: e.target.value })}
+          placeholder={t('disc.module.descriptionPlaceholder')}
+        />
+      </Field>
+      <Field label={t('disc.module.field.totalDays')}>
+        <input
+          type="number"
+          min={1}
+          step={1}
+          value={form.total_days}
+          onChange={(e) => setForm({ ...form, total_days: e.target.value })}
+        />
+      </Field>
+      <div className="hint" style={{ marginBottom: 6 }}>{t('disc.module.daysHint')}</div>
+      {/* Editing the length changes the meaning of data that already exists:
+          every pair's percent_complete is divided by the new figure and the
+          progress grid grows or shrinks. Say so with the real count. */}
+      {initial && pairCount > 0 && (
+        <div className="hint" style={{ marginBottom: 6 }}>
+          {t('disc.module.warnTotalDays', { pairs: pairCount })}
+        </div>
+      )}
+      <div className="modal-actions">
+        <button className="btn ghost" onClick={onClose}>{t('common.cancel')}</button>
+        <button className="btn" onClick={save} disabled={saving}>
+          {saving ? t('common.saving') : t('common.save')}
+        </button>
+      </div>
+    </Modal>
   );
 }
 
@@ -554,7 +898,7 @@ function DiscList({
             className="flex items-center gap-12"
             style={{ padding: '11px 4px', borderBottom: '1px solid var(--border)', cursor: 'pointer' }}
           >
-            <div className="grow" style={{ minWidth: 0 }}>
+            <div className="grow">
               <div className="flex items-center gap-8 flex-wrap">
                 <strong style={{ fontSize: 13.5 }}>{n.pair.trainee?.full_name}</strong>
                 <span className="badge" style={{ ...roleTagStyle(role), fontSize: 10.5 }}>{t(roleKey(role))}</span>

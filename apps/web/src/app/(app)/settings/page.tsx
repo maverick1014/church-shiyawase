@@ -1,37 +1,38 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useFetch } from '@/lib/hooks';
 import { useSortableRows } from '@/lib/sort';
 import { api } from '@/lib/api';
 import { usePageChrome, useMe } from '@/components/AppShell';
 import {
   Avatar,
+  BackBar,
   ChevronRightIcon,
   EntityHeader,
   ErrorBanner,
   Field,
   HallSelect,
-  InfoPopover,
   Loading,
   Modal,
   PageBar,
   PasswordInput,
   RoleBadge,
   RowChevron,
+  SkeletonScreen,
+  SkeletonTable,
   SortTh,
   Switch,
   useConfirm,
   useToast,
 } from '@/components/ui';
-import { ChangePasswordModal } from '@/components/ChangePasswordModal';
 import { AccountRow, MemberRow } from '@/lib/types';
 import {
   ACCOUNT_ROLE_OPTIONS,
-  ACCOUNT_ROLE_PERMISSION_KEYS,
   accountRoleClass,
   accountRoleKey,
+  accountRoleOptionKey,
   accountStatusClass,
   accountStatusKey,
   churchDisplayRole,
@@ -46,15 +47,24 @@ import type { MessageKey } from '@/lib/i18n';
 export default function SettingsPage() {
   const t = useT();
   const me = useMe();
+  const router = useRouter();
   const isSuperAdmin = me.role === AccountRole.SuperAdmin;
   const toast = useToast();
   const accounts = useFetch<AccountRow[]>(isSuperAdmin ? '/accounts' : null);
   const members = useFetch<MemberRow[]>(isSuperAdmin ? '/members' : null);
   const [detailId, setDetailId] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
-  const [myPwOpen, setMyPwOpen] = useState(false);
 
   usePageChrome({ title: t('settings.title') }, [t]);
+
+  // Managing other people's logins is super_admin-only (the API says the same
+  // for reads and writes). Everyone else who lands here by URL wants their own
+  // account, so send them to 我的资料 rather than showing them a dead end —
+  // this page used to render "only a super admin may manage users" plus a lone
+  // change-password button, which was the profile page in miniature.
+  useEffect(() => {
+    if (!isSuperAdmin) router.replace('/profile');
+  }, [isSuperAdmin, router]);
 
   const list = accounts.data ?? [];
   const selected = list.find((a) => a.id === detailId) ?? null;
@@ -85,28 +95,11 @@ export default function SettingsPage() {
     accounts.reload();
   };
 
-  // User management is super_admin-only; others may still change their own password.
-  if (!isSuperAdmin) {
-    return (
-      <>
-        <div className="empty">{t('settings.onlySuperAdmin')}</div>
-        <div style={{ textAlign: 'center', marginTop: 12 }}>
-          <button className="btn ghost" onClick={() => setMyPwOpen(true)}>{t('settings.changeMyPassword')}</button>
-        </div>
-        {myPwOpen && (
-          <ChangePasswordModal
-            onClose={() => setMyPwOpen(false)}
-            onSaved={() => {
-              setMyPwOpen(false);
-              toast(t('settings.toast.passwordChanged'));
-            }}
-          />
-        )}
-      </>
-    );
-  }
-
-  if (accounts.initialLoading) return <Loading />;
+  // Two states that used to share one line. A non-super-admin is not waiting
+  // for anything — the redirect above is already in flight — so it keeps the
+  // bounded one-line notice: painting the shape of an account list it will
+  // never be shown would be a lie. Only the real wait, below, gets a skeleton.
+  if (!isSuperAdmin) return <Loading />;
 
   if (selected) {
     return (
@@ -130,95 +123,87 @@ export default function SettingsPage() {
     <>
       <ErrorBanner message={accounts.error} />
 
-      {/* The permission matrix is reference material, so it rides in the action
-          row behind an icon rather than pushing the account list down. There is
-          no search box: with a handful of accounts it would be furniture. */}
+      {/* One control: the single thing this page creates. What each permission
+          role may do is now written into the 权限角色 dropdown itself (both the
+          create modal and the account form), where it is read at the moment the
+          role is chosen — a popover of reference text nobody opened is worse
+          than a label on the control. "Change my password" used to sit here
+          too, which wrapped the row onto two lines on a phone — and it was a
+          duplicate: the shell's account menu has had it all along. */}
       <PageBar
-        actions={
-          <>
-            <InfoPopover label={t('settings.permissions')}>
-              <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10 }}>{t('settings.permissions')}</div>
-              {ACCOUNT_ROLE_OPTIONS.map((ar) => (
-                <div key={ar} style={{ marginBottom: 12 }}>
-                  <span className={`badge ${accountRoleClass(ar)}`}>{t(accountRoleKey(ar))}</span>
-                  <ul style={{ margin: '7px 0 0', paddingLeft: 16, fontSize: 12, color: 'var(--muted)', lineHeight: 1.7 }}>
-                    {ACCOUNT_ROLE_PERMISSION_KEYS[ar].map((k) => (
-                      <li key={k}>{t(k)}</li>
-                    ))}
-                  </ul>
-                </div>
-              ))}
-            </InfoPopover>
-            <button className="btn ghost" onClick={() => setMyPwOpen(true)}>
-              {t('settings.changeMyPassword')}
-            </button>
-            <button className="btn" onClick={() => setAddOpen(true)}>{t('settings.add')}</button>
-          </>
-        }
+        actions={<button className="btn" onClick={() => setAddOpen(true)}>{t('settings.add')}</button>}
       />
 
-      {/* Desktop — table */}
-      <div className="card only-desktop" style={{ padding: 6 }}>
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <SortTh sortKey="name" activeKey={acctSortKey} dir={acctSortDir} onSort={toggleAcctSort}>{t('settings.col.account')}</SortTh>
-                <SortTh sortKey="role" activeKey={acctSortKey} dir={acctSortDir} onSort={toggleAcctSort}>{t('settings.col.churchRole')}</SortTh>
-                <SortTh sortKey="account_role" activeKey={acctSortKey} dir={acctSortDir} onSort={toggleAcctSort}>{t('settings.col.accountRole')}</SortTh>
-                <SortTh sortKey="email" activeKey={acctSortKey} dir={acctSortDir} onSort={toggleAcctSort}>{t('settings.col.email')}</SortTh>
-                <SortTh sortKey="status" activeKey={acctSortKey} dir={acctSortDir} onSort={toggleAcctSort}>{t('members.col.status')}</SortTh>
-                <SortTh sortKey="last_login" activeKey={acctSortKey} dir={acctSortDir} onSort={toggleAcctSort}>{t('settings.col.lastLogin')}</SortTh>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {sortedAccounts.map((u) => (
-                <tr key={u.id}>
-                  <td><strong>{u.member?.full_name ?? '—'}</strong></td>
-                  <td>
-                    {u.member ? <RoleBadge role={churchDisplayRole(u.member.church_role)} /> : '—'}
-                  </td>
-                  <td><span className={`badge ${accountRoleClass(u.account_role)}`}>{t(accountRoleKey(u.account_role))}</span></td>
-                  <td className="muted">{u.email}</td>
-                  <td><span className={`badge ${accountStatusClass(u.status)}`}>{t(accountStatusKey(u.status))}</span></td>
-                  <td className="muted" style={{ whiteSpace: 'nowrap' }}>{u.last_sign_in_at ? formatDateTime(u.last_sign_in_at) : t('common.never')}</td>
-                  <td style={{ textAlign: 'right' }}>
-                    <RowChevron title={t('settings.manageAccount')} onClick={() => setDetailId(u.id)} />
-                  </td>
-                </tr>
-              ))}
-              {sortedAccounts.length === 0 && (
-                <tr><td colSpan={7} className="empty-inline">{t('settings.empty')}</td></tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* Mobile — list tiles, same pattern as the member and group lists */}
-      <div className="only-mobile">
-        {sortedAccounts.map((u) => (
-          <div key={u.id} className="mtile" onClick={() => setDetailId(u.id)}>
-            <div className="mtile-row1">
-              <div className="flex items-center gap-8 flex-wrap" style={{ minWidth: 0 }}>
-                <strong>{u.member?.full_name ?? '—'}</strong>
-                {u.member && <RoleBadge role={churchDisplayRole(u.member.church_role)} />}
-              </div>
-              <span className="mtile-cta"><ChevronRightIcon /></span>
-            </div>
-            <div className="mtile-line">{u.email}</div>
-            <div className="mtile-line flex items-center gap-8 flex-wrap">
-              <span className={`badge ${accountRoleClass(u.account_role)}`}>{t(accountRoleKey(u.account_role))}</span>
-              <span className={`badge ${accountStatusClass(u.status)}`}>{t(accountStatusKey(u.status))}</span>
-              <span>{u.last_sign_in_at ? formatDateTime(u.last_sign_in_at) : t('settings.neverSignedIn')}</span>
+      {accounts.initialLoading ? (
+        <SkeletonScreen>
+          <SkeletonTable rows={6} columns={7} />
+        </SkeletonScreen>
+      ) : (
+        <>
+          {/* Desktop — table */}
+          <div className="card only-desktop" style={{ padding: 6 }}>
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <SortTh sortKey="name" activeKey={acctSortKey} dir={acctSortDir} onSort={toggleAcctSort}>{t('settings.col.account')}</SortTh>
+                    <SortTh sortKey="role" activeKey={acctSortKey} dir={acctSortDir} onSort={toggleAcctSort}>{t('settings.col.churchRole')}</SortTh>
+                    <SortTh sortKey="account_role" activeKey={acctSortKey} dir={acctSortDir} onSort={toggleAcctSort}>{t('settings.col.accountRole')}</SortTh>
+                    <SortTh sortKey="email" activeKey={acctSortKey} dir={acctSortDir} onSort={toggleAcctSort}>{t('settings.col.email')}</SortTh>
+                    <SortTh sortKey="status" activeKey={acctSortKey} dir={acctSortDir} onSort={toggleAcctSort}>{t('members.col.status')}</SortTh>
+                    <SortTh sortKey="last_login" activeKey={acctSortKey} dir={acctSortDir} onSort={toggleAcctSort}>{t('settings.col.lastLogin')}</SortTh>
+                    <th />
+                  </tr>
+                </thead>
+                <tbody>
+                  {sortedAccounts.map((u) => (
+                    <tr key={u.id}>
+                      <td><strong>{u.member?.full_name ?? '—'}</strong></td>
+                      <td>
+                        {u.member ? <RoleBadge role={churchDisplayRole(u.member.church_role)} /> : '—'}
+                      </td>
+                      <td><span className={`badge ${accountRoleClass(u.account_role)}`}>{t(accountRoleKey(u.account_role))}</span></td>
+                      <td className="muted">{u.email}</td>
+                      <td><span className={`badge ${accountStatusClass(u.status)}`}>{t(accountStatusKey(u.status))}</span></td>
+                      <td className="muted" style={{ whiteSpace: 'nowrap' }}>{u.last_sign_in_at ? formatDateTime(u.last_sign_in_at) : t('common.never')}</td>
+                      <td style={{ textAlign: 'right' }}>
+                        <RowChevron title={t('settings.manageAccount')} onClick={() => setDetailId(u.id)} />
+                      </td>
+                    </tr>
+                  ))}
+                  {sortedAccounts.length === 0 && (
+                    <tr><td colSpan={7} className="empty-inline">{t('settings.empty')}</td></tr>
+                  )}
+                </tbody>
+              </table>
             </div>
           </div>
-        ))}
-        {sortedAccounts.length === 0 && (
-          <div className="empty-inline">{t('settings.empty')}</div>
-        )}
-      </div>
+
+          {/* Mobile — list tiles, same pattern as the member and group lists */}
+          <div className="only-mobile">
+            {sortedAccounts.map((u) => (
+              <div key={u.id} className="mtile" onClick={() => setDetailId(u.id)}>
+                <div className="mtile-row1">
+                  <div className="flex items-center gap-8 flex-wrap" style={{ minWidth: 0 }}>
+                    <strong>{u.member?.full_name ?? '—'}</strong>
+                    {u.member && <RoleBadge role={churchDisplayRole(u.member.church_role)} />}
+                  </div>
+                  <span className="mtile-cta"><ChevronRightIcon /></span>
+                </div>
+                <div className="mtile-line">{u.email}</div>
+                <div className="mtile-line flex items-center gap-8 flex-wrap">
+                  <span className={`badge ${accountRoleClass(u.account_role)}`}>{t(accountRoleKey(u.account_role))}</span>
+                  <span className={`badge ${accountStatusClass(u.status)}`}>{t(accountStatusKey(u.status))}</span>
+                  <span>{u.last_sign_in_at ? formatDateTime(u.last_sign_in_at) : t('settings.neverSignedIn')}</span>
+                </div>
+              </div>
+            ))}
+            {sortedAccounts.length === 0 && (
+              <div className="empty-inline">{t('settings.empty')}</div>
+            )}
+          </div>
+        </>
+      )}
 
       {addOpen && (
         <AddAccountModal
@@ -232,17 +217,25 @@ export default function SettingsPage() {
           }}
         />
       )}
-
-      {myPwOpen && (
-        <ChangePasswordModal
-          onClose={() => setMyPwOpen(false)}
-          onSaved={() => {
-            setMyPwOpen(false);
-            toast(t('settings.toast.passwordChanged'));
-          }}
-        />
-      )}
     </>
+  );
+}
+
+/**
+ * The 权限角色 picker, shared by the create modal and the account form so both
+ * offer the same options with the same explanation (G4/G5). Each option reads
+ * "role — what it may do"; the badge elsewhere keeps the bare role name.
+ */
+function AccountRoleField({ value, onChange }: { value: AccountRole; onChange: (r: AccountRole) => void }) {
+  const t = useT();
+  return (
+    <Field label={t('settings.col.accountRole')}>
+      <select value={value} onChange={(e) => onChange(e.target.value as AccountRole)}>
+        {ACCOUNT_ROLE_OPTIONS.map((ar) => (
+          <option key={ar} value={ar}>{t(accountRoleOptionKey(ar))}</option>
+        ))}
+      </select>
+    </Field>
   );
 }
 
@@ -271,9 +264,12 @@ function AccountDetail({
 }) {
   const router = useRouter();
   const t = useT();
-  // Login email always follows the linked member's own profile — never
-  // independently editable — so the two can never drift apart.
-  const email = account.member?.email ?? account.email;
+  // The login email is stored on the linked MEMBER and mirrored onto the
+  // account server-side (`accountWrite`), so the two can never drift apart.
+  // Editing it here writes the member first and lets the account re-derive it —
+  // which is also how a member who had no email gets one without a detour to
+  // the member page.
+  const [email, setEmail] = useState(account.member?.email ?? account.email);
   const [role, setRole] = useState<AccountRole>(account.account_role);
   // null = full access (may see and manage every hall).
   const [hall, setHall] = useState<string | null>(account.hall_id ?? null);
@@ -331,9 +327,26 @@ function AccountDetail({
   };
 
   const save = async () => {
+    const nextEmail = email.trim().toLowerCase();
+    if (!nextEmail) {
+      setErr(t('settings.err.email'));
+      return;
+    }
     setBusy(true);
     setErr(null);
+    // The interface language is read once, when the page loads (`/auth/me`), so
+    // every string already on screen stays in the old language until the page
+    // is reloaded. Save first, then offer the reload — only when it changed, so
+    // editing any other field never throws the page away.
+    const languageChanged = language !== account.language;
+    let saved = false;
     try {
+      // Member first: the account PATCH below re-reads the member's email and
+      // copies it onto the login, so writing them the other way round would
+      // save the old address.
+      if (account.member && nextEmail !== (account.member.email ?? '').toLowerCase()) {
+        await api.patch(`/members/${account.member.id}`, { email: nextEmail });
+      }
       await api.patch(`/accounts/${account.id}`, {
         account_role: role,
         hall_id: hall,
@@ -342,6 +355,7 @@ function AccountDetail({
         notify_discipleship: nDisc,
         notify_weekly: nWeekly,
       });
+      saved = true;
       onSaved();
     } catch (e) {
       setErr((e as Error).message);
@@ -349,11 +363,32 @@ function AccountDetail({
     } finally {
       setBusy(false);
     }
+    if (!saved || !languageChanged) return;
+    const reloadNow = await confirm({
+      title: t('settings.language.reload.title'),
+      message: t('settings.language.reload.message'),
+      confirmText: t('settings.language.reload.confirm'),
+      cancelText: t('settings.language.reload.later'),
+    });
+    if (reloadNow) window.location.reload();
+    else toast(t('settings.language.reload.toast'));
   };
 
   return (
     <div style={{ maxWidth: 720 }}>
-      <button className="back-btn" onClick={onBack}>{t('settings.back')}</button>
+      {/* "View member profile" leaves this record and so belongs with back,
+          not inside the record's own card. */}
+      <BackBar
+        onBack={onBack}
+        actions={
+          account.member && (
+            <button className="btn ghost" onClick={() => router.push(`/members/${account.member!.id}`)}>
+              {t('settings.viewMemberProfile')}
+              <ChevronRightIcon size={16} />
+            </button>
+          )
+        }
+      />
       {err && <ErrorBanner message={err} />}
 
       <div className="card">
@@ -367,26 +402,20 @@ function AccountDetail({
             </>
           }
           sub={t('settings.linkedTo', { email: account.email })}
-          actions={
-            account.member && (
-              <button className="btn ghost" onClick={() => router.push(`/members/${account.member!.id}`)}>
-                {t('settings.viewMemberProfile')}
-              </button>
-            )
-          }
         />
 
         <div className="grid g2" style={{ marginTop: 18 }}>
           <Field label={t('settings.emailFromMember')}>
-            <input value={email} readOnly disabled style={{ color: 'var(--muted)' }} />
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder={t('settings.noEmailPlaceholder')}
+              autoComplete="email"
+            />
           </Field>
-          <Field label={t('settings.col.accountRole')}>
-            <select value={role} onChange={(e) => setRole(e.target.value as AccountRole)}>
-              {ACCOUNT_ROLE_OPTIONS.map((ar) => (
-                <option key={ar} value={ar}>{t(accountRoleKey(ar))}</option>
-              ))}
-            </select>
-          </Field>
+          <AccountRoleField value={role} onChange={setRole} />
+          <div className="hint" style={{ gridColumn: '1 / -1' }}>{t('settings.emailHint')}</div>
           <Field label={t('hall.label')}>
             <HallSelect value={hall} onChange={setHall} allowAll allLabel={t('hall.unlimited')} />
           </Field>
@@ -466,6 +495,10 @@ function AddAccountModal({
   const toast = useToast();
   const takenMembers = new Set(existing.map((a) => a.member_id));
   const [memberId, setMemberId] = useState('');
+  // The login email is the member's own email. It is editable here so a member
+  // who has none can still be given an account in one go — it is written onto
+  // the member below, and the account derives it from there server-side.
+  const [email, setEmail] = useState('');
   const [role, setRole] = useState<AccountRole>(AccountRole.Coworker);
   // null = full access (every hall).
   const [hall, setHall] = useState<string | null>(null);
@@ -474,17 +507,20 @@ function AddAccountModal({
   const [err, setErr] = useState<string | null>(null);
 
   const selectedMember = members.find((m) => m.id === memberId) ?? null;
-  // The login email always follows the member's own profile — never a
-  // separately typed value — so the two can never drift apart.
-  const email = selectedMember?.email ?? '';
+
+  const pickMember = (id: string) => {
+    setMemberId(id);
+    setEmail(members.find((m) => m.id === id)?.email ?? '');
+  };
 
   const save = async () => {
     if (!memberId) {
       setErr(t('settings.err.member'));
       return;
     }
-    if (!email) {
-      setErr(t('settings.noEmailWarning'));
+    const nextEmail = email.trim().toLowerCase();
+    if (!nextEmail) {
+      setErr(t('settings.err.email'));
       return;
     }
     if (password.length < 8) {
@@ -494,9 +530,13 @@ function AddAccountModal({
     setSaving(true);
     setErr(null);
     try {
+      // Member first — the account's login email is read back off the member
+      // when it is created, so this is what unblocks a member with no email.
+      if (nextEmail !== (selectedMember?.email ?? '').toLowerCase()) {
+        await api.patch(`/members/${memberId}`, { email: nextEmail });
+      }
       await api.post('/accounts', {
         member_id: memberId,
-        email,
         account_role: role,
         hall_id: hall,
         password,
@@ -517,7 +557,7 @@ function AddAccountModal({
         {t('settings.new.intro')}
       </p>
       <Field label={t('settings.linkMember')}>
-        <select value={memberId} onChange={(e) => setMemberId(e.target.value)}>
+        <select value={memberId} onChange={(e) => pickMember(e.target.value)}>
           <option value="">{t('settings.chooseMember')}</option>
           {members
             .filter((m) => !takenMembers.has(m.id))
@@ -530,28 +570,26 @@ function AddAccountModal({
       </Field>
       <div className="form-row">
         <Field label={t('settings.emailFromMember')}>
-          <input value={email} readOnly disabled placeholder={t('settings.noEmailPlaceholder')} style={{ color: 'var(--muted)' }} />
+          <input
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder={t('settings.noEmailPlaceholder')}
+            autoComplete="email"
+          />
         </Field>
-        <Field label={t('settings.col.accountRole')}>
-          <select value={role} onChange={(e) => setRole(e.target.value as AccountRole)}>
-            {ACCOUNT_ROLE_OPTIONS.map((ar) => (
-              <option key={ar} value={ar}>{t(accountRoleKey(ar))}</option>
-            ))}
-          </select>
-        </Field>
+        <AccountRoleField value={role} onChange={setRole} />
       </div>
+      <div className="hint" style={{ marginBottom: 14 }}>{t('settings.emailHint')}</div>
       <Field label={t('hall.label')}>
         <HallSelect value={hall} onChange={setHall} allowAll allLabel={t('hall.unlimited')} />
       </Field>
-      {memberId && !email && (
-        <div className="hint" style={{ marginBottom: 14 }}>{t('settings.noEmailWarning')}</div>
-      )}
       <Field label={t('settings.initialPassword')}>
         <PasswordInput value={password} onChange={setPassword} placeholder={t('settings.initialPasswordHint')} autoComplete="new-password" />
       </Field>
       <div className="modal-actions">
         <button className="btn ghost" onClick={onClose}>{t('common.cancel')}</button>
-        <button className="btn" onClick={save} disabled={saving || !memberId || !email}>{saving ? t('common.saving') : t('settings.create')}</button>
+        <button className="btn" onClick={save} disabled={saving || !memberId || !email.trim()}>{saving ? t('common.saving') : t('settings.create')}</button>
       </div>
     </Modal>
   );

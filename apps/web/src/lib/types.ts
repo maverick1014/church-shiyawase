@@ -7,6 +7,7 @@ import {
   EventType,
   Gender,
   GroupPosition,
+  Language,
   MemberStatus,
   PairStatus,
   Weekday,
@@ -240,6 +241,28 @@ export interface AccountRow {
     group_position: GroupPosition | null;
   };
   hall?: { id: string; name: string } | null;
+}
+
+/**
+ * The signed-in account's own record — `GET`/`PATCH /auth/me/profile`.
+ *
+ * Same account columns as `AccountRow`, but carrying the FULL linked member so
+ * the profile page can show and edit the member fields inline. The permission
+ * role, congregation and status are here to be displayed, never to be sent
+ * back: the server refuses them on this path (rule G2).
+ */
+export interface SelfProfile {
+  id: string;
+  member_id: string | null;
+  email: string;
+  account_role: AccountRole;
+  /** null = 全堂权限. */
+  hall_id: string | null;
+  status: AccountStatus;
+  language: Language;
+  last_sign_in_at: string | null;
+  hall?: { id: string; name: string } | null;
+  member: MemberRow | null;
 }
 
 export interface OverviewRow {

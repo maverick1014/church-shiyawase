@@ -316,31 +316,20 @@ export function pairStatusClass(status: string): string {
  * Accounts (用户管理)
  * ---------------------------------------------------------------------- */
 
+/** The bare role name — badges, table cells and sort keys. */
 export function accountRoleKey(role: AccountRole | string): MessageKey {
   return `accountRole.${role}` as MessageKey;
 }
 
-/** What each permission role can do — shown in 用户管理 for clarity. */
-export const ACCOUNT_ROLE_PERMISSION_KEYS: Record<AccountRole, MessageKey[]> = {
-  [AccountRole.SuperAdmin]: [
-    'accountRole.perm.super_admin.1',
-    'accountRole.perm.super_admin.2',
-    'accountRole.perm.super_admin.3',
-    'accountRole.perm.super_admin.4',
-  ],
-  [AccountRole.Admin]: [
-    'accountRole.perm.admin.1',
-    'accountRole.perm.admin.2',
-    'accountRole.perm.admin.3',
-  ],
-  [AccountRole.Coworker]: [
-    'accountRole.perm.coworker.1',
-    'accountRole.perm.coworker.2',
-    'accountRole.perm.coworker.3',
-    'accountRole.perm.coworker.4',
-  ],
-  [AccountRole.ReadOnly]: ['accountRole.perm.readonly.1', 'accountRole.perm.readonly.2'],
-};
+/**
+ * The role name plus a one-line summary of what it may do — for the 权限角色
+ * `<option>`s only, so the meaning is on screen at the moment the role is
+ * picked. Deliberately a *separate* key from `accountRoleKey`: reusing that one
+ * would grow every role badge into a sentence.
+ */
+export function accountRoleOptionKey(role: AccountRole | string): MessageKey {
+  return `accountRole.${role}.option` as MessageKey;
+}
 
 export const ACCOUNT_ROLE_OPTIONS: AccountRole[] = [
   AccountRole.SuperAdmin,
