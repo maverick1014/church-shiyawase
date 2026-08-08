@@ -27,6 +27,7 @@ import {
   eventTypeKey,
   formatDate,
   formatMeetingTime,
+  weekdayIndex,
   weekdayKey,
   WEEKDAY_OPTIONS,
 } from '@/lib/labels';
@@ -36,16 +37,13 @@ import { EventType, Weekday } from '@tog/shared';
 
 /** The next date this rule will land on, for the "next" column. */
 function nextOccurrence(weekday: Weekday, time: string): Date {
-  const WEEKDAY_INDEX: Record<string, number> = {
-    sunday: 0, monday: 1, tuesday: 2, wednesday: 3, thursday: 4, friday: 5, saturday: 6,
-  };
   // All of this is Malaysia time: which day it is now, which weekday that is,
   // and what the rule's start_time means. Using the runtime's zone put the
   // Worker (UTC) a day out for anything scheduled before 08:00.
   const now = new Date();
   const p = churchParts(now);
   const todayIdx = churchDayOfWeek(now);
-  const target = WEEKDAY_INDEX[weekday] ?? 0;
+  const target = weekdayIndex(weekday);
   const [h, m] = time.split(':').map(Number);
   let day = p.day + ((target - todayIdx + 7) % 7);
   let at = churchInstant(p.year, p.month, day, h || 0, m || 0);

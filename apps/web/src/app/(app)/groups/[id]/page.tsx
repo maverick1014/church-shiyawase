@@ -16,6 +16,7 @@ import {
   roleDot,
   roleTagStyle,
   positionKey,
+  weekdayIndex,
   weekdayKey,
   WEEKDAY_OPTIONS,
 } from '@/lib/labels';
@@ -276,7 +277,7 @@ function GroupPanel({
 
       {/* Roll-call first: once a group is set up, marking attendance is what
           leaders open this page for. Profile + roster follow below. */}
-      <WeeklyAttendance groupId={group.id} />
+      <WeeklyAttendance groupId={group.id} meetingDay={group.meeting_day} />
 
       <div className="grid mt-16" style={{ gridTemplateColumns: '360px 1fr', gap: 16, alignItems: 'start' }} data-glayout>
         {/* Left — group info + leadership trio */}
@@ -416,27 +417,47 @@ function GroupPanel({
   );
 }
 
-/** The Sundays of a given month — the fixed weeks for that year/month combo. */
-function weeksOfMonth(year: number, month1to12: number) {
-  const out: { no: number; date: string; day: number }[] = [];
+/**
+ * The columns of one month's sheet: the dates this group meets on, plus every
+ * date it has already been rolled on.
+ *
+ * Both halves matter. The generated half followed Sunday no matter what day the
+ * group actually met, so a Tuesday group was rolled against Sundays. The
+ * recorded half is what keeps a month that already has ticks from moving when
+ * someone later changes 聚会星期 — the meetings that happened are facts, and a
+ * new meeting day only decides where the *empty* columns fall.
+ */
+function weeksOfMonth(
+  year: number,
+  month1to12: number,
+  weekday: number,
+  recorded: string[] = [],
+): { no: number; date: string; day: number }[] {
+  const dates = new Set<string>();
   // Pure calendar arithmetic in UTC — these are date labels, not instants, so
   // they must not depend on the runtime's zone the way the rest of the app's
   // date handling no longer does (lib/time.ts).
   const d = new Date(Date.UTC(year, month1to12 - 1, 1));
-  while (d.getUTCDay() !== 0) d.setUTCDate(d.getUTCDate() + 1); // first Sunday
-  let n = 1;
+  while (d.getUTCDay() !== weekday) d.setUTCDate(d.getUTCDate() + 1);
   while (d.getUTCMonth() === month1to12 - 1) {
-    const date = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(
-      d.getUTCDate(),
-    ).padStart(2, '0')}`;
-    out.push({ no: n, date, day: d.getUTCDate() });
+    dates.add(d.toISOString().slice(0, 10));
     d.setUTCDate(d.getUTCDate() + 7);
-    n++;
   }
-  return out;
+  const prefix = `${year}-${String(month1to12).padStart(2, '0')}-`;
+  for (const r of recorded) if (r.startsWith(prefix)) dates.add(r);
+
+  return [...dates]
+    .sort()
+    .map((date, i) => ({ no: i + 1, date, day: Number(date.slice(8, 10)) }));
 }
 
-function WeeklyAttendance({ groupId }: { groupId: string }) {
+function WeeklyAttendance({
+  groupId,
+  meetingDay,
+}: {
+  groupId: string;
+  meetingDay: Weekday | null;
+}) {
   const t = useT();
   const lang = useLang();
   const toast = useToast();
@@ -451,8 +472,19 @@ function WeeklyAttendance({ groupId }: { groupId: string }) {
   const [year, setYear] = useState(nowParts.year);
   const [month, setMonth] = useState(nowParts.month);
 
-  // Weeks are fixed by the year+month (each Sunday of that month) — not editable.
-  const weeks = useMemo(() => weeksOfMonth(year, month), [year, month]);
+  // The columns are the group's own meeting day for that month, plus any date
+  // it was already rolled on — so a month with ticks keeps its dates when
+  // someone changes 聚会星期 later, and only the empty columns move.
+  const weeks = useMemo(
+    () =>
+      weeksOfMonth(
+        year,
+        month,
+        weekdayIndex(meetingDay),
+        (data?.meetings ?? []).map((m) => m.meeting_date.slice(0, 10)),
+      ),
+    [year, month, meetingDay, data],
+  );
 
   // Year options: this year, last year, plus any year that already has records.
   const years = useMemo(() => {

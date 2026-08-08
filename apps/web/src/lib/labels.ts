@@ -114,6 +114,18 @@ export function weekdayKey(day: Weekday | string): MessageKey {
   return `weekday.${day}` as MessageKey;
 }
 
+/**
+ * The JavaScript day number (0 = Sunday) for a stored weekday.
+ *
+ * WEEKDAY_OPTIONS is already in that order, so the lookup is the list itself
+ * rather than a second table that could drift from it. An unrecognised value
+ * falls back to Sunday, which is what a group with no meeting day shows.
+ */
+export function weekdayIndex(day: Weekday | string | null): number {
+  const i = WEEKDAY_OPTIONS.indexOf(day as Weekday);
+  return i < 0 ? 0 : i;
+}
+
 /** Postgres `time` comes back as "HH:MM:SS" — trim to "HH:MM" for display. */
 export function formatMeetingTime(time: string | null): string {
   return time ? time.slice(0, 5) : '';
