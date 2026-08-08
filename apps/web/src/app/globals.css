@@ -1605,3 +1605,157 @@ td.empty-inline {
     align-items: center;
   }
 }
+
+/* ==========================================================================
+   Leadership trio (铁三角) — group detail
+   --------------------------------------------------------------------------
+   The three seats used to be absolutely-positioned chips pinned to the corners
+   of a fixed 300×150 box, with a 132px cap on the picker under each. That only
+   ever fit three CJK glyphs: "Assistant leader" / "Penolong ketua" are ~2.5×
+   the width of 副组长, so the chips grew into one another and over the
+   triangle. Sizing a box to one language's glyph count is exactly what G7a
+   forbids.
+
+   Now every seat is an ordinary grid item, so overlap is impossible by
+   construction — a long label can only make its own box taller — and the
+   arrangement is chosen from the block's OWN width with a container query
+   rather than from the viewport's. That distinction matters here: this block
+   is 320px wide inside the 360px left column of a 1280px desktop but 330px
+   wide on a 402px phone, so a viewport media query would pick the wrong
+   layout on one of the two.
+
+     narrow (under 18rem of room, e.g. a 320px phone)
+         → one row per seat: role chip, then its picker
+     otherwise
+         → the triangle: the leader centred on top, the other two below
+   The narrow form is the *default* and the triangle is opted into, so a
+   browser without container queries still lands on a layout that cannot
+   overlap.
+   ========================================================================== */
+.trio-head {
+  margin: 16px 0 6px;
+}
+/* Long Malay copy ("Trio kepimpinan · pasukan kepimpinan") wraps to a second
+   line rather than squeezing itself to one word per line. */
+.trio-head .section-label {
+  flex-wrap: wrap;
+}
+.trio-sub {
+  font-weight: 400;
+  font-size: 12px;
+}
+.trio-count {
+  font-size: 11.5px;
+}
+
+.trio {
+  container: trio / inline-size;
+  margin: 2px 0 4px;
+}
+/* Narrow: a two-column grid the seats opt into with `display: contents`, so the
+   chips share one intrinsic column and the three pickers line up under each
+   other however long the role names are. Both tracks can shrink (`minmax(0,…)`
+   / a 6rem floor well under any real card), so the block cannot overflow. */
+.trio-grid {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, max-content) minmax(6rem, 1fr);
+  align-items: center;
+  gap: 8px 10px;
+  /* A cap for the decorative block only — every seat wraps and every picker
+     shrinks far below it, so nothing can ever be clipped by it. */
+  max-width: 32rem;
+}
+.trio-node {
+  display: contents;
+}
+/* .badge is nowrap by design (it must not break inside a table cell). Here a
+   long role name has to be allowed to wrap, or it pushes the card sideways.
+   `anywhere` rather than `break-word` because .badge is an inline-flex: its
+   text is an anonymous flex item whose automatic minimum size is its longest
+   word, and only `anywhere` lets that minimum shrink. Both values break inside
+   a word only when it cannot fit a line on its own, so real labels and names
+   still break at spaces — but without this, one long unbroken token took the
+   whole page sideways (measured at +151px on a 320px screen). */
+.trio-role {
+  justify-self: start;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  font-weight: 700;
+  text-align: center;
+  max-width: 100%;
+}
+/* Geometry is untouched: the picker keeps `select.sm`, so it is still sized by
+   --control-h-sm like every other compact control (G9). `min-width: 0` is what
+   lets it shrink — a <select>'s automatic minimum size is its widest option,
+   which on a 320px phone is an overflow waiting to happen. */
+.trio-pick,
+.trio-name {
+  min-width: 0;
+}
+.trio-name {
+  overflow-wrap: break-word;
+  font-size: 13px;
+  color: var(--ink);
+}
+.trio-name.vacant {
+  color: var(--faint);
+}
+.trio-frame {
+  display: none;
+}
+
+@container trio (min-width: 18rem) {
+  /* Two equal columns and `1fr` rows — which, in an auto-height grid, size
+     every row to the tallest — pin the three seats to 25% / 50% / 75% of the
+     box in both axes, whatever their content does. That fixed frame is what
+     lets .trio-frame be drawn in plain percentages and still land correctly
+     around the seats at every width and in every language: the block grows
+     taller for a wrapped Malay label, and the triangle grows with it. The
+     breathing room between the rows is each seat's own margin rather than a
+     grid gap, precisely so those percentages stay put. */
+  .trio-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-auto-rows: 1fr;
+    gap: 0;
+    justify-items: center;
+    margin-inline: auto;
+  }
+  .trio-node {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    gap: 5px;
+    width: 100%;
+    /* One column wide, and never so far apart that the trio stops reading as a
+       group on a large screen. Both are maxima — content decides the rest. */
+    max-width: 15rem;
+    margin: 13px 0;
+    /* Horizontal only — the vertical rhythm (and so the 25% / 75% row centres)
+       is the margin's job. Keeps the two base pickers from touching. */
+    padding: 0 8px;
+    position: relative;
+  }
+  .trio-apex {
+    grid-column: 1 / -1;
+    /* 50% of the grid is exactly one column, so the leader's picker is the
+       same width as the two under it and all three line up. */
+    max-width: min(50%, 15rem);
+  }
+  .trio-pick,
+  .trio-name {
+    width: 100%;
+  }
+  .trio-pick {
+    text-align: center;
+  }
+  .trio-frame {
+    display: block;
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+  }
+}
