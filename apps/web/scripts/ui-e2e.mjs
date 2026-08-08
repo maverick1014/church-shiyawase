@@ -356,19 +356,19 @@ async function main() {
     await page.locator('button:visible:has-text("New account")').first().waitFor({ timeout: 20000 });
     const settingsBody = await page.locator('body').innerText();
     check('the user list loads (not the login page)', settingsBody.includes('New account'));
-    // Permission roles now live behind an info icon rather than an always-open card.
-    await page.locator('button[aria-label="Permission roles"]').first().click();
-    await w(300);
-    check('the info icon expands the permission matrix', (await page.locator('.info-pop-body').count()) > 0);
-    // Unpin AND move the pointer away — the popover also stays open on hover,
-    // and it overlays the top of the list underneath it.
-    await page.keyboard.press('Escape');
-    await page.mouse.move(0, 0);
-    await w(300);
     // The account list is .mtile tiles at this (mobile) viewport, like the groups list.
     await page.locator('.mtile').first().click();
     await page.locator('button:has-text("Save account settings")').waitFor({ timeout: 10000 });
     check('an account detail page opens', true);
+    // What each permission role may do used to live in an info popover at the
+    // top of the page — a legend you had to read somewhere else and remember
+    // while picking from the dropdown. It is spelled out on the options now, so
+    // the answer is where the decision is made.
+    const roleOptions = await page.locator('select option').allInnerTexts();
+    check('the permission-role options say what each role may do',
+      roleOptions.some((o) => o.includes('Super admin —'))
+        && roleOptions.some((o) => o.includes('Read-only —')),
+      roleOptions.join(' | ').slice(0, 160));
     // The login email is editable here now: it is stored on the linked member
     // and mirrored onto the account, which is what lets a member with no email
     // be given a login without a detour to the member page.
