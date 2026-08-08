@@ -734,7 +734,10 @@ async function main() {
       (await page.locator('.sidebar a.nav-user').getAttribute('href')) === '/profile');
     await page.locator('.hamburger').click();
     await page.locator('.sidebar a.nav-user').click();
-    await page.locator('h1:has-text("My profile")').waitFor({ timeout: 20000 });
+    // The <h1> is page chrome and goes up before the fetch resolves, so waiting
+    // on it and reading straight away races the skeleton — which has no text at
+    // all. Wait for something only the loaded page renders.
+    await page.locator('button:has-text("Edit my details")').first().waitFor({ timeout: 20000 });
     const profileBody = await page.locator('.content').innerText();
     check('the profile page shows my own account facts',
       profileBody.includes('Permission role') && profileBody.includes('Congregation'));
