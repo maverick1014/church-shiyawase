@@ -204,13 +204,19 @@ button {
   color: #fff;
 }
 
+/* The account card at the foot of the sidebar. The rule above it separates it
+   from the navigation, because it is about who is signed in rather than where
+   to go. */
+.nav-user-card {
+  margin-top: 10px;
+  padding-bottom: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+}
 .nav-user {
   display: flex;
   align-items: center;
   gap: 10px;
   padding: 10px 12px;
-  margin-top: 10px;
-  border-top: 1px solid rgba(255, 255, 255, 0.12);
   cursor: pointer;
 }
 .nav-user:hover {
@@ -228,9 +234,24 @@ button {
   font-size: 11px;
   font-weight: 400;
 }
-/* The account block used to toggle a .nav-user-menu popover holding "change my
-   password" and "sign out". It is a plain link to /profile now, with sign-out
-   as its own .nav-link directly beneath it, so that popover is gone. */
+/* Sign-out belongs to the card, not to the navigation: small, no icon, and
+   indented to sit under the name (12px card padding + 30px avatar + 10px gap),
+   so it reads as a line of this account's block rather than as one more place
+   to go. It used to be a full nav row, which gave it the weight of a
+   destination. Before that it hid inside a popover the card toggled. */
+.nav-signout {
+  display: block;
+  margin-left: 52px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  font-size: 11px;
+  color: var(--crit);
+  cursor: pointer;
+}
+.nav-signout:hover {
+  text-decoration: underline;
+}
 
 .main {
   flex: 1;

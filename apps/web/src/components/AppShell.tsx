@@ -285,7 +285,7 @@ function NavUser({ me }: { me: Me }) {
   };
 
   return (
-    <div>
+    <div className="nav-user-card">
       <Link href="/profile" className="nav-user" title={t('nav.myProfile')}>
         <div className="avatar">{initialOf(me.name)}</div>
         <div className="who">
@@ -293,15 +293,11 @@ function NavUser({ me }: { me: Me }) {
           <small>{t(accountRoleKey(me.role))} · {t('nav.myProfile')}</small>
         </div>
       </Link>
-      {/* Same nav-item geometry as every other row in the sidebar; only the
-          colour differs, and it comes from the crit token (rule G4). */}
-      <button
-        className="nav-link"
-        onClick={logout}
-        style={{ color: 'var(--crit)', background: 'transparent', border: 'none', width: '100%', textAlign: 'left' }}
-      >
-        <span className="ico">↩</span> {t('nav.logout')}
-      </button>
+      {/* Inside the card and under the name, small and without an icon: the
+          rows above are places in the app and carry icons to stay scannable,
+          while this is the one thing you do to the account this card is
+          showing. Giving it their weight made it compete with them. */}
+      <button className="nav-signout" onClick={logout}>{t('nav.logout')}</button>
     </div>
   );
 }
