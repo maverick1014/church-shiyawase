@@ -646,17 +646,25 @@ async function main() {
       const groupHallId = await someHallId();
       await tabs.nth(1).click(); // 会前
       await w(900);
-      const sundayRow = page.locator('tr', { has: page.locator(`td:has-text("${fxGroup.member.name}")`) });
+      // Scope to the roll-call card: the roster table further down the page
+      // lists the same person, so an unscoped row locator matches twice and the
+      // count assertion below is measuring the wrong thing.
+      const sheetCard = page.locator('.card', { has: page.locator('.seg.tabs') });
+      const sundayRow = sheetCard.locator('tr', { has: page.locator(`td:has-text("${fxGroup.member.name}")`) });
       await sundayRow.first().waitFor({ timeout: 20000 });
       check('the 会前 tab lists this group’s members against the Sunday sheet',
-        (await sundayRow.count()) === 1);
+        (await sundayRow.count()) === 1, `${await sundayRow.count()} row(s)`);
       const sundayTick = sundayRow.locator('input[type=checkbox]').first();
-      await sundayTick.check();
+      // click, not check(): the tick is optimistic and the row re-renders from
+      // the server, so the checkbox's own state is not the fact worth
+      // asserting — the row in the congregation's sheet is, and that is what
+      // the next check reads back through the API.
+      await sundayTick.click();
       await w(1500);
       const gTicked = await sundayCellsOf(groupHallId, fxGroup.member.id);
       check('ticking 会前 here writes the congregation’s Sunday sheet',
         Object.values(gTicked).some((c) => c.pre_service), JSON.stringify(gTicked));
-      await sundayTick.uncheck();
+      await sundayTick.click();
       await w(1500);
       const gCleared = await sundayCellsOf(groupHallId, fxGroup.member.id);
       check('unticking it leaves no row behind', Object.keys(gCleared).length === 0, JSON.stringify(gCleared));
