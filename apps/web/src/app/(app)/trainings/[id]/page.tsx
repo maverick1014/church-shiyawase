@@ -288,7 +288,7 @@ export default function TrainingDetailPage() {
             {t.enrollments.map((e) => {
               const att = attendanceOf(e.member_id);
               return (
-              <div key={e.id} className="flex items-center gap-10" style={{ padding: '9px 0', borderBottom: '1px solid var(--border)' }}>
+              <div key={e.id} className="enrol-row flex items-center gap-10" style={{ padding: '9px 0', borderBottom: '1px solid var(--border)' }}>
                 <div className="grow">
                   <strong style={{ fontSize: 13 }}>{e.member?.full_name ?? '—'}</strong>
                   <div className="muted" style={{ fontSize: 11.5 }}>

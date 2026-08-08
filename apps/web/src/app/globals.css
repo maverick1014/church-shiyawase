@@ -813,6 +813,24 @@ th.sortable:hover {
   }
 }
 
+/* The enrolment row carries the most controls in the app: name, role, a
+   progress bar, a status badge and up to two buttons. On a phone they cannot
+   share one line — squeezing the name column breaks a Chinese name one
+   character per line ("曾 / 勇 / 勒"), because CJK has no word boundaries to
+   wrap on. So give the identity its own full-width line and let the bar and
+   the buttons follow underneath. */
+@media (max-width: 640px) {
+  .enrol-row {
+    flex-wrap: wrap;
+  }
+  .enrol-row > :first-child {
+    flex: 1 1 100%;
+  }
+  .enrol-row .row-actions {
+    flex: 1 1 auto;
+  }
+}
+
 /* Grid and flex children default to min-width:auto, so one wide child does not
    shrink — it widens its track and pushes the whole page into a sideways
    scroll. Nothing in this app wants that: wide content scrolls inside its own
