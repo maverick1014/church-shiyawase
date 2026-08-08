@@ -445,6 +445,12 @@ export const en = {
   'settings.resetHint': 'Only a super admin may reset another account’s password directly; the old one is not needed.',
   'settings.preferences': 'Preferences',
   'settings.language': 'Interface language',
+  'settings.language.reload.title': 'Reload to apply the new language',
+  'settings.language.reload.message':
+    'The interface language was changed. The page has to reload before everything reads in the new language.',
+  'settings.language.reload.confirm': 'Reload now',
+  'settings.language.reload.later': 'Later',
+  'settings.language.reload.toast': 'The new language applies the next time this page loads',
   'settings.deleteAccount': 'Delete account',
   'settings.deleteAccountSub': 'Removes this login · the member profile is kept',
   'settings.delete.title': 'Delete login account',

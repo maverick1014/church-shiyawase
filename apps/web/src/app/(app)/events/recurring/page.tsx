@@ -7,14 +7,13 @@ import { useSortableRows } from '@/lib/sort';
 import { api } from '@/lib/api';
 import { usePageChrome, useMe, useHallScope } from '@/components/AppShell';
 import {
-  BackButton,
+  BackBar,
   ChevronRightIcon,
   ErrorBanner,
   Field,
   HallSelect,
   Loading,
   Modal,
-  PageBar,
   SortTh,
   useConfirm,
   useToast,
@@ -133,15 +132,18 @@ export default function RecurringEventsPage() {
 
   return (
     <>
-      <BackButton onClick={() => router.push('/events')} />
+      {/* Back and this page's one action share a row — the page has no filters,
+          so a second bar below back was an empty row's worth of height. */}
+      <BackBar
+        onBack={() => router.push('/events')}
+        actions={
+          perms.write && (
+            <button className="btn" onClick={() => setAddOpen(true)}>{t('recurring.add')}</button>
+          )
+        }
+      />
 
       <ErrorBanner message={rules.error} />
-
-      {perms.write && (
-        <PageBar
-          actions={<button className="btn" onClick={() => setAddOpen(true)}>{t('recurring.add')}</button>}
-        />
-      )}
 
       <div className="hint mb-16">{t('recurring.hint')}</div>
 

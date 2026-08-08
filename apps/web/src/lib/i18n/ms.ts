@@ -444,6 +444,12 @@ export const ms: Messages = {
   'settings.resetHint': 'Hanya super admin boleh menetapkan semula kata laluan akaun lain secara terus; kata laluan lama tidak diperlukan.',
   'settings.preferences': 'Keutamaan',
   'settings.language': 'Bahasa antara muka',
+  'settings.language.reload.title': 'Muat semula untuk menggunakan bahasa baharu',
+  'settings.language.reload.message':
+    'Bahasa antara muka telah ditukar. Halaman perlu dimuat semula sebelum semuanya dipaparkan dalam bahasa baharu.',
+  'settings.language.reload.confirm': 'Muat semula sekarang',
+  'settings.language.reload.later': 'Kemudian',
+  'settings.language.reload.toast': 'Bahasa baharu akan digunakan pada kali berikutnya halaman ini dimuat',
   'settings.deleteAccount': 'Padam akaun',
   'settings.deleteAccountSub': 'Membuang log masuk ini · profil ahli dikekalkan',
   'settings.delete.title': 'Padam akaun log masuk',

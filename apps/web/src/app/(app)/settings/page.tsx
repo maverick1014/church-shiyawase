@@ -333,6 +333,12 @@ function AccountDetail({
   const save = async () => {
     setBusy(true);
     setErr(null);
+    // The interface language is read once, when the page loads (`/auth/me`), so
+    // every string already on screen stays in the old language until the page
+    // is reloaded. Save first, then offer the reload — only when it changed, so
+    // editing any other field never throws the page away.
+    const languageChanged = language !== account.language;
+    let saved = false;
     try {
       await api.patch(`/accounts/${account.id}`, {
         account_role: role,
@@ -342,6 +348,7 @@ function AccountDetail({
         notify_discipleship: nDisc,
         notify_weekly: nWeekly,
       });
+      saved = true;
       onSaved();
     } catch (e) {
       setErr((e as Error).message);
@@ -349,6 +356,15 @@ function AccountDetail({
     } finally {
       setBusy(false);
     }
+    if (!saved || !languageChanged) return;
+    const reloadNow = await confirm({
+      title: t('settings.language.reload.title'),
+      message: t('settings.language.reload.message'),
+      confirmText: t('settings.language.reload.confirm'),
+      cancelText: t('settings.language.reload.later'),
+    });
+    if (reloadNow) window.location.reload();
+    else toast(t('settings.language.reload.toast'));
   };
 
   return (
