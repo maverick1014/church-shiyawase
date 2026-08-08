@@ -201,7 +201,6 @@ function ChurchProfileCard({
           />
         </Field>
       </div>
-      <div className="hint" style={{ marginBottom: 14 }}>{t('church.field.nameHint')}</div>
       <Field label={t('church.field.description')}>
         <textarea rows={3} value={description} onChange={(e) => setDescription(e.target.value)} />
       </Field>

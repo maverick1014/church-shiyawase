@@ -193,7 +193,12 @@ export default function SettingsPage() {
                 <div className="mtile-line">{u.email}</div>
                 <div className="mtile-line flex items-center gap-8 flex-wrap">
                   <span className={`badge ${accountRoleClass(u.account_role)}`}>{t(accountRoleKey(u.account_role))}</span>
-                  <span className={`badge ${accountStatusClass(u.status)}`}>{t(accountStatusKey(u.status))}</span>
+                  {/* Enabled is the normal state, so saying it on every tile is
+                      noise on a phone where room is the scarce thing. Only the
+                      exception is worth a badge. */}
+                  {u.status !== AccountStatus.Active && (
+                    <span className={`badge ${accountStatusClass(u.status)}`}>{t(accountStatusKey(u.status))}</span>
+                  )}
                   <span>{u.last_sign_in_at ? formatDateTime(u.last_sign_in_at) : t('settings.neverSignedIn')}</span>
                 </div>
               </div>
@@ -553,9 +558,6 @@ function AddAccountModal({
   return (
     <Modal title={t('settings.new.title')} onClose={onClose}>
       {err && <ErrorBanner message={err} />}
-      <p className="muted" style={{ margin: '0 0 14px', fontSize: 12.5, lineHeight: 1.6 }}>
-        {t('settings.new.intro')}
-      </p>
       <Field label={t('settings.linkMember')}>
         <select value={memberId} onChange={(e) => pickMember(e.target.value)}>
           <option value="">{t('settings.chooseMember')}</option>
@@ -580,7 +582,6 @@ function AddAccountModal({
         </Field>
         <AccountRoleField value={role} onChange={setRole} />
       </div>
-      <div className="hint" style={{ marginBottom: 14 }}>{t('settings.emailHint')}</div>
       <Field label={t('hall.label')}>
         <HallSelect value={hall} onChange={setHall} allowAll allLabel={t('hall.unlimited')} />
       </Field>
