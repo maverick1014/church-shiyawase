@@ -710,16 +710,18 @@ async function main() {
         const beforePick = await page.locator('.content').innerText();
         check('on 全部堂会 the sheet asks for a congregation instead of merging them',
           /congregation/i.test(beforePick), beforePick.replace(/\s+/g, ' ').slice(0, 120));
-        await page.locator('.hamburger').click();
+        // Open and close by whatever the drawer's own state says, never by
+        // assuming. Two things make a blind sequence hang here: with the drawer
+        // OPEN the scrim covers the viewport at z-index 55 while the topbar
+        // holding the hamburger sits at 5, so a second hamburger click can
+        // never land; and with the drawer CLOSED the scrim is display:none, so
+        // clicking that hangs instead. Which of the two applies after picking a
+        // congregation depends on whether the shell closed the drawer itself.
+        const drawerOpen = () => page.locator('.app-shell.nav-open').count().then((n) => n > 0);
+        if (!(await drawerOpen())) await page.locator('.hamburger').click();
         await hallSelect.selectOption(sheetHallId);
         await w(400);
-        // Close it by the scrim, NOT by the hamburger. With the drawer open the
-        // scrim covers the whole viewport at z-index 55 while the topbar that
-        // holds the hamburger sits at 5, so a second hamburger click can never
-        // land — it waits for an element that will never receive the event.
-        // (Every other module gets away with opening the drawer because it then
-        // clicks a nav link inside the sidebar, which is above the scrim.)
-        await page.locator('.scrim').click();
+        if (await drawerOpen()) await page.locator('.scrim').click();
         await w(300);
       }
       const memberCell = page.locator(`td:has-text("${fxSheetMember.name}")`);
