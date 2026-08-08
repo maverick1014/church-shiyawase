@@ -28,25 +28,29 @@ column to tick — its date is the record's own `starts_on`/`ends_on` (the same
 day twice), so there is no second place a date can be edited. The public
 self-sign-up link (`/enroll/[id]`, matching a full name) serves both.
 
-**Attendance is two different shapes, on purpose.** A Sunday is not an event:
-every Sunday simply happens, so `/events` (崇拜与祷告会) opens on a **sheet** —
-`sunday_attendance`, one row per (堂会, Sunday, member) carrying the two ticks
-a Sunday has, 会前 and 主日 (migration 0013). Its columns come from the
-calendar, so nothing creates a Sunday and a Sunday nobody marked has no rows at
-all. **A sheet is always one congregation** — each hall rolls its own call even
-on a joint week, so there is no 联合聚会 concept left and an all-congregations
-read is a 400, never a merge. The `events` table is now only for the meetings
-someone genuinely adds by hand (an occasional Wednesday prayer meeting: a name,
-a date, a hall), which keep the old 出席/请假/缺席 roll call. Nothing
-manufactures a 主日崇拜 row any more — 循环聚会 still tops the calendar up for
-weeknight rules and skips Sunday ones. A **life group's** roll-call card
-(`/groups/[id]`) switches between the three with a segmented control, default
-小组: 小组 is its own meetings, while 会前 and 主日 are that group's members read
-off **their congregation's** Sunday sheet — the same rows and the same
-`PUT /api/attendance/sundays` the services page writes, so a tick in either
-place is one fact ("只要有主日那就有会前" therefore needs no extra storage). A
-group belongs to one hall, so those tabs name that hall rather than following
-the congregation switcher.
+**Attendance is ONE sheet with two kinds of column.** A Sunday is not an event:
+every Sunday simply happens, so `/events` (崇拜与祷告会) opens on a **sheet**
+for the month — the members down the left, and across the top that month's
+Sundays followed, in date order, by every meeting someone added for it. A
+**Sunday column** carries the two ticks a Sunday has, 会前 and 主日
+(`sunday_attendance`, migration 0013); a **meeting column** is one hand-added
+occasion (a 31 August night prayer meeting) with the single tick 到场, stored in
+`event_attendance` where a meeting's attendance already lived. Nothing creates
+a Sunday, a Sunday nobody marked has no rows at all, and unticking deletes
+rather than storing falses — in either table.
+
+The page knows about neither table: `GET /api/attendance/sheet` hands each
+column an opaque `key` (`sunday:YYYY-MM-DD` / `meeting:<id>`) and
+`PUT /api/attendance/sheet` quotes it back, so the server decides where a tick
+lands. Which columns a month has, and in what order, is a pure function in
+`lib/sheet.ts` (unit-tested under a non-Malaysia `TZ`). On 全部堂会 the sheet
+simply lists **every** member — the old "pick a congregation" 400 is gone —
+while a tick is still filed under the member's **own** hall, so what was
+recorded never loses its congregation. **循环聚会 is gone entirely** (migration
+0015): it only ever manufactured rows for dates the calendar already knew, and
+the sheet supplies its own columns. A **life group's** roll-call card
+(`/groups/[id]`) is the group's OWN meetings and nothing else — a member's
+Sunday is one fact, taken once, on the services sheet.
 
 Run before every push: `npm run --workspace @tog/web -s build` (or in
 `apps/web`: `npx tsc --noEmit && npm test && npm run build`). Deploys are gated
@@ -58,9 +62,10 @@ Testing layers (in `apps/web`):
   matrix, full CRUD, public form).
 - `npm run test:ui-e2e` — **browser UI end-to-end**: drives the real site in
   Chromium and asserts each interaction's expected outcome (login, search,
-  filters, modals, weekly attendance, a 主日点名 tick→untick round-trip,
-  discipleship day-notes, the life-group card's 小组/会前/主日 tabs writing the
-  congregation's Sunday sheet, a 培训&活动 course/activity filter plus an
+  filters, modals, weekly attendance, a 主日 tick→untick round-trip on the
+  roll-call sheet and the same for a hand-added meeting's own column,
+  discipleship day-notes, the life-group card's own meetings sheet, a
+  培训&活动 course/activity filter plus an
   activity's single-column roll call, an interface-language round-trip, a
   守望模块 create→edit→delete cycle, an add-on module off→on cycle on 教会设置,
   a create→delete member write-cycle).
@@ -99,7 +104,7 @@ These are hard requirements for this codebase. A change that breaks one is a
 review finding, not a preference. Cite the rule number in the finding.
 
 ### G1 — CRUD completeness on every management page
-Every entity page (成员、小组、额外聚会、培训&活动（课程与活动两种形态）、四十天守望模块与配对、账户) must offer
+Every entity page (成员、小组、聚会（点名表上的一列）、培训&活动（课程与活动两种形态）、四十天守望模块与配对、账户) must offer
 the full set its users need: **Create, Read, Update, Delete**. If the API supports an
 operation, the UI must expose it (or the omission must be a deliberate,
 documented decision). A page that can only create + list is incomplete.
@@ -137,12 +142,12 @@ whether the **module** owning the path is enabled for this church.
   `hallFilter = hallScope ?? q.get('hall_id')` — the **session's own hall always
   wins**, so a hall-pinned account can never widen its view by sending a
   different `hall_id`; that precedence is the security property. Every
-  hall-owned list GET (成员/小组/聚会/循环聚会/培训/守望配对/主日点名 + 牧养总览)
-  reads `hallFilter`, so switching congregation moves the whole app — dashboard
-  KPIs included — not just some pages.
-  **主日点名 is the one read that refuses to answer "all congregations"**: a
-  sheet is always exactly one hall, so with no narrowing (and more than one
-  hall) it is a 400 rather than three member lists merged into one grid.
+  hall-owned list GET (成员/小组/聚会/培训/守望配对/聚会点名 + 牧养总览) reads
+  `hallFilter`, so switching congregation moves the whole app — dashboard KPIs
+  included — not just some pages. With no narrowing every one of them answers
+  for all congregations, 聚会点名 included: it lists every member, and a tick is
+  filed under **that member's own hall**, which is read server-side rather than
+  taken from the request.
 - **Server (authoritative):** every non-public API path goes through the gate in
   `route.ts`. Writes are denied for `readonly`; account management
   (`/accounts*`, both **read and write**) is `super_admin` only; church
@@ -169,9 +174,8 @@ like 移除/清空/重置 that discards data) MUST go through the shared
 ### G4 — One mechanism, not per-page reimplementations (altitude)
 Reuse the shared primitives instead of re-rolling them per page:
 `Modal`, `Field`, `PasswordInput`, `useConfirm`, `useToast`, `RoleBadge`,
-`Avatar`, `PairProgressModal`, `MonthPicker`/`SheetTick` (the pieces the 主日
-and 小组 attendance sheets share), `Segmented` (every segmented control — the
-group card's 小组/会前/主日 tabs and the 出席/请假/缺席 picker),
+`Avatar`, `PairProgressModal`, `MonthPicker`/`SheetTick` (the pieces the 聚会
+and 小组 attendance sheets share), `Segmented` (every segmented control),
 `exportRows`/`exportMatrix` (`lib/export.ts`),
 `api` (`lib/api.ts`), and the label/style helpers in `lib/labels.ts`
 (`roleTagStyle`, `roleDot`, `memberRoleZh`, `positionZh`, status/category
@@ -220,7 +224,9 @@ All date/time work goes through `lib/time.ts` (`churchParts`,
 `churchInstant`, `startOfChurchDay`, `addChurchDays`, `churchDayOfWeek`,
 `churchDateKey`, `toChurchInput` / `fromChurchInput`, `endOfChurchDate`,
 and the calendar-label helpers `weekdayDatesOfMonth` / `sundaysOfMonth` /
-`isSundayDate` that both attendance sheets take their columns from).
+`isSundayDate` that both attendance sheets take their columns from — the
+roll-call sheet's column list and its ordering are built on them in
+`lib/sheet.ts`).
 Never call `getHours` / `setHours` / `getFullYear` / `getMonth` / `getDate` /
 `getTimezoneOffset` on a `Date` in app code — they read the *runtime's* zone,
 which is UTC inside the Worker and the viewer's own zone in the browser, so

@@ -4,7 +4,7 @@ import { useParams } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '@/lib/api';
 import { BrandLogo } from '@/components/BrandLogo';
-import { Field } from '@/components/ui';
+import { Field, Segmented } from '@/components/ui';
 import { useChurchProfile } from '@/lib/church';
 import { useT } from '@/lib/i18n';
 
@@ -142,14 +142,18 @@ export default function DailyFormPage() {
                 </select>
               </Field>
               <Field label={t('form.completedLabel')}>
-                <div className="seg block">
-                  <button className={completed ? 'on-good' : ''} onClick={() => setCompleted(true)}>
-                    {t('disc.progress.completed')}
-                  </button>
-                  <button className={!completed ? 'on-crit' : ''} onClick={() => setCompleted(false)}>
-                    {t('form.notCompleted')}
-                  </button>
-                </div>
+                {/* The shared segmented control (rule G4) — this used to be the
+                    same row of buttons hand-rolled with its class names. */}
+                <Segmented<'yes' | 'no'>
+                  value={completed ? 'yes' : 'no'}
+                  onChange={(v) => setCompleted(v === 'yes')}
+                  label={t('form.completedLabel')}
+                  block
+                  options={[
+                    { value: 'yes', label: t('disc.progress.completed'), tone: 'on-good' },
+                    { value: 'no', label: t('form.notCompleted'), tone: 'on-crit' },
+                  ]}
+                />
               </Field>
               <Field label={t('form.notes')}>
                 <textarea rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder={t('form.notesPlaceholder')} />

@@ -249,8 +249,8 @@ async function main() {
    * rejection or a CI timeout therefore skips BOTH the per-module cleanup and
    * the sweep at the end of main(), and the fixtures stay in the church's live
    * database — which is not hypothetical: one crashed run left a group, an
-   * event, a recurring rule, a course, a pair and four members behind, and
-   * they had to be deleted by hand.
+   * event, a course, a pair and four members behind, and they had to be
+   * deleted by hand.
    *
    * So sweep on the way out as well. Registered here, right after `disposable`,
    * because from this point on the script can create rows.
@@ -310,11 +310,13 @@ async function main() {
   }).format(new Date());
   const [SHEET_YEAR, SHEET_MONTH] = KL_TODAY.split('-');
 
-  /** One member's cells on a congregation's Sunday sheet, straight from the API. */
-  const sundayCellsOf = async (hallId, memberId) => {
-    const sheet = await apiGet(
-      `/attendance/sundays?hall_id=${hallId}&year=${SHEET_YEAR}&month=${Number(SHEET_MONTH)}`,
-    );
+  /**
+   * One member's cells on this month's roll-call sheet, straight from the API —
+   * keyed by column (`sunday:YYYY-MM-DD` / `meeting:<id>`), which is what the
+   * page ticks and therefore what a tick has to show up as.
+   */
+  const sheetCellsOf = async (memberId) => {
+    const sheet = await apiGet(`/attendance/sheet?year=${SHEET_YEAR}&month=${Number(SHEET_MONTH)}`);
     return sheet.rows.find((r) => r.member?.id === memberId)?.cells ?? {};
   };
 
@@ -362,8 +364,9 @@ async function main() {
 
   /**
    * A throwaway hand-added meeting, starting now so it lands in the month the
-   * 崇拜与祷告会 page opens on. Sundays are no longer events at all (they are
-   * the sheet), so this is a plain `meeting` — the shape someone actually adds.
+   * 崇拜与祷告会 page opens on — where it is a dated COLUMN on the roll-call
+   * sheet. Sundays are no longer events at all (the calendar supplies them), so
+   * this is a plain `meeting` — the shape someone actually adds.
    */
   const makeEvent = async () => {
     const row = await apiPost('/events', {
@@ -430,29 +433,6 @@ async function main() {
   };
 
   /**
-   * A throwaway 循环聚会 rule — PAUSED on purpose. An active rule tops up the
-   * events calendar on every GET /events, and the occurrences it generates
-   * deliberately outlive it (they carry attendance), so an active fixture could
-   * not be cleaned up afterwards. Paused, it still renders its own row on
-   * /events/recurring and writes nothing else.
-   */
-  const makeRecurringRule = async () => {
-    const row = await apiPost('/recurring-events', {
-      title: fixtureName('RECURRING'),
-      event_type: 'prayer',
-      weekday: 'wednesday',
-      start_time: '20:00:00',
-      hall_id: await someHallId(),
-      active: false,
-    });
-    return {
-      id: row.id,
-      name: row.title,
-      remove: disposable(`recurring rule ${row.title}`, `/recurring-events/${row.id}`),
-    };
-  };
-
-  /**
    * A throwaway 守望 pair. The program itself is configuration and survived the
    * wipe, so it is read rather than created; the pair is built from two
    * brand-new members, which also satisfies the unique program_id+trainee_id
@@ -481,19 +461,16 @@ async function main() {
   const makeSample = async () => {
     const group = await makeRosteredGroup();
     const event = await makeEvent();
-    const recurring = await makeRecurringRule();
     const training = await makeTraining();
     const pair = await makePair();
     return {
       group,
       event,
-      recurring,
       training,
       pair,
       remove: async () => {
         await pair.remove();
         await training.remove();
-        await recurring.remove();
         await event.remove();
         await group.remove();
       },
@@ -629,132 +606,78 @@ async function main() {
         (await page.locator(`td:has-text("${fxGroup.member.name}")`).count()) > 0);
       await shot('04-group-detail');
 
-      // The card's own tabs: 小组 (default) / 会前 / 主日. The two Sunday tabs
-      // show THIS group's members against the congregation's own Sunday sheet
-      // — the same rows and the same PUT the services page uses, which is why
-      // a tick here and a tick there are one fact. The group names its hall
-      // itself, so this works while the shell is still on 全部堂会.
-      const tabs = page.locator('.seg.tabs button');
-      check('the roll-call card offers 小组 / 会前 / 主日 tabs',
-        (await tabs.count()) === 3, (await tabs.allInnerTexts()).join(' | '));
-      check('小组 is the tab it opens on',
-        (await tabs.first().getAttribute('aria-pressed')) === 'true');
-      // The tabs are the CARD's own filters — the page bar belongs to the page.
-      check('the tabs are inside the card, not in the page bar',
-        (await page.locator('.page-bar .seg').count()) === 0);
+      // The group's roll call is the group's OWN meetings and nothing else:
+      // the 小组 / 会前 / 主日 tabs are gone, because a member's Sunday is one
+      // fact taken once, on 崇拜与祷告会. So there must be no segmented control
+      // anywhere on this page — neither in the card nor in the page bar.
+      check('the roll-call card offers no roll-call tabs any more',
+        (await page.locator('.seg').count()) === 0, `${await page.locator('.seg').count()} segmented control(s)`);
 
-      const groupHallId = await someHallId();
-      await tabs.nth(1).click(); // 会前
-      await w(900);
-      // Scope to the roll-call card: the roster table further down the page
-      // lists the same person, so an unscoped row locator matches twice and the
-      // count assertion below is measuring the wrong thing.
-      const sheetCard = page.locator('.card', { has: page.locator('.seg.tabs') });
-      const sundayRow = sheetCard.locator('tr', { has: page.locator(`td:has-text("${fxGroup.member.name}")`) });
-      await sundayRow.first().waitFor({ timeout: 20000 });
-      check('the 会前 tab lists this group’s members against the Sunday sheet',
-        (await sundayRow.count()) === 1, `${await sundayRow.count()} row(s)`);
-      const sundayTick = sundayRow.locator('input[type=checkbox]').first();
+      // Its toolbar is year · month · export, in that order — export last, the
+      // same place every other page puts it (rule G7a).
+      const sheetCard = page.locator('.card', { has: page.locator('th:has-text("Week")') });
+      const toolbar = sheetCard.locator('.flex.gap-8.mb-14').first();
+      const toolbarShape = await toolbar.evaluate((el) =>
+        [...el.children].map((c) => c.tagName.toLowerCase() + (c.getAttribute('aria-label') ? `[${c.getAttribute('aria-label')}]` : '')),
+      );
+      check('the export button is the last control in the card’s toolbar',
+        toolbarShape.length === 3 && toolbarShape[0].startsWith('select') && toolbarShape[1].startsWith('select') &&
+          toolbarShape[2].startsWith('button'),
+        toolbarShape.join(' | '));
+      check('…and it is an export button, not something else',
+        (await sheetCard.locator('button[aria-label*="Export"]').count()) === 1);
+
+      // Ticking a week writes the group's own roll call, and unticking it puts
+      // it back — the card is a sheet like every other one.
+      const groupRow = sheetCard.locator('tr', { has: page.locator(`td:has-text("${fxGroup.member.name}")`) });
+      await groupRow.first().waitFor({ timeout: 20000 });
+      check('the sheet lists this group’s member exactly once',
+        (await groupRow.count()) === 1, `${await groupRow.count()} row(s)`);
+      const weekTick = groupRow.locator('input[type=checkbox]').first();
       // click, not check(): the tick is optimistic and the row re-renders from
       // the server, so the checkbox's own state is not the fact worth
-      // asserting — the row in the congregation's sheet is, and that is what
-      // the next check reads back through the API.
-      await sundayTick.click();
+      // asserting — what the API returns is.
+      await weekTick.click();
       await w(1500);
-      const gTicked = await sundayCellsOf(groupHallId, fxGroup.member.id);
-      check('ticking 会前 here writes the congregation’s Sunday sheet',
-        Object.values(gTicked).some((c) => c.pre_service), JSON.stringify(gTicked));
-      await sundayTick.click();
+      const groupSheet = await apiGet(`/groups/${fxGroup.id}/attendance`);
+      const marked = (groupSheet.rows || [])
+        .find((r) => r.member?.id === fxGroup.member.id)?.cells
+        ?.some((c) => c.status === 'present');
+      check('ticking a week records the group’s own meeting', marked === true, JSON.stringify(groupSheet.meetings || []));
+      await weekTick.click();
       await w(1500);
-      const gCleared = await sundayCellsOf(groupHallId, fxGroup.member.id);
-      check('unticking it leaves no row behind', Object.keys(gCleared).length === 0, JSON.stringify(gCleared));
-      // …and 主日 is the same sheet's other tick, not a second sheet.
-      await tabs.nth(2).click();
-      await w(900);
-      check('the 主日 tab shows the same members', (await sundayRow.count()) === 1);
-      await tabs.first().click();
-      await w(600);
-      check('switching back to 小组 restores the group’s own columns',
-        (await page.locator('th:has-text("Week")').count()) > 0);
+      const groupAfter = await apiGet(`/groups/${fxGroup.id}/attendance`);
+      const stillMarked = (groupAfter.rows || [])
+        .find((r) => r.member?.id === fxGroup.member.id)?.cells
+        ?.some((c) => c.status === 'present');
+      check('unticking it takes the mark off again', stillMarked !== true);
     } finally {
       await fxGroup.remove();
     }
 
-    /* -- services · the Sunday sheet + hand-added meetings ----------------- */
-    // The page is a SHEET now: members down the left, the month's Sundays
-    // across the top, two ticks per Sunday (会前 / 主日). Nothing creates a
-    // Sunday — the calendar already has them — so this module needs only a
-    // member to put on the sheet, plus one hand-added meeting for the card
-    // underneath it.
+    /* -- services · one roll-call sheet ------------------------------------ */
+    // The page is ONE sheet: members down the left, and across the top the
+    // month's Sundays (two ticks each, 会前 / 主日) with every hand-added
+    // meeting sorted into place among them (one tick, 到场). Nothing creates a
+    // Sunday, so this module needs only a member to put on the sheet and one
+    // meeting to give it a meeting column.
     //
-    // A sheet is always ONE congregation, so a full-access account has to pick
-    // one first; on a phone the switcher lives in the nav drawer. That choice
-    // is client state only, so a later page load resets it — nothing to undo.
-    mod('services · sunday sheet · meetings');
+    // No congregation has to be picked any more: on 全部堂会 the sheet simply
+    // lists every member, which is what this runs as.
+    mod('services · roll-call sheet · meetings');
     const fxSheetMember = await makeMember('SUNDAY');
     const fxMeeting = await makeEvent();
-    const sheetHallId = await someHallId();
     /** That member's cells on the live sheet, straight from the API. */
-    const sheetCells = () => sundayCellsOf(sheetHallId, fxSheetMember.id);
+    const sheetCells = () => sheetCellsOf(fxSheetMember.id);
     try {
       await page.goto(`${BASE}/events`, { waitUntil: 'domcontentloaded' });
       await page.locator('.page-bar').first().waitFor({ state: 'attached', timeout: 20000 });
-      // Whether a congregation has to be picked is a property of the ACCOUNT,
-      // not of what has rendered yet — so ask the API rather than racing the
-      // switcher into the DOM.
-      const sheetHalls = await apiGet('/halls');
-      if (sheetHalls.length > 1) {
-        const hallSelect = page.locator('.sidebar .nav-hall select');
-        await hallSelect.waitFor({ state: 'attached', timeout: 20000 });
-        await w(600);
-        const beforePick = await page.locator('.content').innerText();
-        check('on 全部堂会 the sheet asks for a congregation instead of merging them',
-          /congregation/i.test(beforePick), beforePick.replace(/\s+/g, ' ').slice(0, 120));
-        // Open and close by whatever the drawer's own state says, never by
-        // assuming. Two things make a blind sequence hang here: with the drawer
-        // OPEN the scrim covers the viewport at z-index 55 while the topbar
-        // holding the hamburger sits at 5, so a second hamburger click can
-        // never land; and with the drawer CLOSED the scrim is display:none, so
-        // clicking that hangs instead. Which of the two applies after picking a
-        // congregation depends on whether the shell closed the drawer itself.
-        const drawerOpen = () => page.locator('.app-shell.nav-open').count().then((n) => n > 0);
-        // This click has timed out three times and each diagnosis was a guess,
-        // so record what is actually on screen at the moment it happens: the
-        // button's box, whether the browser agrees it is visible, and what sits
-        // at its centre point. A screenshot goes with it, because the artifact
-        // outlives the log.
-        const burger = page.locator('.hamburger');
-        const burgerBox = await burger.boundingBox().catch(() => null);
-        const onTop = burgerBox
-          ? await page.evaluate(
-              ([x, y]) => {
-                const el = document.elementFromPoint(x, y);
-                return el ? `${el.tagName.toLowerCase()}.${el.className || '(no class)'}` : 'nothing';
-              },
-              [burgerBox.x + burgerBox.width / 2, burgerBox.y + burgerBox.height / 2],
-            )
-          : 'no box';
-        check('the menu button is reachable before picking a congregation',
-          !!burgerBox && (await burger.isVisible()) && onTop.startsWith('button'),
-          `box=${JSON.stringify(burgerBox)} visible=${await burger.isVisible()} atPoint=${onTop}`);
-        await shot('05a-services-before-pick');
-        if (!(await drawerOpen())) await burger.click();
-        await hallSelect.selectOption(sheetHallId);
-        await w(400);
-        if (await drawerOpen()) {
-          // Click the scrim to the RIGHT of the drawer. The scrim is inset: 0,
-          // so its centre — which is where a plain click() aims — is x≈201 on a
-          // 402px phone, and the open sidebar is 244px wide at z-index 60. The
-          // centre of the scrim is therefore underneath the sidebar, and the
-          // click waits forever for a point that will never receive it.
-          await page.locator('.scrim').click({ position: { x: 340, y: 420 } });
-        }
-        await w(300);
-      }
+
       const memberCell = page.locator(`td:has-text("${fxSheetMember.name}")`);
       await memberCell.first().waitFor({ timeout: 20000 });
-      check('the Sunday sheet lists the congregation’s members on roll',
-        (await memberCell.count()) === 1);
+      check('on 全部堂会 the sheet lists every congregation’s members, without asking for one',
+        (await memberCell.count()) === 1 &&
+          !/choose a congregation/i.test(await page.locator('.content').innerText()));
       // One column group per Sunday, each split in two, plus the totals pair —
       // so at least five 会前 headers in any month.
       const preHeads = await page.locator('th:has-text("Pre-service")').count();
@@ -762,34 +685,55 @@ async function main() {
       check('the sheet is ticked with check boxes, like the life-group sheet',
         (await page.locator('input[type=checkbox]').count()) > 0);
 
+      // The meeting is a COLUMN on the same grid, not a second card — with one
+      // tick, because one occasion has one thing to record. Its own header and
+      // the totals row are the two "Attended" headers there should be.
+      const meetingHead = page.locator('th', { hasText: fxMeeting.name });
+      await meetingHead.first().waitFor({ timeout: 20000 });
+      check('a hand-added meeting is a dated column on the same sheet',
+        (await meetingHead.count()) === 1);
+      check('…carrying exactly one tick, not an invented 会前 as well',
+        (await page.locator('th:has-text("Attended")').count()) === 2,
+        `${await page.locator('th:has-text("Attended")').count()} Attended headers`);
+      check('the meetings no longer have a card of their own',
+        (await page.locator('.meeting-row').count()) === 0);
+
       // Tick → the cell is stored; untick → the row is GONE, not stored as two
-      // falses ("no row" already means "not recorded").
+      // falses ("no row" already means "not recorded"). Each tick names its own
+      // column in its title, which is how the meeting's cell is found among the
+      // Sundays' without counting columns.
       const sheetRow = page.locator('tr', { has: page.locator(`td:has-text("${fxSheetMember.name}")`) });
       const firstTick = sheetRow.locator('input[type=checkbox]').first();
       // click, not check(): the tick is optimistic and the row re-renders from
       // the server, so the checkbox's own state is not the fact worth
       // asserting — the row in the sheet is, and that is what the next check
-      // reads back through the API. Same reasoning as the group tabs above.
+      // reads back through the API. Same reasoning as the group sheet above.
       await firstTick.click();
       await w(1500);
       const ticked = await sheetCells();
-      check('ticking a cell records that Sunday',
-        Object.values(ticked).some((c) => c.pre_service), JSON.stringify(ticked));
+      check('ticking a Sunday cell records it under a sunday column',
+        Object.entries(ticked).some(([key, c]) => key.startsWith('sunday:') && c.pre_service),
+        JSON.stringify(ticked));
       await firstTick.click();
       await w(1500);
       const cleared = await sheetCells();
       check('unticking it leaves no row behind', Object.keys(cleared).length === 0, JSON.stringify(cleared));
 
-      // The card below: the meetings someone genuinely added this month.
-      const meetingLine = page.locator('.meeting-row', { hasText: fxMeeting.name });
-      await meetingLine.first().waitFor({ timeout: 20000 });
-      check('a hand-added meeting is listed under the sheet', (await meetingLine.count()) === 1);
-      await meetingLine.locator('button:visible:has-text("Roll call")').first().click();
-      await page.locator('.modal').waitFor({ timeout: 8000 });
-      check('roll call opens the attendance modal', true);
-      await page.locator('.modal .icon-btn, .modal button:has-text("Close")').first().click();
-      await w(300);
-      await meetingLine.locator('button:visible:has-text("Edit")').first().click();
+      const meetingTick = sheetRow.locator(`input[title*="${fxMeeting.name}"]`);
+      check('the meeting’s column is ticked in the same row', (await meetingTick.count()) === 1);
+      await meetingTick.first().click();
+      await w(1500);
+      const came = await sheetCells();
+      check('ticking the meeting writes the OTHER table, on the same grid',
+        came[`meeting:${fxMeeting.id}`]?.attended === true, JSON.stringify(came));
+      await meetingTick.first().click();
+      await w(1500);
+      const wentBack = await sheetCells();
+      check('unticking the meeting leaves no row behind either',
+        !wentBack[`meeting:${fxMeeting.id}`], JSON.stringify(wentBack));
+
+      // The meeting's own name in the header is where it is edited from.
+      await meetingHead.locator(`button:has-text("${fxMeeting.name}")`).first().click();
       await page.locator('.modal').waitFor({ timeout: 8000 });
       check('the edit modal opens on that meeting',
         (await page.locator('.modal input').first().inputValue()) === fxMeeting.name);
@@ -798,18 +742,34 @@ async function main() {
       check('a meeting asks only for a name and a date',
         (await page.locator('.modal input').count()) === 2,
         `${await page.locator('.modal input').count()} inputs`);
-      await page.locator('.modal button:has-text("Cancel")').first().click();
-      await w(300);
 
       // The sheet is the widest thing in the app. It has to scroll inside its
-      // own card — the page body must never scroll sideways on a phone, and
-      // the sweep further down measures /events on 全部堂会, where the sheet
-      // is not drawn at all.
+      // own card — the page body must never scroll sideways on a phone.
+      await page.locator('.modal button:has-text("Cancel")').first().click();
+      await w(300);
       const over = await page.evaluate(
         () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
       );
       check('the wide sheet scrolls inside its card, not the page', over <= 1, `+${over}px`);
       await shot('05-events');
+
+      // Deleting a meeting throws its ticks away with it, so it asks first and
+      // names what it is deleting (rule G3).
+      await meetingHead.locator(`button:has-text("${fxMeeting.name}")`).first().click();
+      await page.locator('.modal').waitFor({ timeout: 8000 });
+      await page.locator('.modal button:has-text("Delete meeting")').first().click();
+      await page.locator('.modal-backdrop').last().waitFor({ timeout: 8000 });
+      const meetingConfirm = await page.locator('.modal-backdrop').last().innerText();
+      check('deleting a meeting asks first, and names it',
+        meetingConfirm.includes(fxMeeting.name) && /attendance/i.test(meetingConfirm),
+        meetingConfirm.replace(/\s+/g, ' ').slice(0, 140));
+      await page.locator('.modal-backdrop').last().locator('button:has-text("Delete")').last().click();
+      await w(1800);
+      const goneFromSheet = (await page.locator('th', { hasText: fxMeeting.name }).count()) === 0;
+      check('the deleted meeting’s column leaves the sheet', goneFromSheet);
+      // Deleted through the UI — take it off the sweep list so the run does not
+      // report a leftover it already cleaned up.
+      if (goneFromSheet) forget(`/events/${fxMeeting.id}`);
     } finally {
       await fxMeeting.remove();
       await fxSheetMember.remove();
@@ -1308,7 +1268,7 @@ async function main() {
     mod('no horizontal overflow at phone width');
     const fxSample = await makeSample();
     try {
-      const DETAIL_PAGES = [...LIST_PAGES, '/events/recurring'];
+      const DETAIL_PAGES = [...LIST_PAGES];
       const overflowing = [];
       for (const path of DETAIL_PAGES) {
         await page.goto(`${BASE}${path}`, { waitUntil: 'domcontentloaded' });

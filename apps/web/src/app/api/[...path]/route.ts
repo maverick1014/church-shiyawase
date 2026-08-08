@@ -7,7 +7,14 @@ import {
   signSession,
   verifyPassword,
 } from '@/lib/server/auth';
-import { CHURCH_TZ_OFFSET, churchParts, isSundayDate, sundaysOfMonth } from '@/lib/time';
+import { churchInstant, churchParts, isSundayDate } from '@/lib/time';
+import {
+  meetingColumnKey,
+  parseColumnKey,
+  sheetColumns,
+  sundayColumnKey,
+} from '@/lib/sheet';
+import type { SheetCell, SheetMeeting } from '@/lib/types';
 import {
   isOptionalModule,
   isTrainingKind,
@@ -454,13 +461,19 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
     }
   }
 
-  // ---- 主日点名 (the Sunday sheet) -------------------------------------------
-  // Every Sunday happens, so nothing creates one: the sheet IS the data
-  // (migration 0013). One request reads a whole month for ONE congregation,
-  // one request writes a single cell.
-  if (r0 === 'attendance' && r1 === 'sundays' && !r2) {
+  // ---- 聚会点名 (the roll-call sheet) ----------------------------------------
+  // ONE grid per month: that month's Sundays (`sunday_attendance`, migration
+  // 0013) and the meetings someone genuinely added for it (`events` /
+  // `event_attendance`), in date order. Nothing creates a Sunday — the
+  // calendar already has them — and a meeting's own column appears the moment
+  // the meeting does.
+  //
+  // The two tables are this handler's business, never the page's: the read
+  // hands out an opaque `key` per column and the write resolves it here
+  // (`parseColumnKey`), so a tick lands in the right table without the client
+  // knowing there are two.
+  if (r0 === 'attendance' && r1 === 'sheet' && !r2) {
     if (method === 'GET') {
-      const hallId = await resolveSheetHall(db, hallFilter);
       // Which month, defaulting to Malaysia's own calendar month — on a UTC
       // Worker the first 8 hours of a new month still read as the old one.
       const nowParts = churchParts(new Date());
@@ -470,67 +483,111 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
         throw new HttpError(400, 'year must be a four-digit year');
       if (!Number.isInteger(month) || month < 1 || month > 12)
         throw new HttpError(400, 'month must be a number from 1 to 12');
-      return json(await sundaySheet(db, hallId, year, month));
+      // `hallFilter` may be null — 全部堂会 lists every congregation's members
+      // in one sheet. A tick still records WHICH congregation the person was
+      // counted in; it is read off the member's own hall when it is written.
+      return json(await rollCallSheet(db, hallFilter, year, month));
     }
     if (method === 'PUT') {
       const dto = await body();
-      // The hall is the caller's own whenever it has one — `assertHallWritable`
-      // refuses a payload aimed at another congregation and `withHall` then
-      // overwrites whatever was sent, exactly like every other write (rule G2).
-      assertHallWritable(dto);
-      const hallId = String(withHall(dto).hall_id ?? '');
-      if (!hallId) throw new HttpError(400, 'hall_id is required — a Sunday sheet is always one congregation');
-      const serviceDate = String(dto.service_date ?? '');
+      const column = parseColumnKey(String(dto.column ?? ''));
+      if (!column)
+        throw new HttpError(400, `Unknown sheet column: ${String(dto.column ?? '')}`);
       const memberId = String(dto.member_id ?? '');
-      if (!serviceDate || !memberId)
-        throw new HttpError(400, 'service_date and member_id are required');
-      // Postgres would refuse this too (the sunday_attendance_is_sunday check),
-      // but a constraint name is not an answer anybody can act on.
-      if (!isSundayDate(serviceDate))
-        throw new HttpError(400, `${serviceDate} is not a Sunday — only Sundays belong on the Sunday sheet`);
-      const preService = dto.pre_service === true;
-      const service = dto.service === true;
-      // Both ticks off means "not recorded", which is what NO ROW already
-      // means — and the table's not-empty check forbids storing it. So an
-      // untick deletes rather than writing an empty row.
-      if (!preService && !service) {
+      if (!memberId) throw new HttpError(400, 'member_id is required');
+      // Whose cell — and, for a Sunday, which congregation the tick is filed
+      // under. The member's OWN hall decides that (never a client-sent
+      // hall_id), and a hall-pinned account may only tick its own hall's
+      // members, exactly like every other write (rule G2).
+      const member = unwrap<{ hall_id: string }>(
+        await db.from('members').select('hall_id').eq('id', memberId).single(),
+      );
+      if (hallScope && member.hall_id !== hallScope)
+        throw new HttpError(403, 'No permission to modify another congregation’s records');
+
+      if (column.kind === 'sunday') {
+        const serviceDate = column.date;
+        // Postgres would refuse this too (the sunday_attendance_is_sunday
+        // check), but a constraint name is not an answer anybody can act on.
+        if (!isSundayDate(serviceDate))
+          throw new HttpError(400, `${serviceDate} is not a Sunday — only Sundays belong on a Sunday column`);
+        const preService = dto.pre_service === true;
+        const service = dto.service === true;
+        const cell: SheetCell = { pre_service: preService, service };
+        // Both ticks off means "not recorded", which is what NO ROW already
+        // means — and the table's not-empty check forbids storing it. So an
+        // untick deletes rather than writing an empty row.
+        if (!preService && !service) {
+          unwrap(
+            await db
+              .from('sunday_attendance')
+              .delete()
+              .eq('hall_id', member.hall_id)
+              .eq('service_date', serviceDate)
+              .eq('member_id', memberId)
+              .select('id'),
+          );
+        } else {
+          unwrap(
+            await db
+              .from('sunday_attendance')
+              .upsert(
+                {
+                  hall_id: member.hall_id,
+                  service_date: serviceDate,
+                  member_id: memberId,
+                  pre_service: preService,
+                  service,
+                },
+                { onConflict: 'hall_id,service_date,member_id' },
+              )
+              .select('id')
+              .single(),
+          );
+        }
+        return json({ column: sundayColumnKey(serviceDate), member_id: memberId, ...cell });
+      }
+
+      // A meeting column. `assertRowReadable` rather than `assertOwnsRow`: a
+      // 全堂开放 meeting (hall_id is null) belongs to no single hall and every
+      // congregation rolls its own people on it.
+      await assertRowReadable('events', column.eventId);
+      const attended = dto.attended === true;
+      if (attended) {
         unwrap(
           await db
-            .from('sunday_attendance')
+            .from('event_attendance')
+            .upsert(
+              { event_id: column.eventId, member_id: memberId, status: 'present' },
+              { onConflict: 'event_id,member_id' },
+            )
+            .select('id')
+            .single(),
+        );
+      } else {
+        // Same rule as a Sunday: an untick removes the row, so "no row" keeps
+        // meaning "nothing was recorded" rather than "was not there".
+        unwrap(
+          await db
+            .from('event_attendance')
             .delete()
-            .eq('hall_id', hallId)
-            .eq('service_date', serviceDate)
+            .eq('event_id', column.eventId)
             .eq('member_id', memberId)
             .select('id'),
         );
-        return json({ hall_id: hallId, service_date: serviceDate, member_id: memberId, pre_service: false, service: false });
       }
-      return json(
-        unwrap(
-          await db
-            .from('sunday_attendance')
-            .upsert(
-              {
-                hall_id: hallId,
-                service_date: serviceDate,
-                member_id: memberId,
-                pre_service: preService,
-                service,
-              },
-              { onConflict: 'hall_id,service_date,member_id' },
-            )
-            .select('hall_id,service_date,member_id,pre_service,service')
-            .single(),
-        ),
-      );
+      return json({ column: meetingColumnKey(column.eventId), member_id: memberId, attended });
     }
   }
 
-  // ---- Events ---------------------------------------------------------------
+  // ---- Events (the meetings someone adds by hand) ----------------------------
+  // A row here is one occasion with a name, a date and a congregation. It gets
+  // its own column on that month's roll-call sheet above, which is also where
+  // its attendance is ticked — deleting it takes those ticks with it
+  // (`event_attendance.event_id` is `on delete cascade`).
   if (r0 === 'events') {
     if (!r1) {
       if (method === 'GET') {
-        await ensureRecurringEvents(db);
         let query = db
           .from('events')
           .select('*, hall:halls(id,name)')
@@ -543,32 +600,12 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
       }
       if (method === 'POST')
         return json(unwrap(await db.from('events').insert(withHall(await body())).select().single()));
-    } else if (r2 === 'attendance' && method === 'POST') {
-      const dto = await body();
-      const records = (dto.records as Array<Record<string, unknown>>).map((r) => ({
-        event_id: r1,
-        member_id: r.member_id,
-        status: r.status ?? 'present',
-        notes: r.notes ?? null,
-      }));
-      return json(
-        unwrap(
-          await db.from('event_attendance').upsert(records, { onConflict: 'event_id,member_id' }).select(),
-        ),
-      );
     } else if (!r2) {
       if (method === 'GET') {
         await assertRowReadable('events', r1);
-        const event = unwrap<Record<string, unknown>>(
-          await db.from('events').select('*, hall:halls(id,name)').eq('id', r1).single(),
+        return json(
+          unwrap(await db.from('events').select('*, hall:halls(id,name)').eq('id', r1).single()),
         );
-        const attendance = unwrap(
-          await db
-            .from('event_attendance')
-            .select('*, member:members(id,full_name,church_role,group_position)')
-            .eq('event_id', r1),
-        );
-        return json({ ...event, attendance });
       }
       if (method === 'PATCH') {
         const dto = await body();
@@ -579,42 +616,6 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
       if (method === 'DELETE') {
         await assertOwnsRow('events', r1);
         unwrap(await db.from('events').delete().eq('id', r1).select().single());
-        return json({ id: r1 });
-      }
-    }
-  }
-
-  // ---- Recurring events (循环聚会) -------------------------------------------
-  // Schedules that top up the events calendar. Hall-scoped exactly like the
-  // events they generate; deleting a rule keeps its past events (the FK is
-  // `on delete set null`), it only stops future generation.
-  if (r0 === 'recurring-events') {
-    if (!r1) {
-      if (method === 'GET') {
-        let query = db
-          .from('recurring_events')
-          .select('*, hall:halls(id,name)')
-          .order('created_at');
-        // Same rule as the events they generate: own hall + every 全堂 rule.
-        if (hallFilter) query = query.or(`hall_id.eq.${hallFilter},hall_id.is.null`);
-        return json(unwrap(await query));
-      }
-      if (method === 'POST')
-        return json(
-          unwrap(await db.from('recurring_events').insert(withHall(await body())).select().single()),
-        );
-    } else if (!r2) {
-      if (method === 'PATCH') {
-        const dto = await body();
-        assertHallWritable(dto);
-        await assertOwnsRow('recurring_events', r1);
-        return json(
-          unwrap(await db.from('recurring_events').update(dto).eq('id', r1).select().single()),
-        );
-      }
-      if (method === 'DELETE') {
-        await assertOwnsRow('recurring_events', r1);
-        unwrap(await db.from('recurring_events').delete().eq('id', r1).select().single());
         return json({ id: r1 });
       }
     }
@@ -1152,214 +1153,110 @@ async function upsertProgress(
   );
 }
 
-const WEEKDAY_INDEX: Record<string, number> = {
-  sunday: 0,
-  monday: 1,
-  tuesday: 2,
-  wednesday: 3,
-  thursday: 4,
-  friday: 5,
-  saturday: 6,
-};
-
 /**
- * Top up the calendar from the 循环聚会 rules so a recurring weeknight meeting
- * never has to be added by hand. Runs on GET /events — generation is lazy on
- * purpose: the schedule only needs to be correct for someone actually looking
- * at it, which avoids a cron job that can fail silently.
+ * 聚会点名 — one month's sheet: the members down the left, and across the top
+ * that month's Sundays followed, in date order, by every meeting someone added
+ * for it.
  *
- * SUNDAYS ARE NOT GENERATED ANY MORE (migration 0013). Every Sunday happens,
- * so manufacturing a 主日崇拜 row to hang attendance off was only ever a way of
- * inventing a date the calendar already knew about; the Sunday sheet
- * (`sunday_attendance`) holds that attendance now, per congregation, with no
- * event row involved. A Sunday rule left over from before is therefore skipped
- * rather than deleted — its past occurrences stay readable as ordinary
- * meetings, and 循环聚会 keeps working for every other weekday.
+ * The columns come from the CALENDAR and from the meetings themselves, never
+ * from the attendance data, so a Sunday nobody marked and a meeting nobody
+ * ticked both still get their column. Two tables are read for the cells and
+ * neither is named in the answer: each column carries the key a write quotes
+ * back, and `lib/sheet.ts` is the one place that knows what a key means.
  *
- * Two things keep the remaining generation from fighting the user:
- *  - `generated_through` means a rule only ever looks at dates AFTER the last
- *    one it produced. Deleting a single occurrence (a public holiday) makes it
- *    stay deleted, and editing a rule's weekday/time doesn't regenerate the
- *    window it already filled at the old time.
- *  - A slot already occupied by an equivalent event — same hall, same type,
- *    same moment, whoever created it — is skipped. That covers meetings that
- *    predate the rules (their `recurring_id` is null) and anything added by
- *    hand.
+ * `hallFilter` narrows it. Null means 全部堂会: every congregation's members in
+ * one list, which is the simple thing to show when nobody has narrowed the
+ * view. A tick is still filed under the member's own congregation (see the PUT
+ * above), so what was recorded never loses its hall.
  */
-async function ensureRecurringEvents(db: ReturnType<typeof getDb>) {
-  const rules = (unwrap(
-    await db
-      .from('recurring_events')
-      .select('id,title,event_type,weekday,start_time,location,hall_id,lookahead_days,generated_through')
-      .eq('active', true),
-  ) as Array<{
-    id: string;
-    title: string;
-    event_type: string;
-    weekday: string;
-    start_time: string;
-    location: string | null;
-    hall_id: string | null;
-    lookahead_days: number;
-    generated_through: string | null;
-  }>).filter((r) => r.weekday !== 'sunday');
-  if (rules.length === 0) return;
-
-  // Malaysia's calendar date, via the same helper the UI reads with.
-  const nowParts = churchParts(new Date());
-  const todayLocal = new Date(Date.UTC(nowParts.year, nowParts.month - 1, nowParts.day));
-
-  // Every date a rule still owes, within its own lookahead window.
-  const wanted: Array<{ rule: (typeof rules)[number]; date: string; startsAt: string }> = [];
-  for (const rule of rules) {
-    const target = WEEKDAY_INDEX[rule.weekday];
-    if (target === undefined) continue;
-    const daysUntil = (target - todayLocal.getUTCDay() + 7) % 7;
-    for (let offset = daysUntil; offset <= rule.lookahead_days; offset += 7) {
-      const d = new Date(todayLocal);
-      d.setUTCDate(d.getUTCDate() + offset);
-      const iso = d.toISOString().slice(0, 10);
-      if (rule.generated_through && iso <= rule.generated_through) continue;
-      wanted.push({ rule, date: iso, startsAt: `${iso}T${rule.start_time}${CHURCH_TZ_OFFSET}` });
-    }
-  }
-  if (wanted.length === 0) return;
-
-  // One read covering the whole window, then insert only what's missing.
-  const times = wanted.map((w) => w.startsAt).sort();
-  const existing = unwrap(
-    await db
-      .from('events')
-      .select('starts_at,hall_id,event_type,recurring_id')
-      .gte('starts_at', times[0])
-      .lte('starts_at', times[times.length - 1]),
-  ) as Array<{
-    starts_at: string;
-    hall_id: string | null;
-    event_type: string;
-    recurring_id: string | null;
-  }>;
-  const slotKey = (hallId: string | null, type: string, startsAt: string) =>
-    `${hallId ?? ''}|${type}|${new Date(startsAt).toISOString()}`;
-  const taken = new Set(existing.map((e) => slotKey(e.hall_id, e.event_type, e.starts_at)));
-
-  const rows = wanted
-    .filter((w) => !taken.has(slotKey(w.rule.hall_id, w.rule.event_type, w.startsAt)))
-    .map((w) => ({
-      title: w.rule.title,
-      event_type: w.rule.event_type,
-      location: w.rule.location,
-      starts_at: w.startsAt,
-      hall_id: w.rule.hall_id,
-      recurring_id: w.rule.id,
-    }));
-
-  if (rows.length > 0) {
-    // Best-effort: two concurrent requests could both see the same slot
-    // missing. The unique index on (recurring_id, starts_at) turns that race
-    // into a rejected insert rather than a duplicate — either way this must
-    // never fail the surrounding GET /events request, so the error is logged
-    // rather than thrown (a silent swallow once hid a real bug here).
-    const ins = await db.from('events').insert(rows);
-    if (ins.error) console.error('recurring top-up insert failed:', ins.error.message);
-  }
-
-  // Advance each rule's watermark to the last date it just covered, so those
-  // dates are never reconsidered — even the ones skipped as already-occupied.
-  const lastByRule = new Map<string, string>();
-  for (const w of wanted) {
-    const prev = lastByRule.get(w.rule.id);
-    if (!prev || w.date > prev) lastByRule.set(w.rule.id, w.date);
-  }
-  await Promise.all(
-    [...lastByRule].map(([id, date]) =>
-      db.from('recurring_events').update({ generated_through: date }).eq('id', id),
-    ),
-  );
-}
-
-/**
- * Which congregation's Sunday sheet is being read.
- *
- * `hallFilter` already carries the whole precedence rule — the session's own
- * hall first, the congregation switcher's `?hall_id=` only for an account that
- * spans every hall (rule G2), so a hall-pinned account can never reach another
- * hall's sheet. What is special here is the FALLBACK: every other list happily
- * answers "all congregations", but a sheet is always exactly one. Rather than
- * merging three congregations' Sundays into one grid — the very thing this
- * model removes — an unnarrowed request is refused, unless the church has only
- * one congregation, where the answer is unambiguous.
- */
-async function resolveSheetHall(
+async function rollCallSheet(
   db: ReturnType<typeof getDb>,
   hallFilter: string | null,
-): Promise<string> {
-  if (hallFilter) return hallFilter;
-  const halls = unwrap<Array<{ id: string }>>(
-    await db.from('halls').select('id').order('sort_order'),
-  );
-  if (halls.length === 1) return halls[0].id;
-  if (halls.length === 0) throw new HttpError(500, 'No congregations configured yet');
-  throw new HttpError(
-    400,
-    'Choose one congregation: a Sunday sheet always belongs to a single congregation, never to all of them at once',
-  );
-}
-
-/**
- * One congregation's Sunday sheet for one month: its active members down the
- * left, that month's Sundays across the top, two ticks per Sunday.
- *
- * The dates come from the calendar, not from the data — that is the whole
- * point of 0013. A Sunday nobody has been marked on still gets its column.
- */
-async function sundaySheet(
-  db: ReturnType<typeof getDb>,
-  hallId: string,
   year: number,
   month: number,
 ) {
-  const dates = sundaysOfMonth(year, month);
+  // The month as MALAYSIA reads it: [1st 00:00, the 1st of the next month).
+  // `churchInstant` normalises month 13 into January, so December needs no
+  // special case.
+  const monthStart = churchInstant(year, month, 1).toISOString();
+  const monthEnd = churchInstant(year, month + 1, 1).toISOString();
 
-  const members = unwrap(
-    await db
-      .from('members')
-      .select(MEMBER_BRIEF)
-      .eq('hall_id', hallId)
-      .eq('status', 'active')
-      .order('full_name'),
-  ) as Array<{ id: string; full_name: string }>;
+  let memberQuery = db
+    .from('members')
+    .select(MEMBER_BRIEF)
+    .eq('status', 'active')
+    .order('full_name');
+  if (hallFilter) memberQuery = memberQuery.eq('hall_id', hallFilter);
 
-  // Independent of the member read, so they go together (rule G6). An empty
-  // month (a calendar with no Sundays cannot happen, but be explicit) would
-  // make the range filter meaningless.
-  const marks = dates.length
-    ? (unwrap(
-        await db
-          .from('sunday_attendance')
-          .select('service_date,member_id,pre_service,service')
-          .eq('hall_id', hallId)
-          .gte('service_date', dates[0])
-          .lte('service_date', dates[dates.length - 1]),
-      ) as Array<{
-        service_date: string;
-        member_id: string;
-        pre_service: boolean;
-        service: boolean;
-      }>)
-    : [];
+  let meetingQuery = db
+    .from('events')
+    .select('id,title,starts_at,hall_id')
+    .gte('starts_at', monthStart)
+    .lt('starts_at', monthEnd)
+    .order('starts_at');
+  // A narrowed view sees that hall's meetings plus every 全堂开放 one — the
+  // same rule the events list itself follows.
+  if (hallFilter) meetingQuery = meetingQuery.or(`hall_id.eq.${hallFilter},hall_id.is.null`);
 
-  const byMember = new Map<string, Record<string, { pre_service: boolean; service: boolean }>>();
-  for (const m of marks) {
-    const date = m.service_date.slice(0, 10);
-    const cells = byMember.get(m.member_id) ?? {};
-    cells[date] = { pre_service: m.pre_service, service: m.service };
-    byMember.set(m.member_id, cells);
+  // Independent reads, so they go together (rule G6).
+  const [memberRes, meetingRes] = await Promise.all([memberQuery, meetingQuery]);
+  const members = unwrap(memberRes) as Array<{ id: string; full_name: string }>;
+  const meetings = unwrap(meetingRes) as SheetMeeting[];
+
+  const columns = sheetColumns(year, month, meetings);
+  const sundays = columns.filter((c) => c.kind === 'sunday').map((c) => c.date);
+  const eventIds = meetings.map((m) => m.id);
+
+  const readSundayMarks = async () => {
+    if (!sundays.length) return [];
+    let query = db
+      .from('sunday_attendance')
+      .select('service_date,member_id,pre_service,service')
+      .gte('service_date', sundays[0])
+      .lte('service_date', sundays[sundays.length - 1]);
+    if (hallFilter) query = query.eq('hall_id', hallFilter);
+    return unwrap(await query) as Array<{
+      service_date: string;
+      member_id: string;
+      pre_service: boolean;
+      service: boolean;
+    }>;
+  };
+  const readMeetingMarks = async () => {
+    if (!eventIds.length) return [];
+    return unwrap(
+      await db.from('event_attendance').select('event_id,member_id,status').in('event_id', eventIds),
+    ) as Array<{ event_id: string; member_id: string; status: string }>;
+  };
+
+  const [sundayMarks, meetingMarks] = await Promise.all([readSundayMarks(), readMeetingMarks()]);
+
+  const byMember = new Map<string, Record<string, SheetCell>>();
+  const cellOf = (memberId: string, key: string): SheetCell => {
+    const cells = byMember.get(memberId) ?? {};
+    byMember.set(memberId, cells);
+    cells[key] = cells[key] ?? {};
+    return cells[key];
+  };
+
+  for (const m of sundayMarks) {
+    const cell = cellOf(m.member_id, sundayColumnKey(m.service_date.slice(0, 10)));
+    // OR-merged rather than assigned: with no narrowing, someone who moved
+    // congregation mid-year can carry a row in each hall for the same Sunday,
+    // and a tick that was taken must not disappear because of the other row.
+    cell.pre_service = cell.pre_service || m.pre_service;
+    cell.service = cell.service || m.service;
+  }
+  for (const a of meetingMarks) {
+    // A meeting column is one tick: was this person there. Rows left by the
+    // old 出席/请假/缺席 roll call that say anything else are "not present".
+    if (a.status !== 'present') continue;
+    cellOf(a.member_id, meetingColumnKey(a.event_id)).attended = true;
   }
 
   return {
-    hall_id: hallId,
-    dates,
+    hall_id: hallFilter,
+    columns,
     rows: members.map((member) => ({ member, cells: byMember.get(member.id) ?? {} })),
   };
 }
@@ -1733,10 +1630,11 @@ async function run(method: string, req: Request, ctx: Ctx): Promise<Response> {
 
 export const GET = (req: Request, ctx: Ctx) => run('GET', req, ctx);
 export const POST = (req: Request, ctx: Ctx) => run('POST', req, ctx);
-// PUT exists for the Sunday sheet's one-cell write: the row for (hall, Sunday,
-// member) is created, updated or removed by the same call, so the client never
-// has to know which. It goes through the same gate as every other method — a
-// `readonly` account is refused by the `method !== 'GET'` branch in dispatch().
+// PUT exists for the roll-call sheet's one-cell write: the row behind a cell
+// is created, updated or removed by the same call, so the client never has to
+// know which — nor which of the two tables it lands in. It goes through the
+// same gate as every other method — a `readonly` account is refused by the
+// `method !== 'GET'` branch in dispatch().
 export const PUT = (req: Request, ctx: Ctx) => run('PUT', req, ctx);
 export const PATCH = (req: Request, ctx: Ctx) => run('PATCH', req, ctx);
 export const DELETE = (req: Request, ctx: Ctx) => run('DELETE', req, ctx);

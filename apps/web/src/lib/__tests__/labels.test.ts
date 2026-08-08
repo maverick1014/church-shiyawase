@@ -15,7 +15,10 @@ import {
   groupHealthStatus,
   groupHealthClass,
   groupHealthKey,
+  sheetTickKey,
 } from '@/lib/labels';
+import { en } from '@/lib/i18n/en';
+import { TICK_ORDER } from '@/lib/sheet';
 import { DisplayRole, isTrainingKind, TRAINING_KINDS, TrainingKind } from '@tog/shared';
 
 describe('role palette', () => {
@@ -168,5 +171,21 @@ describe('training kinds', () => {
     expect(isActivity({ kind: TrainingKind.Course })).toBe(false);
     expect(isActivity({})).toBe(false);
     expect(isActivity(null)).toBe(false);
+  });
+});
+
+/*
+ * 聚会点名 — the sheet's ticks. A Sunday carries two, a hand-added meeting one,
+ * and each is rendered through a dictionary key rather than a literal.
+ */
+describe('sheet ticks', () => {
+  it('maps every tick to a key, never to text', () => {
+    expect(sheetTickKey('pre_service')).toBe('events.col.preService');
+    expect(sheetTickKey('service')).toBe('events.col.service');
+    expect(sheetTickKey('attended')).toBe('events.col.attended');
+  });
+
+  it('names a key the dictionary actually ships', () => {
+    for (const tick of TICK_ORDER) expect(en[sheetTickKey(tick)]).toBeTruthy();
   });
 });

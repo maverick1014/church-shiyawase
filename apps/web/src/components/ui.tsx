@@ -466,18 +466,6 @@ export function ChevronLeftIcon({ size = 18 }: { size?: number }) {
   );
 }
 
-export function RepeatIcon({ size = 16 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
-      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M17 2l4 4-4 4" />
-      <path d="M3 11V9a4 4 0 0 1 4-4h14" />
-      <path d="M7 22l-4-4 4-4" />
-      <path d="M21 13v2a4 4 0 0 1-4 4H3" />
-    </svg>
-  );
-}
-
 export function LinkIcon({ size = 16 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -772,11 +760,11 @@ export function TagsInput({
 /* -------------------------------------------------------------------------
  * Attendance sheets
  *
- * Two pages draw a roll-call grid — the 主日点名 sheet on /events and a life
- * group's weekly sheet on /groups/[id]. Their shapes genuinely differ (one
- * column per Sunday split in two, versus one column per meeting), so they are
- * not one component; but the pieces they DO share live here rather than being
- * typed out twice (rule G4).
+ * Two pages draw a roll-call grid — the 聚会点名 sheet on /events and a life
+ * group's weekly sheet on /groups/[id]. Their shapes genuinely differ (a
+ * Sunday column split in two beside a meeting's single tick, versus one column
+ * per group meeting), so they are not one component; but the pieces they DO
+ * share live here rather than being typed out twice (rule G4).
  * ---------------------------------------------------------------------- */
 
 /**
@@ -836,7 +824,7 @@ export function MonthPicker({
 /**
  * One option of a `<Segmented />`. `tone` is an optional active class
  * (`on-good` / `on-warn` / `on-crit`) for a picker whose choices carry a
- * meaning; a plain tab strip leaves it out and gets the neutral `on`.
+ * meaning; leaving it out gets the neutral `on`.
  */
 export type SegmentedOption<T extends string> = {
   value: T;
@@ -845,10 +833,9 @@ export type SegmentedOption<T extends string> = {
 };
 
 /**
- * The one segmented control (rule G4). Used for a card's own tabs — the life
- * group's 小组 / 会前 / 主日 roll-call switch — and for the per-member
- * 出席 / 请假 / 缺席 picker in a roll call, which is the same row of mutually
- * exclusive buttons with a tone per option.
+ * The one segmented control (rule G4): a row of mutually exclusive buttons,
+ * optionally with a tone per option for choices that carry a meaning. Today
+ * the mentor's daily form picks 已完成 / 未完成 with it.
  *
  * Keyed by the STORED code, never by a label (rule G8): `value` is compared
  * against `option.value`, so switching interface language cannot change which
@@ -860,7 +847,6 @@ export function Segmented<T extends string>({
   onChange,
   label,
   block,
-  tabs,
 }: {
   /** The selected code; null / undefined = nothing chosen yet. */
   value: T | null | undefined;
@@ -870,11 +856,9 @@ export function Segmented<T extends string>({
   label: string;
   /** Stretch to the full width of the row. */
   block?: boolean;
-  /** Full `--control-h`, for a strip that sits beside selects in a filter row. */
-  tabs?: boolean;
 }) {
   return (
-    <div className={`seg${tabs ? ' tabs' : ''}${block ? ' block' : ''}`} role="group" aria-label={label}>
+    <div className={`seg${block ? ' block' : ''}`} role="group" aria-label={label}>
       {options.map((o) => {
         const active = o.value === value;
         return (

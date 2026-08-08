@@ -48,7 +48,8 @@ describe('churchInstant', () => {
   });
 
   it('normalises an overflowing day into the next month', () => {
-    // The recurring-events "next occurrence" walk relies on this.
+    // The roll-call sheet's month window relies on this: the end of December
+    // is churchInstant(year, 13, 1).
     expect(churchParts(churchInstant(2026, 8, 33))).toMatchObject({ month: 9, day: 2 });
   });
 

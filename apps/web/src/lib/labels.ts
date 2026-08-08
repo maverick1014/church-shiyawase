@@ -1,7 +1,6 @@
 import {
   AccountRole,
   AccountStatus,
-  AttendanceStatus,
   ChurchRole,
   DisplayRole,
   DISPLAY_ROLE_ORDER,
@@ -16,6 +15,7 @@ import {
   displayRole,
 } from '@tog/shared';
 import type { MessageKey } from './i18n/en';
+import type { SheetTickName } from './types';
 import { churchParts } from './time';
 
 const pad2 = (n: number) => String(n).padStart(2, '0');
@@ -247,14 +247,24 @@ export function eventBadgeClass(type: string): string {
   return 'b-gray';
 }
 
-export const ATTENDANCE_OPTIONS: AttendanceStatus[] = [
-  AttendanceStatus.Present,
-  AttendanceStatus.Excused,
-  AttendanceStatus.Absent,
-];
-
 export function attendanceKey(status: string): MessageKey {
   return `attendance.${status}` as MessageKey;
+}
+
+/**
+ * Message key for one tick on the 聚会点名 sheet. A Sunday carries 会前 and
+ * 主日; a hand-added meeting carries the single 到场, because one occasion has
+ * one thing to record.
+ */
+export function sheetTickKey(tick: SheetTickName): MessageKey {
+  switch (tick) {
+    case 'pre_service':
+      return 'events.col.preService';
+    case 'service':
+      return 'events.col.service';
+    default:
+      return 'events.col.attended';
+  }
 }
 
 /* -------------------------------------------------------------------------

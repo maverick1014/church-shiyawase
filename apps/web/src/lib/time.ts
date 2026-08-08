@@ -5,8 +5,8 @@
  * Without this module the app silently used whatever timezone the *runtime*
  * happened to be in: UTC inside the Cloudflare Worker (so a 10:00 service
  * server-rendered as "02:00"), and the viewer's own zone in the browser. The
- * stored data was never wrong — `route.ts` already writes recurring services
- * at `+08:00` — only the reading of it was.
+ * stored data was never wrong — a meeting's `starts_at` carries its own
+ * offset — only the reading of it was.
  *
  * Nothing here should be bypassed with `getHours()` / `setHours()` /
  * `getTimezoneOffset()`: those all read the runtime zone.

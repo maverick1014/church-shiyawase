@@ -134,43 +134,14 @@ async function main() {
   const evId = mkEv.json?.id;
   if (evId) {
     ok('update event → 200', (await req('PATCH', `/api/events/${evId}`, { ...H, body: { location: '副堂' } })).status === 200);
-    if (memberOrNull(members)) {
-      const att = await req('POST', `/api/events/${evId}/attendance`, { ...H, body: { records: [{ member_id: members[0].id, status: 'present' }] } });
-      ok('event attendance → 200', att.status === 200, `status ${att.status}`);
-    }
+    // A meeting's attendance is not its own endpoint any more: it is a column
+    // on the roll-call sheet, ticked by PUT /api/attendance/sheet — exercised
+    // in full by rollCallSheet() below, on a fixture of its own.
     ok('delete event → 200', (await req('DELETE', `/api/events/${evId}`, H)).status === 200);
   }
 
-  // ---- 主日点名 (the Sunday sheet) -----------------------------------------
-  await sundaySheet(admin, halls, hallId);
-
-  // ---- Recurring events (循环聚会) ------------------------------------------
-  const rules = (await req('GET', '/api/recurring-events', H)).json;
-  ok('recurring-events is an array', Array.isArray(rules), JSON.stringify(rules).slice(0, 120));
-  const mkRule = await req('POST', '/api/recurring-events', {
-    ...H,
-    body: { title: `E2E循环-${Date.now()}`, event_type: 'prayer', weekday: 'wednesday', start_time: '20:00:00', location: '副堂', hall_id: hallId, lookahead_days: 14 },
-  });
-  ok('create recurring rule → 200 + id', mkRule.status === 200 && mkRule.json?.id, `status ${mkRule.status} ${JSON.stringify(mkRule.json).slice(0,120)}`);
-  const ruleId = mkRule.json?.id;
-  if (ruleId) {
-    ok('update recurring rule → 200', (await req('PATCH', `/api/recurring-events/${ruleId}`, { ...H, body: { active: false } })).status === 200);
-    // GET /events tops the calendar up from the active rules; a paused rule
-    // must not generate anything.
-    const afterPause = (await req('GET', '/api/events', H)).json;
-    ok('paused rule generates nothing', Array.isArray(afterPause) && !afterPause.some((e) => e.recurring_id === ruleId));
-    ok('re-activate rule → 200', (await req('PATCH', `/api/recurring-events/${ruleId}`, { ...H, body: { active: true } })).status === 200);
-    const afterResume = (await req('GET', '/api/events', H)).json;
-    const generated = (afterResume || []).filter((e) => e.recurring_id === ruleId);
-    ok('active rule fills the calendar', generated.length > 0, `${generated.length} generated`);
-    ok('generated events land on the rule weekday', generated.every((e) => new Date(e.starts_at).getUTCDay() === 3 || new Date(e.starts_at).getDay() === 3));
-    // Deleting the rule must KEEP the events it produced (they hold attendance).
-    ok('delete recurring rule → 200', (await req('DELETE', `/api/recurring-events/${ruleId}`, H)).status === 200);
-    const afterDelete = (await req('GET', '/api/events', H)).json;
-    const survivors = (afterDelete || []).filter((e) => generated.some((g) => g.id === e.id));
-    ok('generated events survive rule deletion', survivors.length === generated.length, `${survivors.length}/${generated.length} kept`);
-    for (const e of survivors) await req('DELETE', `/api/events/${e.id}`, H); // cleanup
-  }
+  // ---- 聚会点名 (the roll-call sheet) ---------------------------------------
+  await rollCallSheet(admin, halls, hallId);
 
   // ---- Groups CRUD (+ weekly attendance) ----------------------------------
   const mkGrp = await req('POST', '/api/groups', { ...H, body: { name: `E2E小组-${Date.now()}`, hall_id: hallId } });
@@ -298,10 +269,6 @@ async function main() {
   finish();
 }
 
-function memberOrNull(members) {
-  return members && members.length ? members[0] : null;
-}
-
 /**
  * 培训&活动 — the second shape in the same catalog (`kind`, migration 0014).
  *
@@ -380,118 +347,172 @@ async function activityShape(adminCookie, members, hallId) {
 }
 
 /**
- * 主日点名 — the Sunday sheet (migration 0013).
+ * 聚会点名 — the roll-call sheet (`/api/attendance/sheet`).
  *
- * Every Sunday simply exists, so there is nothing to create: the sheet's
- * columns come from the calendar and a cell is written straight onto
- * (congregation, Sunday, member). Three properties have teeth here:
- *  - a cleared cell leaves NO row behind ("not recorded" and "all false" must
- *    not be two spellings of the same fact — the table forbids the second);
- *  - a date that is not a Sunday is refused in words, not as a constraint name;
- *  - an unnarrowed read is refused rather than merging congregations, which is
- *    exactly the joint-service idea this model removes.
+ * ONE grid per month whose columns are that month's Sundays (from the
+ * calendar, `sunday_attendance`) and the meetings someone added for it
+ * (`events` / `event_attendance`), in date order. What has teeth:
+ *  - a cleared cell leaves NO row behind, in EITHER table ("not recorded" and
+ *    "everyone was absent" must not be two spellings of the same fact);
+ *  - a hand-added meeting sorts into place among the Sundays and gets exactly
+ *    ONE tick — there is no 会前 to invent for a single occasion;
+ *  - the column key decides which table a tick lands in, so a key the server
+ *    never handed out is refused rather than guessed at;
+ *  - an unnarrowed read now ANSWERS: 全部堂会 simply lists every congregation's
+ *    members (it used to be a 400), while a tick is still filed under the
+ *    member's own congregation.
  *
- * It works on a member it CREATES, in a far-future month, and deletes it in a
- * `finally`: this runs against the church's live database, so it must never
- * write into — or clear — a real Sunday's roll call. Deleting the member takes
- * its sheet rows with it (FK cascade).
+ * It works on a member and a meeting it CREATES, in a far-future month, and
+ * deletes both in a `finally`: this runs against the church's live database, so
+ * it must never write into — or clear — a real roll call. Deleting the member
+ * takes its sheet rows with it, and deleting the meeting takes its ticks
+ * (both FKs cascade).
  */
-async function sundaySheet(adminCookie, halls, hallId) {
+async function rollCallSheet(adminCookie, halls, hallId) {
   const H = { cookie: adminCookie };
-  if (!hallId) { ok('sunday sheet (skipped: no congregation)', true); return; }
+  if (!hallId) { ok('roll-call sheet (skipped: no congregation)', true); return; }
 
-  // A Sunday far outside anything the church has recorded, so a leaked row
-  // could never be mistaken for real attendance. 2030-01-06 is a Sunday.
-  const SUNDAY = '2030-01-06';
-  const MONDAY = '2030-01-07';
-  const sheetUrl = (extra = '') => `/api/attendance/sundays?hall_id=${hallId}&year=2030&month=1${extra}`;
+  // A month far outside anything the church has recorded, so a leaked row could
+  // never be mistaken for real attendance. January 2030 starts on a Tuesday and
+  // its Sundays are the 6th, 13th, 20th and 27th.
+  const SUNDAY = 'sunday:2030-01-06';
+  const MONDAY = 'sunday:2030-01-07';
+  const sheetUrl = `/api/attendance/sheet?hall_id=${hallId}&year=2030&month=1`;
 
   const mk = await req('POST', '/api/members', {
     ...H,
-    body: { full_name: `E2E主日-${Date.now()}`, church_role: 'member', status: 'active', hall_id: hallId },
+    body: { full_name: `E2E点名-${Date.now()}`, church_role: 'member', status: 'active', hall_id: hallId },
   });
   ok('sheet fixture member created', mk.status === 200 && mk.json?.id, `status ${mk.status}`);
   const memberId = mk.json?.id;
   if (!memberId) return;
 
-  /** That member's row on the sheet, or undefined if it is not on it. */
-  const readRow = async () => {
-    const r = await req('GET', sheetUrl(), H);
+  // 15 January 2030, 20:00 in Malaysia — a night prayer meeting, which must
+  // appear as its own column between the 13th and the 20th.
+  const mkMeeting = await req('POST', '/api/events', {
+    ...H,
+    body: {
+      title: `E2E祷告会-${Date.now()}`,
+      event_type: 'meeting',
+      starts_at: '2030-01-15T12:00:00.000Z',
+      hall_id: hallId,
+    },
+  });
+  ok('sheet fixture meeting created', mkMeeting.status === 200 && mkMeeting.json?.id, `status ${mkMeeting.status}`);
+  const meetingId = mkMeeting.json?.id;
+  const MEETING = `meeting:${meetingId}`;
+
+  /** That member's cells on the sheet, or undefined if they are not on it. */
+  const readRow = async (url = sheetUrl) => {
+    const r = await req('GET', url, H);
     return { res: r, row: (r.json?.rows || []).find((x) => x.member?.id === memberId) };
   };
+  const cellsOf = (row) => JSON.stringify(row?.cells ?? {});
 
   try {
     const first = await readRow();
-    ok('sunday sheet GET → 200', first.res.status === 200, `status ${first.res.status} ${JSON.stringify(first.res.json).slice(0, 120)}`);
-    ok('the sheet names exactly one congregation', first.res.json?.hall_id === hallId, String(first.res.json?.hall_id));
-    ok('the columns are that month’s Sundays, from the calendar',
-      JSON.stringify(first.res.json?.dates) ===
-        JSON.stringify(['2030-01-06', '2030-01-13', '2030-01-20', '2030-01-27']),
-      JSON.stringify(first.res.json?.dates));
+    ok('roll-call sheet GET → 200', first.res.status === 200, `status ${first.res.status} ${JSON.stringify(first.res.json).slice(0, 120)}`);
+    ok('the narrowed sheet names its congregation', first.res.json?.hall_id === hallId, String(first.res.json?.hall_id));
+    const columns = first.res.json?.columns || [];
+    ok('the Sundays come from the calendar, and the meeting sorts into place',
+      JSON.stringify(columns.map((c) => `${c.date}/${c.kind}`)) ===
+        JSON.stringify([
+          '2030-01-06/sunday',
+          '2030-01-13/sunday',
+          '2030-01-15/meeting',
+          '2030-01-20/sunday',
+          '2030-01-27/sunday',
+        ]),
+      JSON.stringify(columns.map((c) => `${c.date}/${c.kind}`)));
+    ok('a Sunday carries two ticks and the meeting exactly one',
+      JSON.stringify(columns.find((c) => c.kind === 'sunday')?.ticks) === JSON.stringify(['pre_service', 'service']) &&
+        JSON.stringify(columns.find((c) => c.kind === 'meeting')?.ticks) === JSON.stringify(['attended']),
+      JSON.stringify(columns.map((c) => c.ticks)));
+    ok('the meeting column carries the meeting itself, so it can be edited',
+      columns.find((c) => c.kind === 'meeting')?.meeting?.id === meetingId,
+      JSON.stringify(columns.find((c) => c.kind === 'meeting')?.meeting));
     ok('the congregation’s active members are the rows', !!first.row, `${(first.res.json?.rows || []).length} rows`);
-    ok('a Sunday nobody was marked on carries no cell', first.row && !first.row.cells?.[SUNDAY],
-      JSON.stringify(first.row?.cells));
+    ok('a column nobody was marked on carries no cell', first.row && !first.row.cells?.[SUNDAY], cellsOf(first.row));
 
-    // Tick 会前 only, then both — a cell is written by one call whether or not
-    // it already existed.
-    const tick = await req('PUT', '/api/attendance/sundays', {
+    // ---- a Sunday cell: tick 会前, then both, then clear ------------------
+    const tick = await req('PUT', '/api/attendance/sheet', {
       ...H,
-      body: { hall_id: hallId, service_date: SUNDAY, member_id: memberId, pre_service: true, service: false },
+      body: { column: SUNDAY, member_id: memberId, pre_service: true, service: false },
     });
     ok('ticking 会前 → 200', tick.status === 200 && tick.json?.pre_service === true && tick.json?.service === false,
       `status ${tick.status} ${JSON.stringify(tick.json)}`);
     const afterTick = await readRow();
     ok('the tick shows up on the sheet',
-      afterTick.row?.cells?.[SUNDAY]?.pre_service === true && afterTick.row?.cells?.[SUNDAY]?.service === false,
-      JSON.stringify(afterTick.row?.cells));
+      afterTick.row?.cells?.[SUNDAY]?.pre_service === true && !afterTick.row?.cells?.[SUNDAY]?.service,
+      cellsOf(afterTick.row));
 
-    const both = await req('PUT', '/api/attendance/sundays', {
+    const both = await req('PUT', '/api/attendance/sheet', {
       ...H,
-      body: { hall_id: hallId, service_date: SUNDAY, member_id: memberId, pre_service: true, service: true },
+      body: { column: SUNDAY, member_id: memberId, pre_service: true, service: true },
     });
     ok('ticking the same cell again updates it rather than duplicating',
       both.status === 200 && both.json?.service === true, `status ${both.status} ${JSON.stringify(both.json)}`);
 
-    // Untick both → the row must be GONE, not stored as two falses.
-    const clear = await req('PUT', '/api/attendance/sundays', {
+    const clear = await req('PUT', '/api/attendance/sheet', {
       ...H,
-      body: { hall_id: hallId, service_date: SUNDAY, member_id: memberId, pre_service: false, service: false },
+      body: { column: SUNDAY, member_id: memberId, pre_service: false, service: false },
     });
     ok('unticking both → 200', clear.status === 200, `status ${clear.status} ${JSON.stringify(clear.json)}`);
     const afterClear = await readRow();
-    ok('a cleared cell leaves no row behind', afterClear.row && !afterClear.row.cells?.[SUNDAY],
-      JSON.stringify(afterClear.row?.cells));
+    ok('a cleared Sunday cell leaves no row behind', afterClear.row && !afterClear.row.cells?.[SUNDAY], cellsOf(afterClear.row));
 
-    // A date that is not a Sunday is refused in words.
-    const badDay = await req('PUT', '/api/attendance/sundays', {
-      ...H,
-      body: { hall_id: hallId, service_date: MONDAY, member_id: memberId, pre_service: true, service: false },
+    // ---- the meeting's own column, in the other table ----------------------
+    if (meetingId) {
+      const came = await req('PUT', '/api/attendance/sheet', {
+        ...H, body: { column: MEETING, member_id: memberId, attended: true },
+      });
+      ok('ticking the meeting → 200', came.status === 200 && came.json?.attended === true,
+        `status ${came.status} ${JSON.stringify(came.json)}`);
+      const afterCame = await readRow();
+      ok('the meeting tick shows up on the same grid',
+        afterCame.row?.cells?.[MEETING]?.attended === true, cellsOf(afterCame.row));
+      const undo = await req('PUT', '/api/attendance/sheet', {
+        ...H, body: { column: MEETING, member_id: memberId, attended: false },
+      });
+      ok('unticking the meeting → 200', undo.status === 200, `status ${undo.status}`);
+      const afterUndo = await readRow();
+      ok('…and leaves no row behind either', afterUndo.row && !afterUndo.row.cells?.[MEETING], cellsOf(afterUndo.row));
+    }
+
+    // ---- what the server refuses ------------------------------------------
+    const badDay = await req('PUT', '/api/attendance/sheet', {
+      ...H, body: { column: MONDAY, member_id: memberId, pre_service: true, service: false },
     });
-    ok('a date that is not a Sunday → 400', badDay.status === 400, `status ${badDay.status}`);
+    ok('a Sunday column that is not a Sunday → 400', badDay.status === 400, `status ${badDay.status}`);
     ok('…and says so in words, not as a constraint name',
       /not a Sunday/i.test(badDay.json?.message || ''), String(badDay.json?.message));
 
-    // Missing pieces are refused too, rather than writing a half row.
-    const noDate = await req('PUT', '/api/attendance/sundays', {
-      ...H, body: { hall_id: hallId, member_id: memberId, pre_service: true },
+    const junkColumn = await req('PUT', '/api/attendance/sheet', {
+      ...H, body: { column: 'weekday:2030-01-07', member_id: memberId, pre_service: true },
     });
-    ok('a write with no service_date → 400', noDate.status === 400, `status ${noDate.status}`);
+    ok('a column key the server never handed out → 400', junkColumn.status === 400, `status ${junkColumn.status}`);
 
-    // A sheet is always ONE congregation: an unnarrowed read is refused rather
-    // than merging them. (With a single-congregation church there is nothing
-    // ambiguous to refuse, so that case is skipped.)
-    if ((halls || []).length > 1) {
-      const merged = await req('GET', '/api/attendance/sundays?year=2030&month=1', H);
-      ok('an all-congregations sheet read → 400', merged.status === 400, `status ${merged.status}`);
-      ok('…and explains that a sheet is one congregation',
-        /congregation/i.test(merged.json?.message || ''), String(merged.json?.message));
-    } else {
-      ok('all-congregations refusal (skipped: one congregation)', true);
-    }
+    const noMember = await req('PUT', '/api/attendance/sheet', { ...H, body: { column: SUNDAY, pre_service: true } });
+    ok('a write with no member_id → 400', noMember.status === 400, `status ${noMember.status}`);
+
+    // ---- 全部堂会 answers now, instead of refusing -------------------------
+    const merged = await req('GET', '/api/attendance/sheet?year=2030&month=1', H);
+    ok('an all-congregations read → 200', merged.status === 200, `status ${merged.status} ${JSON.stringify(merged.json).slice(0, 120)}`);
+    ok('…and names no single congregation', (merged.json?.hall_id ?? null) === null, String(merged.json?.hall_id));
+    const mergedRows = merged.json?.rows || [];
+    ok('…and lists every congregation’s members, this fixture included',
+      mergedRows.some((r) => r.member?.id === memberId) &&
+        mergedRows.length >= (first.res.json?.rows || []).length,
+      `${mergedRows.length} rows vs ${(first.res.json?.rows || []).length} in one congregation`);
   } finally {
-    // Deleting the member cascades to every sheet row it left behind.
+    // Deleting the member cascades to every sheet row it left behind; deleting
+    // the meeting takes its own ticks with it.
+    if (meetingId) {
+      const delMeeting = await req('DELETE', `/api/events/${meetingId}`, H);
+      ok('the roll-call fixture meeting was deleted', delMeeting.status === 200, `status ${delMeeting.status}`);
+    }
     const del = await req('DELETE', `/api/members/${memberId}`, H);
-    ok('the Sunday-sheet fixture member was deleted', del.status === 200, `status ${del.status}`);
+    ok('the roll-call fixture member was deleted', del.status === 200, `status ${del.status}`);
   }
 }
 
@@ -633,16 +654,16 @@ async function roleMatrix(freeMembers, hallId) {
       ok('readonly GET members → 200', (await req('GET', '/api/members', RH)).status === 200);
       ok('readonly POST members → 403', (await req('POST', '/api/members', { ...RH, body: { full_name: 'x', church_role: 'member', status: 'active' } })).status === 403);
       ok('readonly GET accounts → 403', (await req('GET', '/api/accounts', RH)).status === 403);
-      // The Sunday sheet writes with PUT — a verb the gate had never seen
+      // The roll-call sheet writes with PUT — a verb the gate had never seen
       // before 0013, so prove it is refused for a read-only account too, and
       // that the refusal happens before anything is written.
       if (hallId) {
-        ok('readonly GET sunday sheet → 200',
-          (await req('GET', `/api/attendance/sundays?hall_id=${hallId}&year=2030&month=1`, RH)).status === 200);
-        ok('readonly PUT sunday sheet → 403',
-          (await req('PUT', '/api/attendance/sundays', {
+        ok('readonly GET roll-call sheet → 200',
+          (await req('GET', `/api/attendance/sheet?hall_id=${hallId}&year=2030&month=1`, RH)).status === 200);
+        ok('readonly PUT roll-call sheet → 403',
+          (await req('PUT', '/api/attendance/sheet', {
             ...RH,
-            body: { hall_id: hallId, service_date: '2030-01-06', member_id: freeMembers[0].id, pre_service: true, service: true },
+            body: { column: 'sunday:2030-01-06', member_id: freeMembers[0].id, pre_service: true, service: true },
           })).status === 403);
       }
       await churchRoleMatrix('readonly', RH);

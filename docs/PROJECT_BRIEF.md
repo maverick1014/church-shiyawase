@@ -155,33 +155,36 @@ tog/
 - The member list itself is a simple name + remove list — no per-member position dropdown; 核心成员/普通成员/新成员 are set on the member's own profile page instead.
 
 ### 5.3 Services & attendance (崇拜与祷告会 · `/events`)
-**Every Sunday simply happens — nobody creates one.** The page is a SHEET
-(`sunday_attendance`, migration 0013): the congregation's members down the
-left, the Sundays of the chosen month across the top, and **two ticks per
-Sunday** — 会前 (pre-service prayer) and 主日 (the service). A Sunday nobody was
-marked on has no rows at all, which is "not recorded" rather than "everyone was
-absent"; unticking both boxes deletes the row rather than storing two falses.
-- **One congregation per sheet.** Each hall rolls its own call, including on a
-  week the halls meet together — there is no 联合聚会 concept any more, only the
-  same date on three sheets with three member lists. On 全部堂会 the page asks
-  for a congregation and `GET /attendance/sundays` answers **400** rather than
-  merging them. `hall_id` on the row records where the person was counted *that*
-  Sunday, so moving them between halls later never rewrites what was taken.
-- **Hand-added meetings stay** (`events`): the occasional Wednesday prayer
-  meeting. A name, a date and a congregation is all it takes — no type, no
-  location, no recurrence — and each keeps its own 出席 / 请假 / 缺席 roll call.
-- **循环聚会 (`/events/recurring`)**: schedules for a recurring weeknight
-  meeting. Each rule sets 名称/类型/星期/时间/地点/堂会/提前天数 (default 35 ≈ one
-  month) and can be paused. `GET /events` fills the window from the active
-  rules — generation is **lazy, not a cron job**: the calendar only has to be
-  right for whoever is looking at it, and there's no scheduled task to fail
-  silently. Forward-only and idempotent, so a meeting deliberately deleted
-  (public holiday) is not resurrected. **Deleting a rule keeps its
-  already-generated events** (they carry attendance records).
-  **Sunday rules are no longer generated**: the sheet holds that attendance, so
-  manufacturing a 主日崇拜 row only invented a date the calendar already knew
-  about. The weekday dropdown no longer offers Sunday and the generator skips
-  any rule left over from before (its past occurrences stay readable).
+**Every Sunday simply happens — nobody creates one.** The page is ONE SHEET for
+the month: the members down the left, and across the top that month's Sundays
+followed, in date order, by every meeting someone added for it.
+- **A Sunday column** (`sunday_attendance`, migration 0013) carries the two
+  ticks a Sunday has — 会前 (pre-service prayer) and 主日 (the service). A
+  Sunday nobody was marked on has no rows at all, which is "not recorded"
+  rather than "everyone was absent"; unticking both deletes the row rather than
+  storing two falses.
+- **A meeting column** (`events` / `event_attendance`) is one hand-added
+  occasion — a 31 August night prayer meeting — sorted into place among the
+  Sundays with exactly ONE tick (到场). There is no 会前 to invent for it.
+  Adding / editing one asks for a name and a date only (plus the congregation,
+  forced server-side for a hall-scoped account); its own name in the column
+  header is the edit affordance. Deleting it takes its ticks with it
+  (`event_attendance` cascades), so it goes through the danger confirmation.
+- **One grid, two tables, and the page knows about neither.** Each column
+  carries an opaque `key` (`sunday:YYYY-MM-DD` / `meeting:<id>`);
+  `PUT /attendance/sheet` quotes it back and the server resolves which table the
+  tick lands in (`lib/sheet.ts`). Column ORDER is a pure function of the
+  calendar and the meetings, unit-tested under a non-Malaysia `TZ`.
+- **Congregations.** Narrowing with the switcher narrows the member list and
+  the meeting columns together (a meeting with `hall_id is null` is 全堂开放 and
+  shows for everyone). On 全部堂会 the sheet simply lists **every** member — it
+  used to refuse with a 400, which is gone. A tick is still filed under the
+  member's OWN congregation, so what was recorded never loses its hall, and a
+  client-sent `hall_id` is never trusted.
+- **循环聚会 is gone** (migration 0015 drops `recurring_events` and
+  `events.recurring_id`). It existed only to manufacture rows for dates the
+  calendar already knew about; with the sheet supplying its own columns there is
+  nothing left for a schedule to pre-create.
 
 ### 5.4 Donations (奉献管理)
 - Fields: 奉献人(可匿名)、金额、币种、类别(十一/主日/建堂/宣教/感恩…)、方式(现金/转账/刷卡/线上)、日期、备注.
@@ -233,8 +236,8 @@ Tables:
   - `check (group_position is null or group_id is not null)`
   - **partial unique indexes**: one `leader` / one `assistant_leader` / one `intern_leader` per `group_id`.
 - `sunday_attendance(id, hall_id→halls **NOT NULL**, service_date date, member_id→members, pre_service, service, updated_at, unique(hall_id,service_date,member_id))` — 主日点名. `check (pre_service or service)` so an all-false row can never be stored (no row already means "not recorded"), and `check (extract(dow from service_date) = 0)` so only Sundays land on the Sunday sheet. Indexed `(hall_id, service_date)` — the sheet is always read as one hall, one month — and `(member_id, service_date desc)` for a member's own history.
-- `events(id, title, description, event_type, location, starts_at, ends_at, hall_id→halls **nullable**, recurring_id→recurring_events **nullable, on delete set null**, created_at)` — the meetings someone adds by hand; `hall_id is null` = 全堂. The old `events_unique_sunday_service` index is dropped by 0013: nothing manufactures a 主日崇拜 row any more. `(recurring_id, starts_at)` still keeps the weeknight top-up idempotent.
-- `recurring_events(id, title, event_type, weekday, start_time, location, hall_id→halls nullable, lookahead_days default 35, active, created_at)` — 循环聚会 schedules. `GET /events` tops the calendar up from the active rules (lazy, no cron). Deleting a rule **keeps** the events it produced (FK is `on delete set null`); it only stops future generation.
+- `events(id, title, description, event_type, location, starts_at, ends_at, hall_id→halls **nullable**, created_at)` — the meetings someone adds by hand, each a dated column on the roll-call sheet; `hall_id is null` = 全堂. The old `events_unique_sunday_service` index went with 0013 (nothing manufactures a 主日崇拜 row any more) and `recurring_id` with 0015.
+- ~~`recurring_events`~~ — **dropped by 0015**, together with `events.recurring_id`. The schedules only ever pre-created event rows for dates the calendar already had; the roll-call sheet builds its own columns, so nothing needed them.
 - `event_attendance(id, event_id, member_id, status, checked_in_at, notes, unique(event_id,member_id))`
 - `donations(id, member_id?, amount, currency, fund, method, donated_at, notes, created_at)`
 - `trainings(id, name, description, category, **kind** `course|activity` check, default `course`, trainer_id→members, total_sessions, is_enrollable, starts_on, ends_on, hall_id→halls **nullable**, created_at)` — `hall_id is null` = 全堂开放. `kind` (0014) is the only thing that tells a course from a one-off activity; the catalog of shapes is `TrainingKind` in `packages/shared`.
@@ -260,9 +263,8 @@ Tables:
 | `/members` | 成员目录 | filter chips by 身份(derived) + 小组, search, table, create |
 | `/members/[id]` | 成员详情 | profile + **个人培训档案** + 门训对子 |
 | `/groups` | 小组管理 · 列表 | table of all groups (小组名称+标签, 组长, 组员人数, 新成员人数, 小组状态, 聚会时间地点), sortable, filter by 标签/星期几, click a row → detail |
-| `/groups/[id]` | 小组详情 | create/delete, member allocation (simple list), **铁三角** leader picker (the only identity assignment here), roll-call card with **小组 / 会前 / 主日** tabs (the Sunday two read and write the group's congregation's `sunday_attendance`) |
-| `/events` | 崇拜与祷告会 Services | 主日点名 sheet (members × the month's Sundays, 会前 / 主日 ticks, per-member totals, export) + the month's hand-added meetings with their own **点名** (出席/请假/缺席) |
-| `/events/recurring` | 循环聚会 | recurring weeknight schedules (每周X HH:MM) that auto-fill the calendar; pause/edit/delete. Sunday is not scheduled here — it is the sheet |
+| `/groups/[id]` | 小组详情 | create/delete, member allocation (simple list), **铁三角** leader picker (the only identity assignment here), roll-call card for the group's OWN meetings (year/month, then export at the end of its toolbar) |
+| `/events` | 崇拜与祷告会 Services | ONE 聚会点名 sheet: members × (the month's Sundays with 会前 / 主日 ticks + each hand-added meeting as a dated 到场 column), per-tick totals, export; ＋新增聚会, edit/delete from a meeting's column header |
 | `/donations` | 奉献管理 | fund summary tiles + records table + create |
 | `/trainings` | 培训&活动 | catalog cards for both shapes, kind filter, ＋新增课程 / ＋新增活动 |
 | `/trainings/[id]` | 培训 / 活动详情 | a course: sessions, enrolment approval, **核对名单** grid, per-session attendance. An activity: no session list, one 「到场」 column |
@@ -283,8 +285,8 @@ Tables:
 | Halls | `GET /halls` — 堂会 list (read-only; a hall-scoped account only sees its own) |
 | Groups | `GET/POST /groups`, `GET/PATCH/DELETE /groups/:id` (member positions live on `members`) |
 | Households | `GET/POST /households`, `GET/PATCH/DELETE /households/:id` |
-| 主日点名 | `GET /attendance/sundays?hall_id&year&month` → `{hall_id, dates[], rows[{member, cells{date:{pre_service,service}}}]}`; `PUT /attendance/sundays` `{hall_id, service_date, member_id, pre_service, service}` — one cell, created / updated / **deleted** (both false) by the same call. 400 on a non-Sunday date and on an unnarrowed (all-congregations) read |
-| Events | `GET/POST /events`, `GET/PATCH/DELETE /events/:id`, `POST /events/:id/attendance` — the hand-added meetings only |
+| 聚会点名 | `GET /attendance/sheet?year&month[&hall_id]` → `{hall_id, columns[{key, kind, date, ticks[], meeting}], rows[{member, cells{key:{…ticks}}}]}` — no `hall_id` means every congregation's members; `PUT /attendance/sheet` `{column, member_id, …ticks}` — one cell, created / updated / **deleted** (every tick false) by the same call, in `sunday_attendance` or `event_attendance` depending on the column. 400 on a non-Sunday `sunday:` column and on a column key the server never handed out |
+| Events | `GET/POST /events`, `GET/PATCH/DELETE /events/:id` — the hand-added meetings; their attendance is a column on the sheet above |
 | Donations | `GET/POST /donations`, `GET /donations/summary`, `PATCH/DELETE /donations/:id` |
 | Trainings & Activities | `GET/POST /trainings`, `GET/PATCH/DELETE /trainings/:id`, `GET /trainings/:id/namelist`, **public** `GET/POST /trainings/enroll/:id`. `kind` is validated server-side (400 on anything but `course`/`activity`); creating an `activity` forces `total_sessions: 1` and inserts its single session |
 | Sessions | `POST /trainings/:id/sessions`, `PATCH/DELETE /trainings/sessions/:sessionId`, `POST /trainings/sessions/:sessionId/attendance` |
