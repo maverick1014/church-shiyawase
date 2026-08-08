@@ -1062,9 +1062,13 @@ async function main() {
       const churchBody = await page.locator('.content').innerText();
       check('church settings shows the church profile and the module catalog',
         churchBody.includes('Church profile') && churchBody.includes('Add-on modules'));
+      // Skip file inputs: the logo picker is an invisible <input type=file>
+      // that sits ABOVE the name field in the DOM, so "the card's first input"
+      // is the file picker and its value is always empty.
+      const churchName = page.locator('.card input:not([type=file])').first();
       check('the church name field is filled from the record',
-        (await page.locator('.card input').first().inputValue()) === churchRecord.name,
-        churchRecord.name);
+        (await churchName.inputValue()) === churchRecord.name,
+        `field=${await churchName.inputValue()} record=${churchRecord.name}`);
       check('the catalog lists the Forty Days add-on with a switch',
         (await catalogRow('Forty Days').locator('.switch').count()) === 1);
 
