@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { api } from '@/lib/api';
 import { BrandLogo } from '@/components/BrandLogo';
 import { Field } from '@/components/ui';
+import { useChurchProfile } from '@/lib/church';
 import { useT } from '@/lib/i18n';
 
 interface FormPair {
@@ -19,7 +20,10 @@ interface FormPair {
 export default function DailyFormPage() {
   const { token } = useParams<{ token: string }>();
   // Public link — no session, so this renders in the app default language.
+  // The church's name is data, not a translation, so the privacy line takes it
+  // as a {church} placeholder rather than baking it into three dictionaries.
   const t = useT();
+  const church = useChurchProfile();
   const [pair, setPair] = useState<FormPair | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -83,7 +87,7 @@ export default function DailyFormPage() {
       <div className="flex-between" style={{ padding: '15px 20px', borderBottom: '1px solid var(--border)', background: 'var(--surface)', position: 'sticky', top: 0, zIndex: 2 }}>
         <div className="flex items-center gap-10 serif" style={{ fontWeight: 600, fontSize: 15 }}>
           <span style={{ width: 30, height: 30, borderRadius: 8, background: '#fff', display: 'grid', placeItems: 'center', flexShrink: 0, overflow: 'hidden', boxShadow: 'inset 0 0 0 1px rgba(0,0,0,.06)' }}>
-            <BrandLogo size={26} />
+            <BrandLogo size={26} church={church} />
           </span>
           {t('form.header')}
         </div>
@@ -157,7 +161,7 @@ export default function DailyFormPage() {
           )}
         </div>
         <div className="faint" style={{ marginTop: 18, fontSize: 12, textAlign: 'center', maxWidth: 460 }}>
-          {t('form.privacy')}
+          {t('form.privacy', { church: church?.name ?? '' })}
         </div>
       </div>
     </div>

@@ -34,14 +34,26 @@
 | 新增 · 编辑（牧养数据写操作，非 GET 且非 DELETE） | ✅ | ✅ | ✅ | ❌ |
 | 删除（DELETE） | ✅ | ✅ | ❌ | ❌ |
 | 账户管理（`/accounts*` 的**读与写**：列表、新建、编辑、删除、重设密码） | ✅ | ❌ | ❌ | ❌ |
+| 查看教会资料与附加模块状态（`GET /church`、`GET /church/modules`） | ✅ | ✅ | ✅ | ✅ |
+| 修改教会资料 / 开关附加模块（`/church*` 的**任意写操作**） | ✅ | ❌ | ❌ | ❌ |
 | 自助修改我的密码（`/auth/password`，须验证当前密码） | ✅ | ✅ | ✅ | ✅ |
 | 公开门训表单（`/d/[token]` 及 `/api/discipleship/form/*`，无需登录） | 公开（任何持 token 者） | 公开 | 公开 | 公开 |
 
-服务端闸门要点（`route.ts` L47–65）：
+服务端闸门要点（`route.ts` 顶部的 dispatch 闸门）：
 
-- `r0 === 'auth'` 与 `discipleship/form/*` 为公开路径，其余一律要求有效会话，否则 `401 未登录`。
+- `r0 === 'auth'`、`discipleship/form/*`、`trainings/enroll/*` 与 **`GET /church`** 为公开路径，
+  其余一律要求有效会话，否则 `401 未登录`。`GET /church` 公开是因为登录页与两个公开表单都要显示
+  教会名称，且这四个字段（name / short_name / description / logo_url）本身不敏感；`/church` 的
+  **写操作依旧仅 super_admin**。
 - `accounts*` 的**任意方法（含 GET）** 仅 `super_admin`，否则 `403 仅超级管理员可管理登录账户`（读也受限，避免账户邮箱 / 角色 / 登录历史泄露）。
+- `church*` 的**非 GET** 仅 `super_admin`，否则 `403`（改教会名称或关掉一个模块，影响的是全教会）。
 - 非 GET 时：`readonly` 一律 `403 只读账户无法修改`；`DELETE` 仅 `super_admin` / `admin`，否则 `403 当前角色无删除权限`。
+- **模块启用（第三个访问维度，与角色、堂会并列）**：`church_modules` 记录本教会开启了哪些
+  **附加模块**；代码侧的注册表（`packages/shared` 的 `OPTIONAL_MODULES`）说明每个模块拥有哪个
+  导航入口与哪些 API 前缀。请求路径若属于一个**已关闭**的模块，服务端直接 `404 该模块未启用`
+  ——含公开的带领者表单（模块关闭，其链接一并失效）。选 404 而非 403：模块关闭不是「你没有权限」，
+  任何角色、任何堂会都无法访问，对本教会而言该功能并不存在。目前唯一的附加模块是
+  `discipleship`（四十天守望）；`/auth*`、`/church*` 与所有核心路径永远不受此闸门影响。
 - 密码：PBKDF2-HMAC-SHA256 加盐存储，最少 8 位；会话为 HMAC-SHA256 签名 Cookie（`tog_session`，HttpOnly / Secure / SameSite=Lax，7 天有效）。
 
 ---

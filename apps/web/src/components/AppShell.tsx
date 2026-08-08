@@ -1,16 +1,17 @@
 'use client';
 
-import { createContext, ReactNode, useContext, useEffect, useState } from 'react';
+import { createContext, ReactNode, useCallback, useContext, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { ConfirmProvider, ToastProvider, useConfirm, useToast } from './ui';
 import { BrandLogo } from './BrandLogo';
 import { accountRoleKey, initialOf } from '@/lib/labels';
 import { HallContext } from '@/lib/hall';
+import { ChurchContext, fetchModuleStates, useChurchProfile } from '@/lib/church';
 import { I18nProvider, useT } from '@/lib/i18n';
 import type { MessageKey } from '@/lib/i18n';
 import { HallRow } from '@/lib/types';
-import { AccountRole, Language } from '@tog/shared';
+import { AccountRole, Language, moduleForNavHref } from '@tog/shared';
 
 type Me = {
   name: string;
@@ -76,11 +77,31 @@ const NAV: { section: MessageKey; items: NavItem[] }[] = [
     ],
   },
   {
-    // User management is super_admin-only (matches the API gate on /accounts).
+    // User management and church settings are super_admin-only (matches the
+    // API gate on /accounts and on every write to /church).
     section: 'nav.section.system',
-    items: [{ href: '/settings', label: 'nav.settings', icon: '⚙', role: AccountRole.SuperAdmin }],
+    items: [
+      { href: '/settings', label: 'nav.settings', icon: '⚙', role: AccountRole.SuperAdmin },
+      { href: '/church', label: 'nav.church', icon: '⛪', role: AccountRole.SuperAdmin },
+    ],
   },
 ];
+
+/**
+ * Which nav items this session may see. Two independent gates, both of which
+ * the server enforces too (rule G2):
+ *  - the account's permission role (`item.role`);
+ *  - whether the add-on module owning that href is switched on for this
+ *    church. The mapping href → module comes from the shared registry, so a
+ *    new optional module hides itself here without touching this file.
+ */
+function visibleItems(items: NavItem[], role: string, modules: Record<string, boolean>) {
+  return items.filter((it) => {
+    if (it.role && it.role !== role) return false;
+    const owner = moduleForNavHref(it.href);
+    return !owner || modules[owner] !== false;
+  });
+}
 
 /**
  * The shell owns the session, so it also owns the interface language: it hands
@@ -112,6 +133,14 @@ function Shell({
   const [halls, setHalls] = useState<HallRow[]>([]);
   // '' = 全部堂会. A single-hall account is pinned to its own hall below.
   const [hallId, setHallId] = useState('');
+  // The church's own record (name + logo) and which add-on modules it runs.
+  // `modules` is null until it has resolved: the nav cannot be drawn before
+  // then without flashing an entry this church may not have.
+  const church = useChurchProfile();
+  const [modules, setModules] = useState<Record<string, boolean> | null>(null);
+  const reloadModules = useCallback(() => {
+    void fetchModuleStates().then(setModules);
+  }, []);
 
   // Close the mobile drawer on navigation.
   useEffect(() => {
@@ -129,12 +158,20 @@ function Shell({
         // A hall-scoped account always views its own hall; the switcher is
         // hidden for them (the server enforces the same scope regardless).
         if (u.hall) setHallId(u.hall);
-        return fetch('/api/halls')
-          .then((r) => (r.ok ? r.json() : []))
-          .then((hs: HallRow[]) => {
-            if (alive) setHalls(hs);
-          })
-          .catch(() => {});
+        // Independent of each other, so they go together rather than in
+        // sequence (rule G6). The module states gate the nav, so the shell
+        // waits for them below; the halls may arrive whenever.
+        return Promise.all([
+          fetch('/api/halls')
+            .then((r) => (r.ok ? r.json() : []))
+            .then((hs: HallRow[]) => {
+              if (alive) setHalls(hs);
+            })
+            .catch(() => {}),
+          fetchModuleStates().then((m) => {
+            if (alive) setModules(m);
+          }),
+        ]);
       })
       .catch(() => {
         window.location.href = '/login';
@@ -169,7 +206,9 @@ function Shell({
       </select>
     ) : null;
 
-  if (!me) {
+  // The nav's shape depends on the module states as much as on the role, so
+  // both have to be in hand before anything is drawn.
+  if (!me || !modules) {
     return (
       <div className="loading" style={{ minHeight: '100vh', display: 'grid', placeItems: 'center' }}>
         {t('common.loading')}
@@ -179,6 +218,7 @@ function Shell({
 
   return (
     <MeContext.Provider value={me}>
+    <ChurchContext.Provider value={{ church, modules, reloadModules }}>
     <HallContext.Provider value={{ halls, hallId, setHallId, locked: !!me.hall }}>
     <ConfirmProvider>
     <ToastProvider>
@@ -187,9 +227,13 @@ function Shell({
           <aside className="sidebar">
             <div className="brand-head">
               <div className="brand-mark">
-                <BrandLogo size={34} />
+                <BrandLogo size={34} church={church} />
               </div>
-              <div className="brand-name">{t('login.title')}</div>
+              {/* The church's own name, from its record — not a translated
+                  string: one church is called the same thing in every
+                  interface language. `church.defaultName` only ever shows if
+                  the record cannot be read at all. */}
+              <div className="brand-name">{church?.short_name || church?.name || t('church.defaultName')}</div>
             </div>
 
             {/* Phones only: the topbar's actions are hidden below 820px, so the
@@ -202,7 +246,7 @@ function Shell({
             )}
 
             {NAV.map((group) => {
-              const items = group.items.filter((it) => !it.role || it.role === me.role);
+              const items = visibleItems(group.items, me.role, modules);
               if (items.length === 0) return null;
               return (
                 <div key={group.section}>
@@ -252,6 +296,7 @@ function Shell({
     </ToastProvider>
     </ConfirmProvider>
     </HallContext.Provider>
+    </ChurchContext.Provider>
     </MeContext.Provider>
   );
 }

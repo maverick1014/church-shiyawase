@@ -461,10 +461,16 @@ async function main() {
     if (!loggedIn) throw new Error('login failed — aborting remaining checks');
     const sidebar = await page.locator('.sidebar').innerText();
     check(
-      'sidebar lists every module + Users (super admin only)',
-      ['Members', 'Life Groups', 'Events & Attendance', 'Trainings', 'Forty Days', 'Users']
+      'sidebar lists every module + Users and Church settings (super admin only)',
+      ['Members', 'Life Groups', 'Events & Attendance', 'Trainings', 'Forty Days', 'Users', 'Church settings']
         .every((label) => sidebar.includes(label)),
     );
+    // The brand at the top of the sidebar is the CHURCH's own name, read from
+    // its record — not a translated string and not a hardcoded one.
+    const churchRecord = await apiGet('/church');
+    check('the sidebar brand shows the church record’s name',
+      sidebar.includes(churchRecord.short_name || churchRecord.name),
+      churchRecord.short_name || churchRecord.name);
     await shot('01-dashboard');
 
     /* -- member directory ------------------------------------------------- */
@@ -752,6 +758,113 @@ async function main() {
     check('the account detail exposes an editable login email',
       (await page.locator('.card input[type=email]:not([disabled])').count()) > 0);
     await shot('08-settings');
+
+    /* -- church settings · add-on module catalog -------------------------- */
+    // 四十天守望 is an ADD-ON, not a core module: a church may not run it. The
+    // catalog on /church is where that is decided, and the thing worth
+    // asserting is that switching it off actually reaches the whole app — the
+    // nav entry goes, the page says why, and the API refuses.
+    //
+    // This writes to the church's LIVE settings, so the original state is read
+    // first and restored in the `finally` whatever happens: a failed check
+    // must never leave a module switched off for real users.
+    mod('church settings · add-on modules');
+    const moduleStatesBefore = await apiGet('/church/modules');
+    const discBefore = moduleStatesBefore.find((m) => m.key === 'discipleship');
+    /** The row in the catalog for one module — its switch lives on it. */
+    const catalogRow = (name) => page.locator('.card .flex-between', { hasText: name });
+    try {
+      await page.goto(`${BASE}/church`, { waitUntil: 'domcontentloaded' });
+      await page.locator('button:has-text("Save church profile")').first().waitFor({ timeout: 20000 });
+      const churchBody = await page.locator('.content').innerText();
+      check('church settings shows the church profile and the module catalog',
+        churchBody.includes('Church profile') && churchBody.includes('Add-on modules'));
+      check('the church name field is filled from the record',
+        (await page.locator('.card input').first().inputValue()) === churchRecord.name,
+        churchRecord.name);
+      check('the catalog lists the Forty Days add-on with a switch',
+        (await catalogRow('Forty Days').locator('.switch').count()) === 1);
+
+      check('the catalog reports the module’s stored state',
+        typeof discBefore?.enabled === 'boolean', JSON.stringify(discBefore));
+      // The toggle cycle starts from ON. A church that has genuinely switched
+      // it off is not a failure — say so and leave its setting alone.
+      if (!discBefore?.enabled) check('module already off — toggle cycle skipped', true);
+      if (discBefore?.enabled) {
+        // Turning one off removes a whole section for everyone, so it asks
+        // first and the message has to say what goes and what is kept (G3).
+        await catalogRow('Forty Days').locator('.switch').first().click();
+        await page.locator('.modal-backdrop').last().waitFor({ timeout: 8000 });
+        const confirmCopy = await page.locator('.modal-backdrop').last().innerText();
+        check('switching a module off asks first, and says what disappears',
+          confirmCopy.includes('Forty Days') && /sidebar/i.test(confirmCopy),
+          confirmCopy.replace(/\s+/g, ' ').slice(0, 140));
+        check('…and promises the existing pairs and progress are kept',
+          /nothing is deleted/i.test(confirmCopy) && /progress/i.test(confirmCopy),
+          confirmCopy.replace(/\s+/g, ' ').slice(0, 200));
+        await page.locator('.modal-backdrop').last().locator('button:has-text("Turn off module")').last().click();
+        await w(1500);
+
+        const offStates = await apiGet('/church/modules');
+        check('confirming stores the module as off',
+          offStates.find((m) => m.key === 'discipleship')?.enabled === false,
+          JSON.stringify(offStates));
+        // The server is the authority: the path has to stop answering, not
+        // just stop being linked (rule G2).
+        const blocked = await ctx.request.get(`${BASE}/api/discipleship/programs`);
+        check('a disabled module’s API path is refused', blocked.status() === 404, `status ${blocked.status()}`);
+
+        await page.goto(`${BASE}/members`, { waitUntil: 'domcontentloaded' });
+        await page.locator('.mtile').first().waitFor({ timeout: 20000 });
+        check('the nav loses the disabled module’s entry',
+          !(await page.locator('.sidebar').innerText()).includes('Forty Days'));
+
+        await page.goto(`${BASE}/discipleship`, { waitUntil: 'domcontentloaded' });
+        await page.locator('.empty').first().waitFor({ timeout: 20000 });
+        const offPage = await page.locator('.content').innerText();
+        check('going straight to its URL explains it is not enabled',
+          /not enabled/i.test(offPage) && !/error/i.test(offPage),
+          offPage.replace(/\s+/g, ' ').slice(0, 120));
+
+        // Back on again — turning a module ON takes nothing away, so it needs
+        // no confirmation, and the whole section has to come back.
+        await page.goto(`${BASE}/church`, { waitUntil: 'domcontentloaded' });
+        await catalogRow('Forty Days').locator('.switch').first().waitFor({ timeout: 20000 });
+        await catalogRow('Forty Days').locator('.switch').first().click();
+        await w(1500);
+        check('turning it back on needs no confirmation',
+          (await page.locator('.modal-backdrop').count()) === 0);
+        const onStates = await apiGet('/church/modules');
+        check('the module is stored as on again',
+          onStates.find((m) => m.key === 'discipleship')?.enabled === true,
+          JSON.stringify(onStates));
+        await page.goto(`${BASE}/discipleship`, { waitUntil: 'domcontentloaded' });
+        await page.locator('h1').first().waitFor({ timeout: 20000 });
+        await w(1200);
+        check('the nav entry and the page come back',
+          (await page.locator('.sidebar').innerText()).includes('Forty Days') &&
+            !/not enabled/i.test(await page.locator('.content').innerText()));
+      }
+      await shot('08a-church');
+    } finally {
+      // Belt and braces: whatever happened above, the church is left running
+      // exactly the modules it was running before this ran.
+      if (discBefore) {
+        const now = await ctx.request
+          .get(`${BASE}/api/church/modules`)
+          .then((r) => r.json())
+          .catch(() => null);
+        const current = now?.find?.((m) => m.key === 'discipleship');
+        if (!current || current.enabled !== discBefore.enabled) {
+          const restored = await ctx.request
+            .patch(`${BASE}/api/church/modules/discipleship`, { data: { enabled: discBefore.enabled } })
+            .then((r) => r.ok())
+            .catch(() => false);
+          console.log(`  ↳ cleanup: ${restored ? 'restored' : 'COULD NOT RESTORE'} the discipleship module to enabled=${discBefore.enabled}`);
+          check('the add-on module was left as it was found', restored, `enabled=${discBefore.enabled}`);
+        }
+      }
+    }
 
     /* -- my profile ------------------------------------------------------- */
     // The account block at the foot of the sidebar is a link straight to this

@@ -254,6 +254,22 @@ export function Empty({ children }: { children: ReactNode }) {
   return <div className="empty">{children}</div>;
 }
 
+/**
+ * What a page owned by a switched-off add-on module shows. The nav entry is
+ * already gone, so this is what a bookmark or a pasted link lands on — a
+ * stated reason rather than a crash or a blank list. The API refuses the same
+ * paths regardless (rule G2); this is only the explanation.
+ */
+export function ModuleDisabled({ name }: { name: string }) {
+  const t = useT();
+  return (
+    <Empty>
+      <div style={{ fontWeight: 600, marginBottom: 6 }}>{t('module.off.title', { name })}</div>
+      <div style={{ fontSize: 13 }}>{t('module.off.body')}</div>
+    </Empty>
+  );
+}
+
 /* -------------------------------------------------------------------------
  * Avatar, badges
  * ---------------------------------------------------------------------- */

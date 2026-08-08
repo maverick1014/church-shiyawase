@@ -192,6 +192,16 @@ tog/
 Enums: `church_role(pastor,member)`, `group_position(leader,assistant_leader,intern_leader,core_member,regular_member,new_member)`, `member_status(active,inactive)`, `gender_type`, `event_type`, `attendance_status(present,absent,excused)`, `donation_method`, `enrollment_status(pending,approved,in_progress,completed,dropped)`, `pair_status(active,completed,paused)`.
 
 Tables:
+- `church(id, name, short_name, description, logo_url, timestamps)` — **one row**, seeded by 0012. The
+  church's identity is data, not a hardcoded string: the sidebar brand, the login card and both
+  public forms render from it. `GET /api/church` is **public** (the login page has no session);
+  every write is super_admin. `logo_url` points at the public `branding` storage bucket, uploaded
+  through `POST /api/church/logo` — the same mechanism as a member's avatar.
+- `church_modules(church_id→church on delete cascade, module, enabled, timestamps, pk(church_id,module))` —
+  which **optional** modules this church runs. The catalog of what CAN be switched lives in code
+  (`OPTIONAL_MODULES` in `packages/shared`: a key, the nav href it owns, the API prefixes it owns);
+  only the on/off state lives here, and a key outside the registry is a 400. Today the one entry is
+  `discipleship` (四十天守望). A missing row counts as ON.
 - `halls(id, name, sort_order, created_at)` — 中文堂 / 英文堂 / 马来文堂. One shared database; a hall is a **scope column**, not a separate deployment.
 - `groups(id, name, description, meeting_day weekday, meeting_time, location, tags text[], hall_id→halls **NOT NULL**, created_at)` — **no leader columns** (derived); 小组状态 (可分植/可加人/刚好) is also derived, not stored.
 - `households(id, name, address, phone, created_at)` — optional family grouping.
@@ -235,6 +245,8 @@ Tables:
 | `/discipleship/pairs/[id]` | 对子进度 | 40-day grid + cascade lineage (pastor view) |
 | `/d/[token]` | 每日填写页（独立） | **standalone, mobile-first, no login** mentor daily form |
 | `/enroll/[id]` | 培训报名页（独立） | **standalone, mobile-first, no login** self-enrollment — matches full Chinese name to a member |
+| `/settings` | 用户管理 | login accounts (super_admin only) |
+| `/church` | 教会设置 | the church record (name / short name / description / logo) + the **add-on module catalog** — super_admin only |
 
 ---
 

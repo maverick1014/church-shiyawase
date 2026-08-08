@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { BrandLogo } from '@/components/BrandLogo';
 import { Field } from '@/components/ui';
+import { useChurchProfile } from '@/lib/church';
 import { trainingCategoryLabel } from '@/lib/labels';
 import { useT } from '@/lib/i18n';
 import type { MessageKey } from '@/lib/i18n';
@@ -35,7 +36,9 @@ const RESULT: Record<
 export default function EnrollFormPage() {
   const { id } = useParams<{ id: string }>();
   // Public link — no session, so this renders in the app default language.
+  // The church's name is data, not a translation: it comes off the record.
   const t = useT();
+  const church = useChurchProfile();
   const [training, setTraining] = useState<EnrollTraining | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -76,7 +79,7 @@ export default function EnrollFormPage() {
       <div className="flex-between" style={{ padding: '15px 20px', borderBottom: '1px solid var(--border)', background: 'var(--surface)', position: 'sticky', top: 0, zIndex: 2 }}>
         <div className="flex items-center gap-10 serif" style={{ fontWeight: 600, fontSize: 15 }}>
           <span style={{ width: 30, height: 30, borderRadius: 8, background: '#fff', display: 'grid', placeItems: 'center', flexShrink: 0, overflow: 'hidden', boxShadow: 'inset 0 0 0 1px rgba(0,0,0,.06)' }}>
-            <BrandLogo size={26} />
+            <BrandLogo size={26} church={church} />
           </span>
           {t('enroll.header')}
         </div>
@@ -139,7 +142,7 @@ export default function EnrollFormPage() {
           )}
         </div>
         <div className="faint" style={{ marginTop: 18, fontSize: 12, textAlign: 'center', maxWidth: 460 }}>
-          Tabernacle of Grace
+          {church?.name ?? ''}
         </div>
       </div>
     </div>

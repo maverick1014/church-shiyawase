@@ -9,8 +9,9 @@ import { usePageChrome, useMe } from '@/components/AppShell';
 import { Avatar, BackButton, EntityHeader, ErrorBanner, FactGrid, Field, HallSelect, Modal, ProgressBar, RoleBadge, SkeletonDetail, SkeletonScreen, SortTh, useConfirm, useToast } from '@/components/ui';
 import { PairProgressModal } from '@/components/PairProgressModal';
 import { can } from '@/lib/perms';
+import { useModuleEnabled } from '@/lib/church';
 import { EnrollmentRow, GroupDetail, GroupRow, MemberRow, PairRow } from '@/lib/types';
-import { ChurchRole, GroupPosition, LEADERSHIP_POSITIONS, MemberStatus, Gender } from '@tog/shared';
+import { ChurchRole, GroupPosition, LEADERSHIP_POSITIONS, MemberStatus, Gender, MODULE_DISCIPLESHIP } from '@tog/shared';
 import {
   categoryBadgeClass,
   CHURCH_ROLE_OPTIONS,
@@ -36,7 +37,11 @@ export default function MemberDetailPage() {
 
   const member = useFetch<MemberRow>(`/members/${id}`);
   const record = useFetch<EnrollmentRow[]>(`/members/${id}/trainings`);
-  const allPairs = useFetch<PairRow[]>('/discipleship/pairs');
+  // The 守望 section only exists for a church that runs the add-on module —
+  // and when it doesn't, this fetch must not go out either (the API refuses
+  // every /discipleship path, which would surface as an error banner here).
+  const discipleshipOn = useModuleEnabled(MODULE_DISCIPLESHIP);
+  const allPairs = useFetch<PairRow[]>(discipleshipOn ? '/discipleship/pairs' : null);
   const toast = useToast();
   const confirm = useConfirm();
   const perms = can(useMe().role);
@@ -230,6 +235,8 @@ export default function MemberDetailPage() {
           </table>
         </div>
 
+        {discipleshipOn && (
+        <>
         <div className="section-label" style={{ margin: '24px 0 12px' }}>{tr('disc.title')}</div>
         {pairs.length === 0 ? (
           <div className="faint" style={{ fontSize: 13 }}>{tr('member.noPairs')}</div>
@@ -251,6 +258,8 @@ export default function MemberDetailPage() {
               </div>
             );
           })
+        )}
+        </>
         )}
       </div>
 

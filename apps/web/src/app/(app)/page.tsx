@@ -16,8 +16,9 @@ import {
   roleTagStyle,
   ROLE_ORDER,
 } from '@/lib/labels';
+import { useModuleEnabled } from '@/lib/church';
 import { useT } from '@/lib/i18n';
-import { MemberStatus } from '@tog/shared';
+import { MemberStatus, MODULE_DISCIPLESHIP } from '@tog/shared';
 
 export default function DashboardPage() {
   const t = useT();
@@ -25,14 +26,18 @@ export default function DashboardPage() {
 
   const members = useFetch<MemberRow[]>('/members');
   const events = useFetch<EventRow[]>('/events');
-  const programs = useFetch<ProgramRow[]>('/discipleship/programs');
+  // 四十天守望 is an add-on: a church that does not run it gets neither the
+  // KPI nor the panel — and, crucially, neither of its fetches, which the API
+  // would (correctly) refuse.
+  const discipleshipOn = useModuleEnabled(MODULE_DISCIPLESHIP);
+  const programs = useFetch<ProgramRow[]>(discipleshipOn ? '/discipleship/programs' : null);
   // The 守望 KPI reads the FIRST 守望模块 — the church runs one, and the
   // dashboard deliberately carries no module picker (that lives on
   // /discipleship). If a second module is ever added, this tile needs a
   // decision — sum every module, or say which one it is counting.
   const firstProgram = programs.data?.[0]?.id;
   const overview = useFetch<OverviewRow[]>(
-    firstProgram ? `/discipleship/programs/${firstProgram}/overview` : null,
+    discipleshipOn && firstProgram ? `/discipleship/programs/${firstProgram}/overview` : null,
   );
 
   const loading = members.initialLoading || events.initialLoading;
@@ -85,7 +90,11 @@ export default function DashboardPage() {
     { label: t('dash.kpi.members'), value: memberList.length, suffix: t('dash.unit.people') },
     { label: t('dash.kpi.active'), value: activeCount, suffix: t('dash.unit.people') },
     { label: t('dash.kpi.events'), value: upcoming.length, suffix: t('dash.unit.events') },
-    { label: t('dash.kpi.discipleship'), value: activePairs, suffix: t('dash.unit.pairs') },
+    // Only when the church runs the module — a tile that always reads 0 would
+    // be worse than no tile.
+    ...(discipleshipOn
+      ? [{ label: t('dash.kpi.discipleship'), value: activePairs, suffix: t('dash.unit.pairs') }]
+      : []),
   ];
 
   // The dashboard is four KPI tiles over three panels — the skeleton lays out
@@ -178,6 +187,7 @@ export default function DashboardPage() {
         </Card>
       </div>
 
+      {discipleshipOn && (
       <div className="mt-16">
         <Card
           title={t('dash.discProgress')}
@@ -208,6 +218,7 @@ export default function DashboardPage() {
           )}
         </Card>
       </div>
+      )}
     </>
   );
 }

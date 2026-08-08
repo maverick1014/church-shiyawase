@@ -4,6 +4,110 @@
  */
 
 // ---------------------------------------------------------------------------
+// The church record & its add-on modules
+// ---------------------------------------------------------------------------
+
+/**
+ * The one church this deployment serves (`church` table, 0012). Its name is
+ * DATA, not a translation — a church is called the same thing in every
+ * interface language — so nothing user-facing hardcodes it any more.
+ */
+export interface Church {
+  id: string;
+  name: string;
+  /** Short form for tight chrome; null = use `name`. */
+  short_name: string | null;
+  description: string | null;
+  /** Public URL of the uploaded logo; null = the bundled default mark. */
+  logo_url: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * An OPTIONAL module: a whole section of the product a church may or may not
+ * run. The catalog lives here in code; only the on/off state lives in the
+ * database (`church_modules`), so a row can never enable a feature that does
+ * not exist, and a module can never be half-registered.
+ *
+ * Core surfaces — dashboard, members, groups, events, trainings, accounts,
+ * profile — are deliberately NOT in here: they are not switchable.
+ */
+export interface OptionalModule {
+  /** Stored in `church_modules.module`; also the i18n key suffix. */
+  readonly key: string;
+  /** The single nav entry this module owns, hidden while it is off. */
+  readonly nav: string;
+  /**
+   * The API path prefixes it owns, WITHOUT the `/api` prefix. Every request
+   * whose path starts with one of these is refused while the module is off
+   * (the server-side half of rule G2 — hiding the nav entry is not enough).
+   */
+  readonly api: readonly string[];
+}
+
+/**
+ * The catalog of switchable modules.
+ *
+ * ADDING ONE is a single entry here — the nav hides it, the API gate refuses
+ * its paths and the module catalog page grows a row automatically. The only
+ * other things a second entry needs are its dictionary strings
+ * (`module.<key>.name`, `.desc`, `.dataKept` in en/zh/ms) and a seed row in a
+ * migration, exactly like `discipleship` in 0012.
+ */
+/** The 四十天守望 add-on. Named so call sites don't retype a magic string. */
+export const MODULE_DISCIPLESHIP = 'discipleship';
+
+export const OPTIONAL_MODULES: readonly OptionalModule[] = [
+  // 四十天守望 — the forty-day one-to-one discipleship section. Only some
+  // churches run it, which is why it is the first module to become optional.
+  { key: MODULE_DISCIPLESHIP, nav: '/discipleship', api: ['discipleship'] },
+];
+
+/** Every registered module key, in catalog order. */
+export const OPTIONAL_MODULE_KEYS: readonly string[] = OPTIONAL_MODULES.map((m) => m.key);
+
+/** Is this a module the app actually ships? Guards writes against junk keys. */
+export function isOptionalModule(key: string | null | undefined): boolean {
+  return OPTIONAL_MODULE_KEYS.includes(String(key));
+}
+
+/** Path segments, from either `['a','b']` or `'/a/b'` / `'a/b'`. */
+function segmentsOf(path: string[] | string): string[] {
+  return (Array.isArray(path) ? path : path.split('/')).filter((s) => s !== '');
+}
+
+/**
+ * Which module owns an API path (`['discipleship','pairs']` → `'discipleship'`),
+ * or null when the path belongs to a core surface and can never be gated.
+ * The API gate and the tests both read this, so "which paths a module owns" is
+ * answered in exactly one place.
+ */
+export function moduleForApiPath(path: string[] | string): string | null {
+  const segments = segmentsOf(path);
+  for (const mod of OPTIONAL_MODULES) {
+    for (const prefix of mod.api) {
+      const want = segmentsOf(prefix);
+      if (want.length && want.every((s, i) => segments[i] === s)) return mod.key;
+    }
+  }
+  return null;
+}
+
+/**
+ * Which module owns a nav href, or null for a core page. `/discipleship` and
+ * anything under it belong to the same module, so a deep link is gated too.
+ */
+export function moduleForNavHref(href: string): string | null {
+  const segments = segmentsOf(href);
+  for (const mod of OPTIONAL_MODULES) {
+    const want = segmentsOf(mod.nav);
+    if (want.length && want.every((s, i) => segments[i] === s)) return mod.key;
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 // Members & roles
 // ---------------------------------------------------------------------------
 

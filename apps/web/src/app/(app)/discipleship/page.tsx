@@ -5,9 +5,10 @@ import { useFetch } from '@/lib/hooks';
 import { useSortableRows } from '@/lib/sort';
 import { api } from '@/lib/api';
 import { usePageChrome, useMe } from '@/components/AppShell';
-import { ErrorBanner, ExportButton, Field, LinkIcon, Modal, PageBar, Skeleton, SkeletonScreen, SkeletonTable, SkeletonText, SortTh, useConfirm, useToast } from '@/components/ui';
+import { ErrorBanner, ExportButton, Field, LinkIcon, Modal, ModuleDisabled, PageBar, Skeleton, SkeletonScreen, SkeletonTable, SkeletonText, SortTh, useConfirm, useToast } from '@/components/ui';
 import { PairProgressModal } from '@/components/PairProgressModal';
 import { can, type Perms } from '@/lib/perms';
+import { useModuleEnabled } from '@/lib/church';
 import { exportRows } from '@/lib/export';
 import { MemberRow, OverviewRow, PairRow, ProgramRow } from '@/lib/types';
 import {
@@ -19,7 +20,7 @@ import {
   roleTagStyle,
 } from '@/lib/labels';
 import { useT, type Translate } from '@/lib/i18n';
-import { DisplayRole } from '@tog/shared';
+import { DisplayRole, MODULE_DISCIPLESHIP } from '@tog/shared';
 
 type Filter = 'active' | 'done' | 'pending';
 
@@ -40,18 +41,24 @@ export default function DiscipleshipPage() {
   const toast = useToast();
   const confirm = useConfirm();
   const perms = can(useMe().role);
+  // 四十天守望 is an ADD-ON module: a church may not run it at all. The nav
+  // entry is already gone when it is off, so this only catches a bookmark or a
+  // pasted link — and nothing below may fetch, or the page would paint an
+  // error banner from the API's own (correct) refusal instead of the reason.
+  const discipleshipOn = useModuleEnabled(MODULE_DISCIPLESHIP);
   // NAMING: everything a user reads calls this a MODULE (模块); the wire and
   // the database still say "program" (`/discipleship/programs`, `program_id`,
   // `ProgramRow`) because renaming those is a migration's worth of churn for
   // nothing visible. This line is the boundary — an API row goes in, module
-  // wording comes out.
-  const modules = useFetch<ProgramRow[]>('/discipleship/programs');
+  // wording comes out. (Not to be confused with the ADD-ON module above: that
+  // is the whole 四十天守望 section, this is one 守望模块 inside it.)
+  const modules = useFetch<ProgramRow[]>(discipleshipOn ? '/discipleship/programs' : null);
   // Deliberately unfiltered: the page shows ONE module's pairs but needs every
   // module's pair count, for the module list and for the delete confirmation's
   // blast radius — so it is fetched once and grouped here rather than costing
   // a round-trip per module.
-  const pairs = useFetch<PairRow[]>('/discipleship/pairs');
-  const members = useFetch<MemberRow[]>('/members');
+  const pairs = useFetch<PairRow[]>(discipleshipOn ? '/discipleship/pairs' : null);
+  const members = useFetch<MemberRow[]>(discipleshipOn ? '/members' : null);
 
   const [filter, setFilter] = useState<Filter>('active');
   const [popup, setPopup] = useState<Node | null>(null);
@@ -70,7 +77,7 @@ export default function DiscipleshipPage() {
   const programId = activeModule?.id;
 
   const overview = useFetch<OverviewRow[]>(
-    programId ? `/discipleship/programs/${programId}/overview` : null,
+    discipleshipOn && programId ? `/discipleship/programs/${programId}/overview` : null,
   );
 
   const pairsByModule = useMemo(() => {
@@ -304,6 +311,11 @@ export default function DiscipleshipPage() {
   // page's action row does not, so it renders straight away and only the two
   // sections below it are skeletons.
   const booting = pairs.initialLoading || modules.initialLoading;
+
+  // The module is switched off for this church — say so plainly. The API
+  // refuses every /discipleship path regardless (rule G2); this is the reason,
+  // not the enforcement.
+  if (!discipleshipOn) return <ModuleDisabled name={t('module.discipleship.name')} />;
 
   // A church with no 守望 module at all is a different state from a slow
   // fetch — decide it only once the modules have actually arrived. Deleting

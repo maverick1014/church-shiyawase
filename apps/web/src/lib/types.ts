@@ -13,6 +13,24 @@ import {
   Weekday,
 } from '@tog/shared';
 
+/**
+ * The church itself, as `GET /api/church` returns it — the public four fields
+ * only (that endpoint answers without a session). The name is data, not a
+ * translation, so nothing renders a hardcoded church name any more.
+ */
+export interface ChurchProfile {
+  name: string;
+  short_name: string | null;
+  description: string | null;
+  logo_url: string | null;
+}
+
+/** One row of `GET /api/church/modules` — an optional module and its state. */
+export interface ModuleStateRow {
+  key: string;
+  enabled: boolean;
+}
+
 /** A hall (堂会) — 中文堂 / 英文堂 / 马来文堂. */
 export interface HallRow {
   id: string;

@@ -8,7 +8,13 @@ import {
   verifyPassword,
 } from '@/lib/server/auth';
 import { CHURCH_TZ_OFFSET, churchParts } from '@/lib/time';
-import { LANGUAGES, normalizeLanguage } from '@tog/shared';
+import {
+  isOptionalModule,
+  LANGUAGES,
+  moduleForApiPath,
+  normalizeLanguage,
+  OPTIONAL_MODULES,
+} from '@tog/shared';
 
 /**
  * The whole REST API, ported from the NestJS app into a single Cloudflare
@@ -63,11 +69,17 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
     return json({ build: process.env.NEXT_PUBLIC_BUILD_ID ?? 'dev' });
   }
 
-  // Public-by-design, no session: the mentor daily form (/d/<token>) and the
-  // training self-enrollment form (/enroll/<id>). Both are narrow, specific
-  // handlers below — nothing else under these prefixes is reachable unauthed.
+  // Public-by-design, no session: the mentor daily form (/d/<token>), the
+  // training self-enrollment form (/enroll/<id>), and the church's own
+  // name/description/logo — which the login card and both of those forms have
+  // to render before anyone has signed in, and none of which is sensitive.
+  // Each is a narrow, specific handler below; nothing else under these
+  // prefixes is reachable unauthed, and /church is public for GET ONLY —
+  // changing the record stays super_admin (see the role gate below).
   const isPublicForm =
-    (r0 === 'discipleship' && r1 === 'form') || (r0 === 'trainings' && r1 === 'enroll');
+    (r0 === 'discipleship' && r1 === 'form') ||
+    (r0 === 'trainings' && r1 === 'enroll') ||
+    (r0 === 'church' && !r1 && method === 'GET');
 
   // Hall scope for this request. `null` = 全堂权限 (sees and may write every
   // hall). A non-null value pins the account to one hall: reads are filtered
@@ -82,6 +94,12 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
     // for reads as well as writes (rule G2), so the account list never leaks.
     if (r0 === 'accounts' && session.role !== 'super_admin')
       throw new HttpError(403, 'Only a super admin may manage login accounts');
+    // The church record and the module catalog are readable by any signed-in
+    // account (the shell renders the name and needs to know which nav entries
+    // exist), but only a super admin may CHANGE either — the same split the
+    // 教会设置 page renders (rule G2).
+    if (r0 === 'church' && method !== 'GET' && session.role !== 'super_admin')
+      throw new HttpError(403, 'Only a super admin may change church settings');
     if (method !== 'GET') {
       // Permission matrix enforcement.
       if (session.role === 'readonly') throw new HttpError(403, 'A read-only account cannot make changes');
@@ -89,6 +107,29 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
         throw new HttpError(403, 'This role may not delete records');
     }
   }
+
+  // ---- Module enablement ----------------------------------------------------
+  // The third dimension of access control, beside role and hall: a church may
+  // not run every module (四十天守望 is an add-on). Hiding the nav entry is
+  // only the UX half — a path owned by a module this church has switched off
+  // is refused HERE, so a bookmark, a stale tab or a hand-rolled request gets
+  // nothing either (rule G2).
+  //
+  // Deliberately outside the session block above, so it covers the PUBLIC
+  // mentor form too: switching the module off has to close its links as well,
+  // or a mentor's daily form would outlive the feature it belongs to. It is
+  // below `authRoute` (which returns earlier) and `moduleForApiPath` answers
+  // null for /church, /auth and every core path, so signing in, reading the
+  // church record and reaching the catalog can never be gated by it.
+  //
+  // 404 rather than 403 on purpose: a disabled module is not "you may not" —
+  // no role, hall or session can reach it, because for this church the
+  // feature does not exist. That is what "not found" means, it matches the
+  // fall-through at the bottom of dispatch(), and it keeps a public token URL
+  // from distinguishing "wrong token" from "module switched off".
+  const gatedModule = moduleForApiPath(p);
+  if (gatedModule && !(await moduleEnabled(db, gatedModule)))
+    throw new HttpError(404, `The ${gatedModule} module is not enabled for this church`);
 
   /**
    * The hall this request's list reads are narrowed to — `null` = 全部堂会
@@ -179,6 +220,89 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
     let query = db.from('halls').select('id,name,sort_order').order('sort_order');
     if (hallScope) query = query.eq('id', hallScope);
     return json(unwrap(await query));
+  }
+
+  // ---- Church record & module catalog ---------------------------------------
+  // The church's identity (name / description / logo) and which optional
+  // modules it runs. `GET /church` is public — see `isPublicForm` above; every
+  // write here is super_admin-only, enforced in the gate rather than repeated
+  // per handler.
+  if (r0 === 'church') {
+    if (!r1) {
+      if (method === 'GET') {
+        // Deliberately only the four public fields, not the whole row: this
+        // one answers without a session.
+        const c = await churchRow(db);
+        return json({
+          name: c.name,
+          short_name: c.short_name,
+          description: c.description,
+          logo_url: c.logo_url,
+        });
+      }
+      if (method === 'PATCH') {
+        const c = await churchRow(db);
+        return json(
+          unwrap(
+            await db
+              .from('church')
+              .update(churchWrite(await body()))
+              .eq('id', c.id)
+              .select(CHURCH_SELECT)
+              .single(),
+          ),
+        );
+      }
+    } else if (r1 === 'logo' && method === 'POST') {
+      // Same mechanism as a member's photo (`/members/:id/avatar`): the file
+      // goes through this service-role handler into a public bucket and the
+      // resulting URL is stored on the row.
+      const c = await churchRow(db);
+      const form = await req.formData();
+      const file = form.get('file');
+      if (!(file instanceof File)) throw new HttpError(400, 'No file uploaded');
+      if (!(file.type || '').startsWith('image/')) throw new HttpError(400, 'Only image files are supported');
+      if (file.size > 5 * 1024 * 1024) throw new HttpError(400, 'The image must be 5MB or smaller');
+      const ext = (file.name.split('.').pop() || 'png').toLowerCase().replace(/[^a-z0-9]/g, '') || 'png';
+      const path = `${c.id}/${Date.now()}.${ext}`;
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const up = await db.storage
+        .from('branding')
+        .upload(path, bytes, { contentType: file.type || 'image/png', upsert: true });
+      if (up.error) throw new HttpError(500, up.error.message);
+      const { data: pub } = db.storage.from('branding').getPublicUrl(path);
+      return json(
+        unwrap(
+          await db
+            .from('church')
+            .update({ logo_url: pub.publicUrl })
+            .eq('id', c.id)
+            .select(CHURCH_SELECT)
+            .single(),
+        ),
+      );
+    } else if (r1 === 'modules') {
+      // Every signed-in account reads this — the nav has to know which entries
+      // exist before it can render itself.
+      if (!r2 && method === 'GET') return json(await moduleStates(db));
+      if (r2 && !r3 && method === 'PATCH') {
+        // A key that is not in the code registry is rejected outright rather
+        // than inserted: `church_modules` must never hold a row for a feature
+        // this build does not ship.
+        if (!isOptionalModule(r2)) throw new HttpError(400, `Unknown module: ${r2}`);
+        const enabled = (await body()).enabled;
+        if (typeof enabled !== 'boolean') throw new HttpError(400, 'enabled must be true or false');
+        const c = await churchRow(db);
+        const row = unwrap<{ module: string; enabled: boolean }>(
+          await db
+            .from('church_modules')
+            .upsert({ church_id: c.id, module: r2, enabled }, { onConflict: 'church_id,module' })
+            .select('module,enabled')
+            .single(),
+        );
+        return json({ key: row.module, enabled: row.enabled });
+      }
+    }
   }
 
   // ---- Members --------------------------------------------------------------
@@ -818,6 +942,91 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
   }
 
   throw new HttpError(404, `No route for ${method} /api/${p.join('/')}`);
+}
+
+// --- Church record & modules ------------------------------------------------
+
+const CHURCH_SELECT = 'id,name,short_name,description,logo_url';
+
+/** Only these may be written on the church record; anything else is refused
+ *  loudly rather than dropped, the same allow-list shape as the self-service
+ *  profile above. `id` and the timestamps are deliberately absent. */
+const CHURCH_FIELDS = ['name', 'short_name', 'description', 'logo_url'] as const;
+
+type ChurchRow = {
+  id: string;
+  name: string;
+  short_name: string | null;
+  description: string | null;
+  logo_url: string | null;
+};
+
+/**
+ * The church. One deployment serves exactly one church (halls are the scope
+ * column inside it), so this is a singleton row — seeded by migration 0012 and
+ * never created from the app. A missing row means the migration has not been
+ * applied, which is worth saying out loud rather than answering with nulls.
+ */
+async function churchRow(db: ReturnType<typeof getDb>): Promise<ChurchRow> {
+  const rows = unwrap<ChurchRow[]>(
+    await db.from('church').select(CHURCH_SELECT).order('created_at').limit(1),
+  );
+  if (rows.length === 0)
+    throw new HttpError(500, 'No church record yet — apply migration 0012_church_and_modules');
+  return rows[0];
+}
+
+/** Normalize a church PATCH: allow-listed fields only, and a real name. */
+function churchWrite(body: Record<string, unknown>): Record<string, unknown> {
+  const patch: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(body)) {
+    if (!(CHURCH_FIELDS as readonly string[]).includes(key))
+      throw new HttpError(403, `You may not change ${key} on the church record`);
+    patch[key] = value;
+  }
+  if ('name' in patch) {
+    const name = String(patch.name ?? '').trim();
+    if (!name) throw new HttpError(400, 'The church name cannot be empty');
+    patch.name = name;
+  }
+  for (const key of ['short_name', 'description', 'logo_url'] as const) {
+    if (key in patch) {
+      const v = String(patch[key] ?? '').trim();
+      patch[key] = v === '' ? null : v;
+    }
+  }
+  return patch;
+}
+
+/**
+ * Every optional module with its on/off state, in catalog order.
+ *
+ * The catalog is the CODE registry, not the table: a stored row for a module
+ * this build no longer ships is ignored, and a module with no row yet counts
+ * as ON — a newly shipped module is available until someone turns it off,
+ * which is the same thing migration 0012's seed does for `discipleship`.
+ */
+async function moduleStates(
+  db: ReturnType<typeof getDb>,
+): Promise<Array<{ key: string; enabled: boolean }>> {
+  const c = await churchRow(db);
+  const rows = unwrap<Array<{ module: string; enabled: boolean }>>(
+    await db.from('church_modules').select('module,enabled').eq('church_id', c.id),
+  );
+  const stored = new Map(rows.map((r) => [r.module, r.enabled]));
+  return OPTIONAL_MODULES.map((m) => ({ key: m.key, enabled: stored.get(m.key) ?? true }));
+}
+
+/**
+ * Is one module on? Used by the gate, so it is one query rather than two:
+ * `church_modules.module` needs no church_id filter while the church row is a
+ * singleton, and the composite primary key means at most one row can match.
+ */
+async function moduleEnabled(db: ReturnType<typeof getDb>, key: string): Promise<boolean> {
+  const rows = unwrap<Array<{ enabled: boolean }>>(
+    await db.from('church_modules').select('enabled').eq('module', key),
+  );
+  return rows[0]?.enabled ?? true;
 }
 
 // --- Shared helpers ---------------------------------------------------------
