@@ -12,10 +12,11 @@ import {
   ExportButton,
   Field,
   HallSelect,
-  Loading,
   Modal,
   PageBar,
   RowChevron,
+  SkeletonScreen,
+  SkeletonTable,
   SortTh,
   TagsInput,
   useToast,
@@ -144,8 +145,8 @@ export default function GroupsPage() {
     );
   };
 
-  if (groups.initialLoading) return <Loading />;
-
+  // Real chrome first: the filters and buttons work against an empty list,
+  // so only the rows below wait on the fetch (nothing shifts when it lands).
   return (
     <>
       <ErrorBanner message={groups.error || members.error} />
@@ -181,129 +182,137 @@ export default function GroupsPage() {
         }
       />
 
-      {/* Desktop — table */}
-      <div className="card only-desktop" style={{ padding: 6 }}>
-        <div className="table-wrap">
-          <table className="table-fixed">
-            <thead>
-              <tr>
-                {/* Columns size to their own content (G7a). The congregation
-                    column only appears when more than one hall is in view. */}
-                <SortTh sortKey="name" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('groups.col.name')}</SortTh>
-                {showHall && (
-                  <SortTh sortKey="hall" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('hall.label')}</SortTh>
-                )}
-                <SortTh sortKey="leader" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('groups.col.leader')}</SortTh>
-                <SortTh sortKey="count" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('groups.col.count')}</SortTh>
-                <SortTh sortKey="new" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('groups.col.newCount')}</SortTh>
-                <SortTh sortKey="status" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('groups.col.status')}</SortTh>
-                <th>{t('groups.col.schedule')}</th>
-                <th>{t('groups.field.tags')}</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {sorted.map((g) => (
-                <tr key={g.id}>
-                  <td>
-                    <strong>{g.name}</strong>
-                  </td>
-                  {showHall && <td className="muted">{g.hallName ?? '—'}</td>}
-                  <td>
-                    {g.leaderName ? <strong>{g.leaderName}</strong> : <span className="faint">{t('common.vacant')}</span>}
-                  </td>
-                  <td className="muted tnum">{g.memberCount}</td>
-                  <td className="muted tnum">{g.newMemberCount}</td>
-                  <td>
-                    <span className={`badge ${groupHealthClass(g.status)}`}>{t(groupHealthKey(g.status))}</span>
-                  </td>
-                  <td className="muted">
-                    {g.scheduleDayTime || g.scheduleLocation ? (
-                      <>
-                        {g.scheduleDayTime && <div>{g.scheduleDayTime}</div>}
-                        {g.scheduleLocation && (
-                          <div className="faint" style={{ fontSize: 12.5 }}>{g.scheduleLocation}</div>
+      {groups.initialLoading ? (
+        <SkeletonScreen>
+          <SkeletonTable rows={8} columns={showHall ? 9 : 8} />
+        </SkeletonScreen>
+      ) : (
+        <>
+          {/* Desktop — table */}
+          <div className="card only-desktop" style={{ padding: 6 }}>
+            <div className="table-wrap">
+              <table className="table-fixed">
+                <thead>
+                  <tr>
+                    {/* Columns size to their own content (G7a). The congregation
+                        column only appears when more than one hall is in view. */}
+                    <SortTh sortKey="name" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('groups.col.name')}</SortTh>
+                    {showHall && (
+                      <SortTh sortKey="hall" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('hall.label')}</SortTh>
+                    )}
+                    <SortTh sortKey="leader" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('groups.col.leader')}</SortTh>
+                    <SortTh sortKey="count" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('groups.col.count')}</SortTh>
+                    <SortTh sortKey="new" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('groups.col.newCount')}</SortTh>
+                    <SortTh sortKey="status" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('groups.col.status')}</SortTh>
+                    <th>{t('groups.col.schedule')}</th>
+                    <th>{t('groups.field.tags')}</th>
+                    <th />
+                  </tr>
+                </thead>
+                <tbody>
+                  {sorted.map((g) => (
+                    <tr key={g.id}>
+                      <td>
+                        <strong>{g.name}</strong>
+                      </td>
+                      {showHall && <td className="muted">{g.hallName ?? '—'}</td>}
+                      <td>
+                        {g.leaderName ? <strong>{g.leaderName}</strong> : <span className="faint">{t('common.vacant')}</span>}
+                      </td>
+                      <td className="muted tnum">{g.memberCount}</td>
+                      <td className="muted tnum">{g.newMemberCount}</td>
+                      <td>
+                        <span className={`badge ${groupHealthClass(g.status)}`}>{t(groupHealthKey(g.status))}</span>
+                      </td>
+                      <td className="muted">
+                        {g.scheduleDayTime || g.scheduleLocation ? (
+                          <>
+                            {g.scheduleDayTime && <div>{g.scheduleDayTime}</div>}
+                            {g.scheduleLocation && (
+                              <div className="faint" style={{ fontSize: 12.5 }}>{g.scheduleLocation}</div>
+                            )}
+                          </>
+                        ) : (
+                          '—'
                         )}
-                      </>
-                    ) : (
-                      '—'
-                    )}
-                  </td>
-                  <td>
-                    {g.tags.length > 0 ? (
-                      <div className="flex gap-4 flex-wrap">
-                        {g.tags.map((tag) => (
-                          <span key={tag} className="chip on" style={{ padding: '2px 8px', fontSize: 11, cursor: 'default' }}>
-                            {tag}
-                          </span>
-                        ))}
-                      </div>
-                    ) : (
-                      <span className="muted">—</span>
-                    )}
-                  </td>
-                  <td style={{ textAlign: 'right' }}>
-                    <RowChevron title={t('groups.viewDetail')} onClick={() => router.push(`/groups/${g.id}`)} />
-                  </td>
-                </tr>
-              ))}
-              {sorted.length === 0 && (
-                <tr>
-                  <td colSpan={showHall ? 9 : 8} className="empty-inline">
-                    {q.trim() || tagFilter !== 'all' || weekdayFilter !== 'all'
-                      ? t('groups.empty')
-                      : t('groups.emptyNew')}
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
+                      </td>
+                      <td>
+                        {g.tags.length > 0 ? (
+                          <div className="flex gap-4 flex-wrap">
+                            {g.tags.map((tag) => (
+                              <span key={tag} className="chip on" style={{ padding: '2px 8px', fontSize: 11, cursor: 'default' }}>
+                                {tag}
+                              </span>
+                            ))}
+                          </div>
+                        ) : (
+                          <span className="muted">—</span>
+                        )}
+                      </td>
+                      <td style={{ textAlign: 'right' }}>
+                        <RowChevron title={t('groups.viewDetail')} onClick={() => router.push(`/groups/${g.id}`)} />
+                      </td>
+                    </tr>
+                  ))}
+                  {sorted.length === 0 && (
+                    <tr>
+                      <td colSpan={showHall ? 9 : 8} className="empty-inline">
+                        {q.trim() || tagFilter !== 'all' || weekdayFilter !== 'all'
+                          ? t('groups.empty')
+                          : t('groups.emptyNew')}
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
 
-      {/* Mobile — list tiles */}
-      <div className="only-mobile">
-        {sorted.map((g) => (
-          <div key={g.id} className="mtile" onClick={() => router.push(`/groups/${g.id}`)}>
-            <div className="mtile-row1">
-              <div style={{ minWidth: 0 }}>
-                <strong>{g.name}</strong>
-                <span className="muted" style={{ fontSize: 12.5 }}>
-                  {' '}
-                  {t('groups.leaderInline', { name: g.leaderName ?? t('common.vacant') })}
-                </span>
-              </div>
-              <span className="mtile-cta"><ChevronRightIcon /></span>
-            </div>
-            <div className="mtile-line flex items-center gap-8 flex-wrap">
-              <span>
-                {t('groups.memberLine', {
-                  n: g.memberCount,
-                  newCount: g.newMemberCount,
-                  schedule: g.schedule ? ` · ${g.schedule}` : '',
-                })}
-              </span>
-              <span className={`badge ${groupHealthClass(g.status)}`}>{t(groupHealthKey(g.status))}</span>
-            </div>
-            {g.tags.length > 0 && (
-              <div className="flex gap-4 flex-wrap" style={{ marginTop: 6 }}>
-                {g.tags.map((tag) => (
-                  <span key={tag} className="chip on" style={{ padding: '2px 8px', fontSize: 11, cursor: 'default' }}>
-                    {tag}
+          {/* Mobile — list tiles */}
+          <div className="only-mobile">
+            {sorted.map((g) => (
+              <div key={g.id} className="mtile" onClick={() => router.push(`/groups/${g.id}`)}>
+                <div className="mtile-row1">
+                  <div style={{ minWidth: 0 }}>
+                    <strong>{g.name}</strong>
+                    <span className="muted" style={{ fontSize: 12.5 }}>
+                      {' '}
+                      {t('groups.leaderInline', { name: g.leaderName ?? t('common.vacant') })}
+                    </span>
+                  </div>
+                  <span className="mtile-cta"><ChevronRightIcon /></span>
+                </div>
+                <div className="mtile-line flex items-center gap-8 flex-wrap">
+                  <span>
+                    {t('groups.memberLine', {
+                      n: g.memberCount,
+                      newCount: g.newMemberCount,
+                      schedule: g.schedule ? ` · ${g.schedule}` : '',
+                    })}
                   </span>
-                ))}
+                  <span className={`badge ${groupHealthClass(g.status)}`}>{t(groupHealthKey(g.status))}</span>
+                </div>
+                {g.tags.length > 0 && (
+                  <div className="flex gap-4 flex-wrap" style={{ marginTop: 6 }}>
+                    {g.tags.map((tag) => (
+                      <span key={tag} className="chip on" style={{ padding: '2px 8px', fontSize: 11, cursor: 'default' }}>
+                        {tag}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+            {sorted.length === 0 && (
+              <div className="empty-inline">
+                {q.trim() || tagFilter !== 'all' || weekdayFilter !== 'all'
+                  ? t('groups.empty')
+                  : t('groups.emptyNew')}
               </div>
             )}
           </div>
-        ))}
-        {sorted.length === 0 && (
-          <div className="empty-inline">
-            {q.trim() || tagFilter !== 'all' || weekdayFilter !== 'all'
-              ? t('groups.empty')
-              : t('groups.emptyNew')}
-          </div>
-        )}
-      </div>
+        </>
+      )}
 
       {addOpen && (
         <AddGroupModal

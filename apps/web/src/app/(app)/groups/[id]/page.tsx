@@ -6,7 +6,7 @@ import { useFetch } from '@/lib/hooks';
 import { useSortableRows } from '@/lib/sort';
 import { api } from '@/lib/api';
 import { usePageChrome, useMe } from '@/components/AppShell';
-import { BackButton, ErrorBanner, ExportButton, Field, HallSelect, Loading, RoleBadge, SortTh, TagsInput, useConfirm, useToast } from '@/components/ui';
+import { BackButton, ErrorBanner, ExportButton, Field, HallSelect, RoleBadge, SkeletonCard, SkeletonScreen, SkeletonTable, SortTh, TagsInput, useConfirm, useToast } from '@/components/ui';
 import { can } from '@/lib/perms';
 import { exportMatrix } from '@/lib/export';
 import { GroupAttendanceResponse, GroupDetail, GroupRow, MemberRow } from '@/lib/types';
@@ -48,7 +48,25 @@ export default function GroupDetailPage() {
     return [...set].sort((a, b) => a.localeCompare(b, 'zh'));
   }, [allGroups.data]);
 
-  if (detail.initialLoading) return <Loading />;
+  // The roll-call card sits above the two-column profile/roster split — the
+  // skeleton mirrors that stack, including the same collapse-on-tablet grid.
+  if (detail.initialLoading)
+    return (
+      <>
+        <BackButton onClick={() => router.push('/groups')} />
+        <SkeletonScreen>
+          <SkeletonCard lines={4} />
+          <div
+            className="grid mt-16"
+            style={{ gridTemplateColumns: '360px 1fr', gap: 16, alignItems: 'start' }}
+            data-glayout
+          >
+            <SkeletonCard lines={6} />
+            <SkeletonCard lines={6} />
+          </div>
+        </SkeletonScreen>
+      </>
+    );
   if (detail.error || !detail.data) return <ErrorBanner message={detail.error ?? t('group.notFound')} />;
 
   return (
@@ -550,7 +568,9 @@ function WeeklyAttendance({ groupId }: { groupId: string }) {
       </div>
 
       {initialLoading ? (
-        <Loading />
+        <SkeletonScreen>
+          <SkeletonTable rows={5} columns={6} bare />
+        </SkeletonScreen>
       ) : !data || data.rows.length === 0 ? (
         <div className="empty">{t('group.noMembers')}</div>
       ) : (

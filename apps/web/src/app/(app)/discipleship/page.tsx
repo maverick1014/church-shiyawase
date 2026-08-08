@@ -5,7 +5,7 @@ import { useFetch } from '@/lib/hooks';
 import { useSortableRows } from '@/lib/sort';
 import { api } from '@/lib/api';
 import { usePageChrome, useMe } from '@/components/AppShell';
-import { ErrorBanner, ExportButton, Field, LinkIcon, Loading, Modal, PageBar, SortTh, useConfirm, useToast } from '@/components/ui';
+import { ErrorBanner, ExportButton, Field, LinkIcon, Modal, PageBar, Skeleton, SkeletonScreen, SkeletonTable, SkeletonText, SortTh, useConfirm, useToast } from '@/components/ui';
 import { PairProgressModal } from '@/components/PairProgressModal';
 import { can } from '@/lib/perms';
 import { exportRows } from '@/lib/export';
@@ -219,9 +219,14 @@ export default function DiscipleshipPage() {
     </div>
   );
 
-  if (pairs.initialLoading || programs.initialLoading) return <Loading />;
+  // The chain and the pastor overview both hang off these two fetches; the
+  // page's action row does not, so it renders straight away and only the two
+  // sections below it are skeletons.
+  const booting = pairs.initialLoading || programs.initialLoading;
 
-  if (!programId) {
+  // A church with no 守望 program at all is a different state from a slow
+  // fetch — decide it only once the programs have actually arrived.
+  if (!booting && !programId) {
     return <div className="empty">{t('disc.noProgram')}</div>;
   }
 
@@ -268,20 +273,33 @@ export default function DiscipleshipPage() {
           </div>
         </div>
 
-        {filter === 'active' &&
-          (forest.length === 0 ? (
-            <div className="empty">{t('disc.emptyActive')}</div>
-          ) : (
-            <>
-              <div className="only-mobile faint" style={{ fontSize: 11.5, marginTop: 10 }}>
-                {t('disc.swipeHint')}
-              </div>
-              {renderForest(false)}
-            </>
-          ))}
+        {booting ? (
+          <SkeletonScreen>
+            <div className="flex gap-10 flex-wrap" style={{ marginTop: 10 }}>
+              {[132, 132, 132].map((w, i) => (
+                <Skeleton key={i} width={w} height={62} radius={10} />
+              ))}
+            </div>
+            <SkeletonText lines={2} style={{ marginTop: 14 }} />
+          </SkeletonScreen>
+        ) : (
+          <>
+            {filter === 'active' &&
+              (forest.length === 0 ? (
+                <div className="empty">{t('disc.emptyActive')}</div>
+              ) : (
+                <>
+                  <div className="only-mobile faint" style={{ fontSize: 11.5, marginTop: 10 }}>
+                    {t('disc.swipeHint')}
+                  </div>
+                  {renderForest(false)}
+                </>
+              ))}
 
-        {filter === 'done' && <DiscList list={doneList} kind="done" onOpen={setPopup} t={t} />}
-        {filter === 'pending' && <DiscList list={pendingList} kind="pending" onOpen={setPopup} t={t} />}
+            {filter === 'done' && <DiscList list={doneList} kind="done" onOpen={setPopup} t={t} />}
+            {filter === 'pending' && <DiscList list={pendingList} kind="pending" onOpen={setPopup} t={t} />}
+          </>
+        )}
       </div>
 
       {/* Pastor overview */}
@@ -289,79 +307,86 @@ export default function DiscipleshipPage() {
         <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--good)', display: 'inline-block' }} />
         {t('disc.pastorOverview')}
       </div>
-      <div className="card">
-        {/* Desktop — table */}
-        <div className="table-wrap only-desktop">
-          <table>
-            <thead>
-              <tr>
-                <SortTh sortKey="name" activeKey={nodeSortKey} dir={nodeSortDir} onSort={toggleNodeSort}>{t('disc.col.pair')}</SortTh>
-                <SortTh sortKey="pct" activeKey={nodeSortKey} dir={nodeSortDir} onSort={toggleNodeSort} style={{ width: 200 }}>{t('disc.col.progress')}</SortTh>
-                <SortTh sortKey="status" activeKey={nodeSortKey} dir={nodeSortDir} onSort={toggleNodeSort}>{t('groups.col.status')}</SortTh>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {sortedNodes.map((n) => (
-                <tr key={n.pair.id}>
-                  <td>
+      {booting ? (
+        // The skeleton brings its own card on desktop and its own tiles on a
+        // phone, so it stands in for the whole panel rather than nesting a
+        // second card inside this one.
+        <SkeletonTable rows={5} columns={4} />
+      ) : (
+        <div className="card">
+          {/* Desktop — table */}
+          <div className="table-wrap only-desktop">
+            <table>
+              <thead>
+                <tr>
+                  <SortTh sortKey="name" activeKey={nodeSortKey} dir={nodeSortDir} onSort={toggleNodeSort}>{t('disc.col.pair')}</SortTh>
+                  <SortTh sortKey="pct" activeKey={nodeSortKey} dir={nodeSortDir} onSort={toggleNodeSort} style={{ width: 200 }}>{t('disc.col.progress')}</SortTh>
+                  <SortTh sortKey="status" activeKey={nodeSortKey} dir={nodeSortDir} onSort={toggleNodeSort}>{t('groups.col.status')}</SortTh>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {sortedNodes.map((n) => (
+                  <tr key={n.pair.id}>
+                    <td>
+                      <strong>{n.pair.trainee?.full_name}</strong>
+                      <span className="faint"> ← {n.pair.mentor?.full_name}</span>
+                    </td>
+                    <td>
+                      <div className="progress-row">
+                        <div className="bar"><span style={{ width: `${n.pct}%` }} /></div>
+                        <span className="pct">{n.days}/{n.total}</span>
+                      </div>
+                    </td>
+                    <td><span className={`badge ${pairStatusClass(n.pair.status)}`}>{t(pairStatusKey(n.pair.status))}</span></td>
+                    <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                      <button className="btn ghost sm" style={{ marginRight: 6 }} onClick={() => setPopup(n)}>{t('disc.progressBtn')}</button>
+                      <button className="btn ghost sm" style={{ color: 'var(--brand)' }} onClick={() => window.open(`/d/${n.pair.form_token}`, '_blank')}><LinkIcon size={14} />{t('disc.form')}</button>
+                    </td>
+                  </tr>
+                ))}
+                {sortedNodes.length === 0 && (
+                  <tr><td colSpan={4} className="empty-inline">{t('disc.empty')}</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Mobile — list tiles: trainee ← mentor + form, then progress · status */}
+          <div className="only-mobile" style={{ marginTop: 4 }}>
+            {sortedNodes.map((n) => (
+              <div key={n.pair.id} className="mtile" onClick={() => setPopup(n)}>
+                <div className="mtile-row1">
+                  <div style={{ minWidth: 0 }}>
                     <strong>{n.pair.trainee?.full_name}</strong>
                     <span className="faint"> ← {n.pair.mentor?.full_name}</span>
-                  </td>
-                  <td>
-                    <div className="progress-row">
-                      <div className="bar"><span style={{ width: `${n.pct}%` }} /></div>
-                      <span className="pct">{n.days}/{n.total}</span>
-                    </div>
-                  </td>
-                  <td><span className={`badge ${pairStatusClass(n.pair.status)}`}>{t(pairStatusKey(n.pair.status))}</span></td>
-                  <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
-                    <button className="btn ghost sm" style={{ marginRight: 6 }} onClick={() => setPopup(n)}>{t('disc.progressBtn')}</button>
-                    <button className="btn ghost sm" style={{ color: 'var(--brand)' }} onClick={() => window.open(`/d/${n.pair.form_token}`, '_blank')}><LinkIcon size={14} />{t('disc.form')}</button>
-                  </td>
-                </tr>
-              ))}
-              {sortedNodes.length === 0 && (
-                <tr><td colSpan={4} className="empty-inline">{t('disc.empty')}</td></tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        {/* Mobile — list tiles: trainee ← mentor + form, then progress · status */}
-        <div className="only-mobile" style={{ marginTop: 4 }}>
-          {sortedNodes.map((n) => (
-            <div key={n.pair.id} className="mtile" onClick={() => setPopup(n)}>
-              <div className="mtile-row1">
-                <div style={{ minWidth: 0 }}>
-                  <strong>{n.pair.trainee?.full_name}</strong>
-                  <span className="faint"> ← {n.pair.mentor?.full_name}</span>
+                  </div>
+                  <div className="flex gap-10" style={{ flexShrink: 0 }}>
+                    <button
+                      className="tile-action"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        window.open(`/d/${n.pair.form_token}`, '_blank');
+                      }}
+                    >
+                      <LinkIcon size={14} />
+                      {t('disc.form')}
+                    </button>
+                  </div>
                 </div>
-                <div className="flex gap-10" style={{ flexShrink: 0 }}>
-                  <button
-                    className="tile-action"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      window.open(`/d/${n.pair.form_token}`, '_blank');
-                    }}
-                  >
-                    <LinkIcon size={14} />
-                    {t('disc.form')}
-                  </button>
+                <div className="mtile-line" style={{ marginTop: 9 }}>
+                  <div className="bar" style={{ flex: 1 }}><span style={{ width: `${n.pct}%` }} /></div>
+                  <span className="pct" style={{ whiteSpace: 'nowrap' }}>{n.days}/{n.total}</span>
+                  <span className={`badge ${pairStatusClass(n.pair.status)}`}>{t(pairStatusKey(n.pair.status))}</span>
                 </div>
               </div>
-              <div className="mtile-line" style={{ marginTop: 9 }}>
-                <div className="bar" style={{ flex: 1 }}><span style={{ width: `${n.pct}%` }} /></div>
-                <span className="pct" style={{ whiteSpace: 'nowrap' }}>{n.days}/{n.total}</span>
-                <span className={`badge ${pairStatusClass(n.pair.status)}`}>{t(pairStatusKey(n.pair.status))}</span>
-              </div>
-            </div>
-          ))}
-          {sortedNodes.length === 0 && (
-            <div className="empty-inline">{t('disc.empty')}</div>
-          )}
+            ))}
+            {sortedNodes.length === 0 && (
+              <div className="empty-inline">{t('disc.empty')}</div>
+            )}
+          </div>
         </div>
-      </div>
+      )}
 
       {popup && (
         <PairProgressModal

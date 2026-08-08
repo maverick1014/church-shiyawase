@@ -30,6 +30,9 @@
      they always line up. See UI rule in CLAUDE.md. */
   --control-h: 40px;
   --control-h-sm: 32px;
+  /* Tint of a loading skeleton — the same neutral family as the borders and
+     the secondary surface, so a page of skeletons still reads as this app. */
+  --skeleton: var(--accent-soft);
   --font-serif: "Songti SC", "STSong", "Noto Serif CJK SC", "Source Han Serif SC",
     "SimSun", serif;
   --font-sans: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
@@ -1413,11 +1416,81 @@ td.empty-inline {
   padding: 26px 20px;
   font-size: 13px;
 }
+/* One line of text, centred — right for a modal, which is already a small
+   bounded box. Pages use the skeletons below instead: a lone "Loading…" line
+   at the top of an empty page is followed by the whole page snapping in
+   underneath it, and everything jumps. */
 .loading {
   text-align: center;
   color: var(--muted);
   padding: 48px 20px;
   font-size: 14px;
+}
+
+/* ==========================================================================
+   Loading skeletons
+   --------------------------------------------------------------------------
+   A skeleton occupies roughly the space the real content will, so the swap
+   when the fetch resolves is seamless rather than a jump. Every block is
+   decorative: <SkeletonScreen> hides them from assistive tech and carries the
+   accessible status in the .sr-only live region below.
+   ========================================================================== */
+.sk {
+  display: block;
+  position: relative;
+  overflow: hidden;
+  flex-shrink: 0;
+  border-radius: 6px;
+  background: var(--skeleton);
+}
+/* The sweep is a pseudo-element rather than an animated background-position,
+   so the block's own tint is never touched — and so reduced motion can drop
+   the movement by removing one element instead of restating the palette. */
+.sk::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  /* A narrow highlight rather than a full-width wash: at no point in the sweep
+     does the block lose its own tint and read as empty white space. */
+  background: linear-gradient(90deg, transparent 22%, var(--surface) 50%, transparent 78%);
+  opacity: 0.8;
+  animation: sk-sweep 1.5s ease-in-out infinite;
+}
+@keyframes sk-sweep {
+  to {
+    transform: translateX(100%);
+  }
+}
+/* Reduced motion: keep the shape, drop the movement entirely. The static
+   --skeleton tint still reads as "content is on its way". */
+@media (prefers-reduced-motion: reduce) {
+  .sk::after {
+    display: none;
+  }
+}
+/* A skeleton row borrows the real list tile's box (see `.mtile` below, which
+   this shares its rule with) so nothing resizes when the data lands — but
+   there is nothing to open yet. */
+.sk-tile {
+  cursor: default;
+}
+.sk-lines > .sk + .sk {
+  margin-top: 9px;
+}
+
+/* Hidden from the page, still read aloud — the live region that announces a
+   skeleton screen (same clip recipe as the stacked table's <thead>). */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 .error-banner {
   background: var(--crit-soft);
@@ -1534,8 +1607,12 @@ td.empty-inline {
   }
 }
 
-/* Member list tiles (custom mobile layout) */
-.mtile {
+/* Member list tiles (custom mobile layout). `.sk-tile` is the loading
+   placeholder for one of these: same box, deliberately a different class name
+   so a `.mtile` selector — in a stylesheet or in ui-e2e — always means a real,
+   clickable row and never a skeleton standing in for one. */
+.mtile,
+.sk-tile {
   display: block;
   width: 100%;
   text-align: left;

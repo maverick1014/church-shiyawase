@@ -5,7 +5,7 @@ import { useMemo, useState } from 'react';
 import { useFetch } from '@/lib/hooks';
 import { api } from '@/lib/api';
 import { usePageChrome, useMe } from '@/components/AppShell';
-import { ErrorBanner, Loading, PageBar, useConfirm, useToast } from '@/components/ui';
+import { ErrorBanner, PageBar, SkeletonCards, SkeletonScreen, useConfirm, useToast } from '@/components/ui';
 import { TrainingModal } from '@/components/TrainingModal';
 import { can } from '@/lib/perms';
 import { MemberRow, TrainingRow } from '@/lib/types';
@@ -99,8 +99,8 @@ export default function TrainingsPage() {
     </div>
   );
 
-  if (trainings.initialLoading) return <Loading />;
-
+  // The add button and both section headings are static, so they render at
+  // once and only the two catalog grids below them wait on the fetch.
   return (
     <>
       <ErrorBanner message={trainings.error} />
@@ -115,13 +115,29 @@ export default function TrainingsPage() {
         <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--good)', display: 'inline-block' }} />
         {t('trainings.active')} <span className="faint" style={{ fontWeight: 400 }}>{t('trainings.activeSub')}</span>
       </div>
-      {active.length ? renderCards(active) : <div className="empty">{t('trainings.emptyActive')}</div>}
+      {trainings.initialLoading ? (
+        <SkeletonScreen>
+          <SkeletonCards count={3} lines={3} />
+        </SkeletonScreen>
+      ) : active.length ? (
+        renderCards(active)
+      ) : (
+        <div className="empty">{t('trainings.emptyActive')}</div>
+      )}
 
       <div className="section-label" style={{ margin: '28px 0 14px' }}>
         <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--faint)', display: 'inline-block' }} />
         {t('trainings.ended')} <span className="faint" style={{ fontWeight: 400 }}>{t('trainings.endedSub')}</span>
       </div>
-      {ended.length ? renderCards(ended, true) : <div className="empty">{t('trainings.emptyEnded')}</div>}
+      {/* Bare skeletons, not a second <SkeletonScreen>: the live region above
+          has already announced the wait, and announcing it twice is noise. */}
+      {trainings.initialLoading ? (
+        <SkeletonCards count={3} lines={3} />
+      ) : ended.length ? (
+        renderCards(ended, true)
+      ) : (
+        <div className="empty">{t('trainings.emptyEnded')}</div>
+      )}
 
       {(addOpen || editing) && (
         <TrainingModal

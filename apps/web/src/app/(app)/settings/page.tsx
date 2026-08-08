@@ -20,6 +20,8 @@ import {
   PasswordInput,
   RoleBadge,
   RowChevron,
+  SkeletonScreen,
+  SkeletonTable,
   SortTh,
   Switch,
   useConfirm,
@@ -93,8 +95,11 @@ export default function SettingsPage() {
     accounts.reload();
   };
 
-  // The redirect above is already in flight; show the spinner, never the list.
-  if (!isSuperAdmin || accounts.initialLoading) return <Loading />;
+  // Two states that used to share one line. A non-super-admin is not waiting
+  // for anything — the redirect above is already in flight — so it keeps the
+  // bounded one-line notice: painting the shape of an account list it will
+  // never be shown would be a lie. Only the real wait, below, gets a skeleton.
+  if (!isSuperAdmin) return <Loading />;
 
   if (selected) {
     return (
@@ -129,68 +134,76 @@ export default function SettingsPage() {
         actions={<button className="btn" onClick={() => setAddOpen(true)}>{t('settings.add')}</button>}
       />
 
-      {/* Desktop — table */}
-      <div className="card only-desktop" style={{ padding: 6 }}>
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <SortTh sortKey="name" activeKey={acctSortKey} dir={acctSortDir} onSort={toggleAcctSort}>{t('settings.col.account')}</SortTh>
-                <SortTh sortKey="role" activeKey={acctSortKey} dir={acctSortDir} onSort={toggleAcctSort}>{t('settings.col.churchRole')}</SortTh>
-                <SortTh sortKey="account_role" activeKey={acctSortKey} dir={acctSortDir} onSort={toggleAcctSort}>{t('settings.col.accountRole')}</SortTh>
-                <SortTh sortKey="email" activeKey={acctSortKey} dir={acctSortDir} onSort={toggleAcctSort}>{t('settings.col.email')}</SortTh>
-                <SortTh sortKey="status" activeKey={acctSortKey} dir={acctSortDir} onSort={toggleAcctSort}>{t('members.col.status')}</SortTh>
-                <SortTh sortKey="last_login" activeKey={acctSortKey} dir={acctSortDir} onSort={toggleAcctSort}>{t('settings.col.lastLogin')}</SortTh>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {sortedAccounts.map((u) => (
-                <tr key={u.id}>
-                  <td><strong>{u.member?.full_name ?? '—'}</strong></td>
-                  <td>
-                    {u.member ? <RoleBadge role={churchDisplayRole(u.member.church_role)} /> : '—'}
-                  </td>
-                  <td><span className={`badge ${accountRoleClass(u.account_role)}`}>{t(accountRoleKey(u.account_role))}</span></td>
-                  <td className="muted">{u.email}</td>
-                  <td><span className={`badge ${accountStatusClass(u.status)}`}>{t(accountStatusKey(u.status))}</span></td>
-                  <td className="muted" style={{ whiteSpace: 'nowrap' }}>{u.last_sign_in_at ? formatDateTime(u.last_sign_in_at) : t('common.never')}</td>
-                  <td style={{ textAlign: 'right' }}>
-                    <RowChevron title={t('settings.manageAccount')} onClick={() => setDetailId(u.id)} />
-                  </td>
-                </tr>
-              ))}
-              {sortedAccounts.length === 0 && (
-                <tr><td colSpan={7} className="empty-inline">{t('settings.empty')}</td></tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* Mobile — list tiles, same pattern as the member and group lists */}
-      <div className="only-mobile">
-        {sortedAccounts.map((u) => (
-          <div key={u.id} className="mtile" onClick={() => setDetailId(u.id)}>
-            <div className="mtile-row1">
-              <div className="flex items-center gap-8 flex-wrap" style={{ minWidth: 0 }}>
-                <strong>{u.member?.full_name ?? '—'}</strong>
-                {u.member && <RoleBadge role={churchDisplayRole(u.member.church_role)} />}
-              </div>
-              <span className="mtile-cta"><ChevronRightIcon /></span>
-            </div>
-            <div className="mtile-line">{u.email}</div>
-            <div className="mtile-line flex items-center gap-8 flex-wrap">
-              <span className={`badge ${accountRoleClass(u.account_role)}`}>{t(accountRoleKey(u.account_role))}</span>
-              <span className={`badge ${accountStatusClass(u.status)}`}>{t(accountStatusKey(u.status))}</span>
-              <span>{u.last_sign_in_at ? formatDateTime(u.last_sign_in_at) : t('settings.neverSignedIn')}</span>
+      {accounts.initialLoading ? (
+        <SkeletonScreen>
+          <SkeletonTable rows={6} columns={7} />
+        </SkeletonScreen>
+      ) : (
+        <>
+          {/* Desktop — table */}
+          <div className="card only-desktop" style={{ padding: 6 }}>
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <SortTh sortKey="name" activeKey={acctSortKey} dir={acctSortDir} onSort={toggleAcctSort}>{t('settings.col.account')}</SortTh>
+                    <SortTh sortKey="role" activeKey={acctSortKey} dir={acctSortDir} onSort={toggleAcctSort}>{t('settings.col.churchRole')}</SortTh>
+                    <SortTh sortKey="account_role" activeKey={acctSortKey} dir={acctSortDir} onSort={toggleAcctSort}>{t('settings.col.accountRole')}</SortTh>
+                    <SortTh sortKey="email" activeKey={acctSortKey} dir={acctSortDir} onSort={toggleAcctSort}>{t('settings.col.email')}</SortTh>
+                    <SortTh sortKey="status" activeKey={acctSortKey} dir={acctSortDir} onSort={toggleAcctSort}>{t('members.col.status')}</SortTh>
+                    <SortTh sortKey="last_login" activeKey={acctSortKey} dir={acctSortDir} onSort={toggleAcctSort}>{t('settings.col.lastLogin')}</SortTh>
+                    <th />
+                  </tr>
+                </thead>
+                <tbody>
+                  {sortedAccounts.map((u) => (
+                    <tr key={u.id}>
+                      <td><strong>{u.member?.full_name ?? '—'}</strong></td>
+                      <td>
+                        {u.member ? <RoleBadge role={churchDisplayRole(u.member.church_role)} /> : '—'}
+                      </td>
+                      <td><span className={`badge ${accountRoleClass(u.account_role)}`}>{t(accountRoleKey(u.account_role))}</span></td>
+                      <td className="muted">{u.email}</td>
+                      <td><span className={`badge ${accountStatusClass(u.status)}`}>{t(accountStatusKey(u.status))}</span></td>
+                      <td className="muted" style={{ whiteSpace: 'nowrap' }}>{u.last_sign_in_at ? formatDateTime(u.last_sign_in_at) : t('common.never')}</td>
+                      <td style={{ textAlign: 'right' }}>
+                        <RowChevron title={t('settings.manageAccount')} onClick={() => setDetailId(u.id)} />
+                      </td>
+                    </tr>
+                  ))}
+                  {sortedAccounts.length === 0 && (
+                    <tr><td colSpan={7} className="empty-inline">{t('settings.empty')}</td></tr>
+                  )}
+                </tbody>
+              </table>
             </div>
           </div>
-        ))}
-        {sortedAccounts.length === 0 && (
-          <div className="empty-inline">{t('settings.empty')}</div>
-        )}
-      </div>
+
+          {/* Mobile — list tiles, same pattern as the member and group lists */}
+          <div className="only-mobile">
+            {sortedAccounts.map((u) => (
+              <div key={u.id} className="mtile" onClick={() => setDetailId(u.id)}>
+                <div className="mtile-row1">
+                  <div className="flex items-center gap-8 flex-wrap" style={{ minWidth: 0 }}>
+                    <strong>{u.member?.full_name ?? '—'}</strong>
+                    {u.member && <RoleBadge role={churchDisplayRole(u.member.church_role)} />}
+                  </div>
+                  <span className="mtile-cta"><ChevronRightIcon /></span>
+                </div>
+                <div className="mtile-line">{u.email}</div>
+                <div className="mtile-line flex items-center gap-8 flex-wrap">
+                  <span className={`badge ${accountRoleClass(u.account_role)}`}>{t(accountRoleKey(u.account_role))}</span>
+                  <span className={`badge ${accountStatusClass(u.status)}`}>{t(accountStatusKey(u.status))}</span>
+                  <span>{u.last_sign_in_at ? formatDateTime(u.last_sign_in_at) : t('settings.neverSignedIn')}</span>
+                </div>
+              </div>
+            ))}
+            {sortedAccounts.length === 0 && (
+              <div className="empty-inline">{t('settings.empty')}</div>
+            )}
+          </div>
+        </>
+      )}
 
       {addOpen && (
         <AddAccountModal

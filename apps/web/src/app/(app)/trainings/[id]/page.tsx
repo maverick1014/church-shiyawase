@@ -6,7 +6,7 @@ import { useFetch } from '@/lib/hooks';
 import { useSortableRows } from '@/lib/sort';
 import { api } from '@/lib/api';
 import { usePageChrome, useMe } from '@/components/AppShell';
-import { BackButton, ErrorBanner, ExportButton, Field, LinkIcon, Loading, Modal, SortTh, useConfirm, useToast } from '@/components/ui';
+import { BackButton, ErrorBanner, ExportButton, Field, LinkIcon, Modal, SkeletonCard, SkeletonScreen, SortTh, useConfirm, useToast } from '@/components/ui';
 import { can } from '@/lib/perms';
 import { exportMatrix } from '@/lib/export';
 import { EnrollmentRow, MemberRow, NamelistResponse, SessionRow, TrainingDetail } from '@/lib/types';
@@ -53,7 +53,21 @@ export default function TrainingDetailPage() {
 
   usePageChrome({ title: tr('training.title') }, [id, tr]);
 
-  if (detail.initialLoading) return <Loading />;
+  // Course header card over the sessions/roster pair — the same three boxes
+  // the loaded page draws.
+  if (detail.initialLoading)
+    return (
+      <>
+        <BackButton onClick={() => router.push('/trainings')} />
+        <SkeletonScreen>
+          <SkeletonCard lines={2} />
+          <div className="grid g2 mt-16">
+            <SkeletonCard lines={5} />
+            <SkeletonCard lines={5} />
+          </div>
+        </SkeletonScreen>
+      </>
+    );
   if (detail.error || !detail.data)
     return <ErrorBanner message={detail.error ?? tr('training.notFound')} />;
 

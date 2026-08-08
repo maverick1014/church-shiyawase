@@ -12,8 +12,9 @@ import {
   ErrorBanner,
   Field,
   HallSelect,
-  Loading,
   Modal,
+  SkeletonScreen,
+  SkeletonTable,
   SortTh,
   useConfirm,
   useToast,
@@ -128,8 +129,8 @@ export default function RecurringEventsPage() {
     }
   };
 
-  if (rules.initialLoading) return <Loading />;
-
+  // Back, the add button and the hint all render without the fetch, so they go
+  // up straight away and only the rule list below is a skeleton.
   return (
     <>
       {/* Back and this page's one action share a row — the page has no filters,
@@ -147,106 +148,114 @@ export default function RecurringEventsPage() {
 
       <div className="hint mb-16">{t('recurring.hint')}</div>
 
-      {/* Desktop — table */}
-      <div className="card only-desktop" style={{ padding: 6 }}>
-        <div className="table-wrap">
-          <table className="table-fixed">
-            <thead>
-              <tr>
-                <SortTh sortKey="title" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('recurring.col.name')}</SortTh>
-                <SortTh sortKey="type" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('recurring.col.type')}</SortTh>
-                <SortTh sortKey="when" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('recurring.col.when')}</SortTh>
-                {!hallLocked && (
-                  <SortTh sortKey="hall" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('hall.label')}</SortTh>
-                )}
-                <th>{t('recurring.col.location')}</th>
-                <SortTh sortKey="next" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('recurring.col.next')}</SortTh>
-                <SortTh sortKey="active" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('recurring.col.status')}</SortTh>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {sorted.map((r) => (
-                <tr key={r.id}>
-                  <td><strong>{r.title}</strong></td>
-                  <td>
-                    <span className={`badge ${eventBadgeClass(r.event_type)}`}>
-                      {t(eventTypeKey(r.event_type))}
+      {rules.initialLoading ? (
+        <SkeletonScreen>
+          <SkeletonTable rows={5} columns={hallLocked ? 7 : 8} />
+        </SkeletonScreen>
+      ) : (
+        <>
+          {/* Desktop — table */}
+          <div className="card only-desktop" style={{ padding: 6 }}>
+            <div className="table-wrap">
+              <table className="table-fixed">
+                <thead>
+                  <tr>
+                    <SortTh sortKey="title" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('recurring.col.name')}</SortTh>
+                    <SortTh sortKey="type" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('recurring.col.type')}</SortTh>
+                    <SortTh sortKey="when" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('recurring.col.when')}</SortTh>
+                    {!hallLocked && (
+                      <SortTh sortKey="hall" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('hall.label')}</SortTh>
+                    )}
+                    <th>{t('recurring.col.location')}</th>
+                    <SortTh sortKey="next" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('recurring.col.next')}</SortTh>
+                    <SortTh sortKey="active" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('recurring.col.status')}</SortTh>
+                    <th />
+                  </tr>
+                </thead>
+                <tbody>
+                  {sorted.map((r) => (
+                    <tr key={r.id}>
+                      <td><strong>{r.title}</strong></td>
+                      <td>
+                        <span className={`badge ${eventBadgeClass(r.event_type)}`}>
+                          {t(eventTypeKey(r.event_type))}
+                        </span>
+                      </td>
+                      <td className="muted">
+                        {t('recurring.every', {
+                          day: t(weekdayKey(r.weekday)),
+                          time: formatMeetingTime(r.start_time),
+                        })}
+                      </td>
+                      {!hallLocked && <td className="muted">{r.hall?.name ?? t('hall.allOpen')}</td>}
+                      <td className="muted">{r.location ?? '—'}</td>
+                      <td className="muted tnum">{r.active ? formatDate(r.next.toISOString()) : '—'}</td>
+                      <td>
+                        <span className={`badge ${r.active ? 'b-good' : 'b-gray'}`}>
+                          {r.active ? t('common.enabled') : t('common.disabled')}
+                        </span>
+                      </td>
+                      <td style={{ textAlign: 'right' }}>
+                        {perms.write && (
+                          <button className="btn ghost sm" onClick={() => toggleActive(r)}>
+                            {r.active ? t('common.disable') : t('common.enable')}
+                          </button>
+                        )}
+                        {perms.write && (
+                          <button className="btn ghost sm" style={{ marginLeft: 6 }} onClick={() => setEditing(r)}>{t('common.edit')}</button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                  {sorted.length === 0 && (
+                    <tr>
+                      <td colSpan={hallLocked ? 7 : 8} className="empty-inline">
+                        {t('recurring.empty')}
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Mobile — list tiles */}
+          <div className="only-mobile">
+            {sorted.map((r) => (
+              <div key={r.id} className="mtile" onClick={perms.write ? () => setEditing(r) : undefined}>
+                <div className="mtile-row1">
+                  <div style={{ minWidth: 0 }}>
+                    <strong>{r.title}</strong>
+                    <span className="muted" style={{ fontSize: 12.5 }}>
+                      {' · '}
+                      {t('recurring.every', {
+                        day: t(weekdayKey(r.weekday)),
+                        time: formatMeetingTime(r.start_time),
+                      })}
                     </span>
-                  </td>
-                  <td className="muted">
-                    {t('recurring.every', {
-                      day: t(weekdayKey(r.weekday)),
-                      time: formatMeetingTime(r.start_time),
-                    })}
-                  </td>
-                  {!hallLocked && <td className="muted">{r.hall?.name ?? t('hall.allOpen')}</td>}
-                  <td className="muted">{r.location ?? '—'}</td>
-                  <td className="muted tnum">{r.active ? formatDate(r.next.toISOString()) : '—'}</td>
-                  <td>
+                  </div>
+                  <div className="flex items-center gap-8" style={{ flexShrink: 0 }}>
                     <span className={`badge ${r.active ? 'b-good' : 'b-gray'}`}>
                       {r.active ? t('common.enabled') : t('common.disabled')}
                     </span>
-                  </td>
-                  <td style={{ textAlign: 'right' }}>
-                    {perms.write && (
-                      <button className="btn ghost sm" onClick={() => toggleActive(r)}>
-                        {r.active ? t('common.disable') : t('common.enable')}
-                      </button>
-                    )}
-                    {perms.write && (
-                      <button className="btn ghost sm" style={{ marginLeft: 6 }} onClick={() => setEditing(r)}>{t('common.edit')}</button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-              {sorted.length === 0 && (
-                <tr>
-                  <td colSpan={hallLocked ? 7 : 8} className="empty-inline">
-                    {t('recurring.empty')}
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* Mobile — list tiles */}
-      <div className="only-mobile">
-        {sorted.map((r) => (
-          <div key={r.id} className="mtile" onClick={perms.write ? () => setEditing(r) : undefined}>
-            <div className="mtile-row1">
-              <div style={{ minWidth: 0 }}>
-                <strong>{r.title}</strong>
-                <span className="muted" style={{ fontSize: 12.5 }}>
-                  {' · '}
-                  {t('recurring.every', {
-                    day: t(weekdayKey(r.weekday)),
-                    time: formatMeetingTime(r.start_time),
-                  })}
-                </span>
+                    {perms.write && <span className="mtile-cta"><ChevronRightIcon /></span>}
+                  </div>
+                </div>
+                <div className="mtile-line">
+                  {r.hall?.name ?? t('hall.allOpen')}
+                  {r.location ? ` · ${r.location}` : ''}
+                  {r.active
+                    ? ` ${t('recurring.nextInline', { date: formatDate(r.next.toISOString()) })}`
+                    : ''}
+                </div>
               </div>
-              <div className="flex items-center gap-8" style={{ flexShrink: 0 }}>
-                <span className={`badge ${r.active ? 'b-good' : 'b-gray'}`}>
-                  {r.active ? t('common.enabled') : t('common.disabled')}
-                </span>
-                {perms.write && <span className="mtile-cta"><ChevronRightIcon /></span>}
-              </div>
-            </div>
-            <div className="mtile-line">
-              {r.hall?.name ?? t('hall.allOpen')}
-              {r.location ? ` · ${r.location}` : ''}
-              {r.active
-                ? ` ${t('recurring.nextInline', { date: formatDate(r.next.toISOString()) })}`
-                : ''}
-            </div>
+            ))}
+            {sorted.length === 0 && (
+              <div className="empty-inline">{t('recurring.empty')}</div>
+            )}
           </div>
-        ))}
-        {sorted.length === 0 && (
-          <div className="empty-inline">{t('recurring.empty')}</div>
-        )}
-      </div>
+        </>
+      )}
 
       {(addOpen || editing) && (
         <RecurringModal

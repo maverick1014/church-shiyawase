@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useMemo } from 'react';
 import { useFetch } from '@/lib/hooks';
 import { usePageChrome } from '@/components/AppShell';
-import { Card, ErrorBanner, Loading } from '@/components/ui';
+import { Card, ErrorBanner, Skeleton, SkeletonCard, SkeletonCards, SkeletonScreen } from '@/components/ui';
 import { EventRow, MemberRow, OverviewRow, ProgramRow } from '@/lib/types';
 import {
   eventBadgeClass,
@@ -84,7 +84,25 @@ export default function DashboardPage() {
     { label: t('dash.kpi.discipleship'), value: activePairs, suffix: t('dash.unit.pairs') },
   ];
 
-  if (loading) return <Loading />;
+  // The dashboard is four KPI tiles over three panels — the skeleton lays out
+  // exactly that, so the numbers land in tiles that are already there.
+  if (loading)
+    return (
+      <SkeletonScreen>
+        <div className="grid g4">
+          {kpis.map((k) => (
+            <div className="stat" key={k.label}>
+              <Skeleton width={92} height={11} />
+              <Skeleton width={64} height={28} style={{ marginTop: 10 }} />
+            </div>
+          ))}
+        </div>
+        <SkeletonCards className="grid g2-wide mt-16" count={2} lines={5} />
+        <div className="mt-16">
+          <SkeletonCard lines={5} />
+        </div>
+      </SkeletonScreen>
+    );
 
   return (
     <>

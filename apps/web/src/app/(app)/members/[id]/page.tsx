@@ -6,7 +6,7 @@ import { useFetch } from '@/lib/hooks';
 import { useSortableRows } from '@/lib/sort';
 import { api } from '@/lib/api';
 import { usePageChrome, useMe } from '@/components/AppShell';
-import { Avatar, BackButton, EntityHeader, ErrorBanner, FactGrid, Field, HallSelect, Loading, Modal, ProgressBar, RoleBadge, SortTh, useConfirm, useToast } from '@/components/ui';
+import { Avatar, BackButton, EntityHeader, ErrorBanner, FactGrid, Field, HallSelect, Modal, ProgressBar, RoleBadge, SkeletonDetail, SkeletonScreen, SortTh, useConfirm, useToast } from '@/components/ui';
 import { PairProgressModal } from '@/components/PairProgressModal';
 import { can } from '@/lib/perms';
 import { EnrollmentRow, GroupDetail, GroupRow, MemberRow, PairRow } from '@/lib/types';
@@ -86,7 +86,17 @@ export default function MemberDetailPage() {
     }
   };
 
-  if (member.initialLoading) return <Loading />;
+  // Back works without the record, so it goes up with the skeleton: the user
+  // can leave again while the profile is still loading.
+  if (member.initialLoading)
+    return (
+      <>
+        <BackButton onClick={() => router.push('/members')} />
+        <SkeletonScreen>
+          <SkeletonDetail />
+        </SkeletonScreen>
+      </>
+    );
   if (member.error || !member.data)
     return <ErrorBanner message={member.error ?? tr('member.notFound')} />;
 

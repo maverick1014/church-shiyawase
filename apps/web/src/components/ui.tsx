@@ -17,9 +17,232 @@ import { useT } from '@/lib/i18n';
  * State helpers
  * ---------------------------------------------------------------------- */
 
+/**
+ * One centred line of text. Kept for the places where it is the right answer —
+ * inside a modal, which is already a small bounded box. A page uses the
+ * skeletons below instead: this line alone at the top of an empty page is
+ * followed by the whole page snapping in underneath it.
+ */
 export function Loading() {
   const t = useT();
   return <div className="loading">{t('common.loading')}</div>;
+}
+
+/* -------------------------------------------------------------------------
+ * Loading skeletons
+ *
+ * One composable set for every page (G4) — a page builds its loading state out
+ * of these rather than hand-rolling its own. The rule of thumb: render the
+ * page's real chrome (its `PageBar`, its `BackButton`, its section labels —
+ * they all work with empty data) and skeletonise only the body that is
+ * actually waiting on the fetch.
+ *
+ * Every block is decorative and `aria-hidden`; `SkeletonScreen` supplies the
+ * one accessible status, so screen-reader users still hear `common.loading`.
+ * ---------------------------------------------------------------------- */
+
+/** Column widths for a skeleton table, cycled across the columns. Fixed pixels
+ *  on purpose: a percentage inside an auto-layout `<td>` has no definite basis
+ *  to resolve against and can collapse to nothing. */
+const SKELETON_COL_W = [136, 92, 112, 76, 120, 96];
+
+// Builds an index array — `Array.from({ length: n }, (_, i) => i)` at every
+// skeleton call site read worse than naming it once.
+const times = (n: number) => Array.from({ length: n }, (_, i) => i);
+
+/**
+ * A single shimmering block. Defaults to one full-width line of body text;
+ * pass `width` / `height` / `radius` for anything else (an avatar is
+ * `<Skeleton width={72} height={72} radius="50%" />`).
+ */
+export function Skeleton({
+  width = '100%',
+  height = 13,
+  radius = 6,
+  style,
+}: {
+  width?: number | string;
+  height?: number | string;
+  radius?: number | string;
+  style?: React.CSSProperties;
+}) {
+  return <span className="sk" aria-hidden="true" style={{ width, height, borderRadius: radius, ...style }} />;
+}
+
+/**
+ * `lines` stacked text lines. The last one is short — that asymmetry is what
+ * makes a stack of bars read as a paragraph rather than as a table.
+ */
+export function SkeletonText({
+  lines = 3,
+  style,
+}: {
+  lines?: number;
+  style?: React.CSSProperties;
+}) {
+  return (
+    <div className="sk-lines" aria-hidden="true" style={style}>
+      {times(lines).map((i) => (
+        <Skeleton key={i} width={lines > 1 && i === lines - 1 ? '62%' : '100%'} />
+      ))}
+    </div>
+  );
+}
+
+/** A `.card`-shaped placeholder: a heading line over `lines` body lines. */
+export function SkeletonCard({
+  title = true,
+  lines = 3,
+  style,
+}: {
+  title?: boolean;
+  lines?: number;
+  style?: React.CSSProperties;
+}) {
+  return (
+    <div className="card" aria-hidden="true" style={style}>
+      {title && <Skeleton width="42%" height={16} style={{ marginBottom: 16 }} />}
+      <SkeletonText lines={lines} />
+    </div>
+  );
+}
+
+/** `count` cards in one of the shared grids — the shape the event and training
+ *  catalogs land in, so the catalog doesn't reflow around them. */
+export function SkeletonCards({
+  count = 3,
+  lines = 3,
+  className = 'grid g3',
+}: {
+  count?: number;
+  lines?: number;
+  className?: string;
+}) {
+  return (
+    <div className={className} aria-hidden="true">
+      {times(count).map((i) => (
+        <SkeletonCard key={i} lines={lines} />
+      ))}
+    </div>
+  );
+}
+
+/**
+ * The list-page workhorse: a header row over `rows` × `columns` body cells.
+ *
+ * It honours the same `.only-desktop` / `.only-mobile` split the real lists
+ * use (G7), so a phone gets tile-shaped skeletons rather than a squashed
+ * table. `bare` drops both the card chrome and the tile variant — for a table
+ * that already lives inside a card and scrolls sideways on a phone too (the
+ * weekly-attendance grid).
+ */
+export function SkeletonTable({
+  rows = 6,
+  columns = 5,
+  bare,
+}: {
+  rows?: number;
+  columns?: number;
+  bare?: boolean;
+}) {
+  const cols = times(columns);
+  const widthOf = (c: number) => SKELETON_COL_W[c % SKELETON_COL_W.length];
+  const table = (
+    <div className="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            {cols.map((c) => (
+              <th key={c}>
+                <Skeleton width={Math.round(widthOf(c) * 0.62)} height={10} />
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {times(rows).map((r) => (
+            <tr key={r}>
+              {cols.map((c) => (
+                <td key={c}>
+                  <Skeleton width={widthOf(c)} />
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+
+  if (bare) return <div aria-hidden="true">{table}</div>;
+
+  return (
+    <div aria-hidden="true">
+      <div className="card only-desktop" style={{ padding: 6 }}>
+        {table}
+      </div>
+      <div className="only-mobile">
+        {times(rows).map((r) => (
+          <div key={r} className="sk-tile">
+            <div className="mtile-row1">
+              <Skeleton width={148} height={15} />
+              <Skeleton width={16} height={16} radius={8} />
+            </div>
+            <div className="mtile-line">
+              <Skeleton width={196} height={11} />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The shape of a detail page's opening card: the record's identity header over
+ * its grid of fact tiles. Member detail and 我的资料 both render exactly that,
+ * so their loading state is one component rather than two (G4). The tiles come
+ * from `FactGrid` itself, so they can never drift from the real ones.
+ */
+export function SkeletonDetail({ facts = 8 }: { facts?: number }) {
+  return (
+    <div className="card" aria-hidden="true">
+      <div className="entity-header">
+        <div className="entity-header-id">
+          <Skeleton width={72} height={72} radius="50%" />
+          <div className="grow">
+            <Skeleton width="46%" height={20} />
+            <Skeleton width="62%" style={{ marginTop: 10 }} />
+          </div>
+        </div>
+      </div>
+      <FactGrid
+        style={{ marginTop: 18 }}
+        facts={times(facts).map(() => ({
+          label: <Skeleton width="58%" height={10} />,
+          value: <Skeleton width="76%" height={12} />,
+        }))}
+      />
+    </div>
+  );
+}
+
+/**
+ * A page's loading state: the decorative shapes plus the one visually-hidden
+ * live region that announces them. Every page goes through this rather than
+ * repeating the aria wiring, and it reuses `common.loading` — the same string
+ * the old `<Loading />` line showed — so nothing new had to be translated.
+ */
+export function SkeletonScreen({ children }: { children: ReactNode }) {
+  const t = useT();
+  return (
+    <>
+      <span className="sr-only" role="status" aria-live="polite">
+        {t('common.loading')}
+      </span>
+      <div aria-hidden="true">{children}</div>
+    </>
+  );
 }
 
 export function ErrorBanner({ message }: { message: string | null }) {
@@ -407,14 +630,17 @@ export function FactGrid({
   facts,
   style,
 }: {
-  facts: { label: string; value: ReactNode }[];
+  // The label is a node, not a string, so the loading skeleton can hand this
+  // component placeholder bars and get the real tile back (rule G4) — which
+  // also means the list is keyed by position rather than by its label text.
+  facts: { label: ReactNode; value: ReactNode }[];
   style?: React.CSSProperties;
 }) {
   return (
     <div className="grid g4" style={style}>
-      {facts.map((f) => (
+      {facts.map((f, i) => (
         <div
-          key={f.label}
+          key={i}
           style={{ background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 10, padding: '12px 14px' }}
         >
           <div className="muted" style={{ fontSize: 11.5 }}>{f.label}</div>

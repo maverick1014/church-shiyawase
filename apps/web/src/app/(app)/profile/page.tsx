@@ -10,9 +10,10 @@ import {
   ErrorBanner,
   FactGrid,
   Field,
-  Loading,
   Modal,
   RoleBadge,
+  SkeletonDetail,
+  SkeletonScreen,
   useConfirm,
   useToast,
 } from '@/components/ui';
@@ -55,7 +56,14 @@ export default function MyProfilePage() {
 
   usePageChrome({ title: t('profile.title') }, [t]);
 
-  if (profile.initialLoading) return <Loading />;
+  // The card, its identity header and its two fact grids are the whole page —
+  // the skeleton is that same card, so the real one replaces it in place.
+  if (profile.initialLoading)
+    return (
+      <SkeletonScreen>
+        <SkeletonDetail facts={11} />
+      </SkeletonScreen>
+    );
   if (profile.error || !profile.data)
     return <ErrorBanner message={profile.error ?? t('profile.notFound')} />;
 

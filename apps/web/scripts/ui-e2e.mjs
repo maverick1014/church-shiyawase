@@ -466,6 +466,49 @@ async function main() {
       missingDrawerHall.length === 0,
       expectSwitcher ? missingDrawerHall.join(', ') || 'present on every page' : 'single congregation — n/a');
 
+    /* -- the loading state is a skeleton, not a jump ----------------------- */
+    // Every page used to early-return one "Loading…" line pinned to the top of
+    // an empty page, and the whole page then snapped in underneath it. A list
+    // page now paints its real page bar immediately and fills the rows below
+    // with skeletons. Two regressions here are invisible the moment the data
+    // lands, so they need the fetch held open: a second .page-bar rendered by
+    // the loading branch, and a skeleton wider than the phone it is on.
+    mod('loading skeletons');
+    const holdMembers = (url) => url.pathname === '/api/members';
+    await page.route(holdMembers, async (route) => {
+      await new Promise((r) => setTimeout(r, 5000));
+      await route.continue();
+    });
+    await page.goto(`${BASE}/members`, { waitUntil: 'domcontentloaded' });
+    const skeletonUp = await page
+      .locator('.sk')
+      .first()
+      .waitFor({ state: 'attached', timeout: 20000 })
+      .then(() => true)
+      .catch(() => false);
+    check('a list page shows skeleton rows while its fetch is in flight', skeletonUp);
+    const barsWhileLoading = await page.locator('.page-bar').count();
+    check('the real page bar is already up behind the skeleton',
+      barsWhileLoading === 1, `${barsWhileLoading} bar(s)`);
+    check('its filters are usable before the rows arrive',
+      (await page.locator('.page-bar-filters input').count()) === 1);
+    // A skeleton tile answers to .sk-tile, never .mtile: every other check in
+    // this file reads .mtile as "a real, clickable row".
+    check('skeleton tiles are not mistaken for list rows',
+      (await page.locator('.mtile').count()) === 0);
+    // The blocks are aria-hidden, so the status has to come from somewhere.
+    check('a screen reader is still told the page is loading',
+      (await page.locator('.sr-only[role=status]').count()) > 0);
+    const skeletonOver = await page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    );
+    check('the skeleton is no wider than the phone viewport', skeletonOver <= 1, `+${skeletonOver}px`);
+    await shot('08c-skeleton');
+    await page.unroute(holdMembers);
+    await page.locator('.mtile').first().waitFor({ timeout: 20000 });
+    check('the rows replace the skeleton once the fetch lands',
+      (await page.locator('.sk').count()) === 0);
+
     /* -- nothing scrolls sideways on a phone ------------------------------ */
     // A single fixed-width, non-shrinking child is enough to make a whole page
     // wider than the phone it is on — the training detail page did exactly

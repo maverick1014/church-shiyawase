@@ -12,11 +12,12 @@ import {
   ExportButton,
   Field,
   HallSelect,
-  Loading,
   Modal,
   PageBar,
   RoleBadge,
   RowChevron,
+  SkeletonScreen,
+  SkeletonTable,
   SortTh,
   useToast,
 } from '@/components/ui';
@@ -145,8 +146,9 @@ export default function MembersPage() {
     );
   };
 
-  if (initialLoading) return <Loading />;
-
+  // No early return: the filters and the actions render perfectly well against
+  // an empty list, so the real chrome goes up immediately and only the rows
+  // below it are skeletons — nothing moves when the fetch lands.
   return (
     <>
       <ErrorBanner message={error} />
@@ -180,97 +182,105 @@ export default function MembersPage() {
         }
       />
 
-      {/* Desktop — table */}
-      <div className="card only-desktop" style={{ padding: 6 }}>
-        <div className="table-wrap">
-          <table className="table-fixed">
-            <thead>
-              <tr>
-                {/* Member / identity / group / contact share the width equally;
-                    the utility columns (status / joined) + chevron stay narrow. */}
-                <SortTh sortKey="name" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('members.col.member')}</SortTh>
-                <SortTh sortKey="role" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('members.col.role')}</SortTh>
-                {!hallLocked && (
-                  <SortTh sortKey="hall" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('hall.label')}</SortTh>
-                )}
-                <SortTh sortKey="group" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('members.col.group')}</SortTh>
-                <SortTh sortKey="phone" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('members.col.contact')}</SortTh>
-                <SortTh sortKey="status" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('members.col.status')}</SortTh>
-                <SortTh sortKey="joined" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('members.col.joined')}</SortTh>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {sorted.map((m) => {
-                const role = memberRole(m);
-                return (
-                  <tr key={m.id}>
-                    <td>
-                      <strong>{m.full_name}</strong>
-                    </td>
-                    <td>
-                      <RoleBadge role={role} />
-                    </td>
-                    {!hallLocked && <td className="muted">{m.hall?.name ?? '—'}</td>}
-                    <td className="muted">{m.group?.name ?? t('members.filter.ungrouped')}</td>
-                    <td className="muted tnum">{m.phone ?? '—'}</td>
-                    <td>
-                      <span className={`badge ${memberStatusClass(m.status)}`}>
-                        {t(memberStatusKey(m.status))}
-                      </span>
-                    </td>
-                    <td className="muted tnum">{formatDate(m.joined_at)}</td>
-                    <td style={{ textAlign: 'right' }}>
-                      <RowChevron title={t('members.viewProfile')} onClick={() => router.push(`/members/${m.id}`)} />
-                    </td>
+      {initialLoading ? (
+        <SkeletonScreen>
+          <SkeletonTable rows={8} columns={hallLocked ? 7 : 8} />
+        </SkeletonScreen>
+      ) : (
+        <>
+          {/* Desktop — table */}
+          <div className="card only-desktop" style={{ padding: 6 }}>
+            <div className="table-wrap">
+              <table className="table-fixed">
+                <thead>
+                  <tr>
+                    {/* Member / identity / group / contact share the width equally;
+                        the utility columns (status / joined) + chevron stay narrow. */}
+                    <SortTh sortKey="name" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('members.col.member')}</SortTh>
+                    <SortTh sortKey="role" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('members.col.role')}</SortTh>
+                    {!hallLocked && (
+                      <SortTh sortKey="hall" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('hall.label')}</SortTh>
+                    )}
+                    <SortTh sortKey="group" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('members.col.group')}</SortTh>
+                    <SortTh sortKey="phone" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('members.col.contact')}</SortTh>
+                    <SortTh sortKey="status" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('members.col.status')}</SortTh>
+                    <SortTh sortKey="joined" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('members.col.joined')}</SortTh>
+                    <th />
                   </tr>
-                );
-              })}
-              {sorted.length === 0 && (
-                <tr>
-                  <td colSpan={hallLocked ? 7 : 8} className="empty-inline">
-                    {t('members.empty')}
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* Mobile — list tiles: name + group + identity, contact, status + joined */}
-      <div className="only-mobile">
-        {sorted.map((m) => {
-          const role = memberRole(m);
-          return (
-            <div key={m.id} className="mtile" onClick={() => router.push(`/members/${m.id}`)}>
-              <div className="mtile-row1">
-                <div className="flex items-center gap-8 flex-wrap" style={{ minWidth: 0 }}>
-                  <strong>{m.full_name}</strong>
-                  <span className="muted" style={{ fontSize: 12.5 }}>· {m.group?.name ?? t('members.filter.ungrouped')}</span>
-                  <RoleBadge role={role} />
-                </div>
-                <span className="mtile-cta"><ChevronRightIcon /></span>
-              </div>
-              {/* Only render detail lines that have real content — a tile with no
-                  phone/date shouldn't show bare “—” placeholder rows. */}
-              {m.phone && <div className="mtile-line">{m.phone}</div>}
-              {(m.status !== MemberStatus.Active || m.joined_at) && (
-                <div className="mtile-line">
-                  {/* Active is the norm — only surface the status when it isn't. */}
-                  {m.status !== MemberStatus.Active && (
-                    <span className={`badge ${memberStatusClass(m.status)}`}>
-                      {t(memberStatusKey(m.status))}
-                    </span>
+                </thead>
+                <tbody>
+                  {sorted.map((m) => {
+                    const role = memberRole(m);
+                    return (
+                      <tr key={m.id}>
+                        <td>
+                          <strong>{m.full_name}</strong>
+                        </td>
+                        <td>
+                          <RoleBadge role={role} />
+                        </td>
+                        {!hallLocked && <td className="muted">{m.hall?.name ?? '—'}</td>}
+                        <td className="muted">{m.group?.name ?? t('members.filter.ungrouped')}</td>
+                        <td className="muted tnum">{m.phone ?? '—'}</td>
+                        <td>
+                          <span className={`badge ${memberStatusClass(m.status)}`}>
+                            {t(memberStatusKey(m.status))}
+                          </span>
+                        </td>
+                        <td className="muted tnum">{formatDate(m.joined_at)}</td>
+                        <td style={{ textAlign: 'right' }}>
+                          <RowChevron title={t('members.viewProfile')} onClick={() => router.push(`/members/${m.id}`)} />
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {sorted.length === 0 && (
+                    <tr>
+                      <td colSpan={hallLocked ? 7 : 8} className="empty-inline">
+                        {t('members.empty')}
+                      </td>
+                    </tr>
                   )}
-                  {m.joined_at && <span>{formatDate(m.joined_at)}</span>}
-                </div>
-              )}
+                </tbody>
+              </table>
             </div>
-          );
-        })}
-        {sorted.length === 0 && <div className="empty-inline">{t('members.empty')}</div>}
-      </div>
+          </div>
+
+          {/* Mobile — list tiles: name + group + identity, contact, status + joined */}
+          <div className="only-mobile">
+            {sorted.map((m) => {
+              const role = memberRole(m);
+              return (
+                <div key={m.id} className="mtile" onClick={() => router.push(`/members/${m.id}`)}>
+                  <div className="mtile-row1">
+                    <div className="flex items-center gap-8 flex-wrap" style={{ minWidth: 0 }}>
+                      <strong>{m.full_name}</strong>
+                      <span className="muted" style={{ fontSize: 12.5 }}>· {m.group?.name ?? t('members.filter.ungrouped')}</span>
+                      <RoleBadge role={role} />
+                    </div>
+                    <span className="mtile-cta"><ChevronRightIcon /></span>
+                  </div>
+                  {/* Only render detail lines that have real content — a tile with no
+                      phone/date shouldn't show bare “—” placeholder rows. */}
+                  {m.phone && <div className="mtile-line">{m.phone}</div>}
+                  {(m.status !== MemberStatus.Active || m.joined_at) && (
+                    <div className="mtile-line">
+                      {/* Active is the norm — only surface the status when it isn't. */}
+                      {m.status !== MemberStatus.Active && (
+                        <span className={`badge ${memberStatusClass(m.status)}`}>
+                          {t(memberStatusKey(m.status))}
+                        </span>
+                      )}
+                      {m.joined_at && <span>{formatDate(m.joined_at)}</span>}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+            {sorted.length === 0 && <div className="empty-inline">{t('members.empty')}</div>}
+          </div>
+        </>
+      )}
 
       <div className="hint mt-14">{t('members.hint')}</div>
 
