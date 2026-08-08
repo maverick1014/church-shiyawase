@@ -7,7 +7,7 @@ import {
   signSession,
   verifyPassword,
 } from '@/lib/server/auth';
-import { CHURCH_TZ_OFFSET, churchParts } from '@/lib/time';
+import { CHURCH_TZ_OFFSET, churchParts, isSundayDate, sundaysOfMonth } from '@/lib/time';
 import {
   isOptionalModule,
   LANGUAGES,
@@ -449,6 +449,78 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
         unwrap(await db.from('groups').delete().eq('id', r1).select().single());
         return json({ id: r1 });
       }
+    }
+  }
+
+  // ---- 主日点名 (the Sunday sheet) -------------------------------------------
+  // Every Sunday happens, so nothing creates one: the sheet IS the data
+  // (migration 0013). One request reads a whole month for ONE congregation,
+  // one request writes a single cell.
+  if (r0 === 'attendance' && r1 === 'sundays' && !r2) {
+    if (method === 'GET') {
+      const hallId = await resolveSheetHall(db, hallFilter);
+      // Which month, defaulting to Malaysia's own calendar month — on a UTC
+      // Worker the first 8 hours of a new month still read as the old one.
+      const nowParts = churchParts(new Date());
+      const year = Number(q.get('year')) || nowParts.year;
+      const month = Number(q.get('month')) || nowParts.month;
+      if (!Number.isInteger(year) || year < 1970 || year > 9999)
+        throw new HttpError(400, 'year must be a four-digit year');
+      if (!Number.isInteger(month) || month < 1 || month > 12)
+        throw new HttpError(400, 'month must be a number from 1 to 12');
+      return json(await sundaySheet(db, hallId, year, month));
+    }
+    if (method === 'PUT') {
+      const dto = await body();
+      // The hall is the caller's own whenever it has one — `assertHallWritable`
+      // refuses a payload aimed at another congregation and `withHall` then
+      // overwrites whatever was sent, exactly like every other write (rule G2).
+      assertHallWritable(dto);
+      const hallId = String(withHall(dto).hall_id ?? '');
+      if (!hallId) throw new HttpError(400, 'hall_id is required — a Sunday sheet is always one congregation');
+      const serviceDate = String(dto.service_date ?? '');
+      const memberId = String(dto.member_id ?? '');
+      if (!serviceDate || !memberId)
+        throw new HttpError(400, 'service_date and member_id are required');
+      // Postgres would refuse this too (the sunday_attendance_is_sunday check),
+      // but a constraint name is not an answer anybody can act on.
+      if (!isSundayDate(serviceDate))
+        throw new HttpError(400, `${serviceDate} is not a Sunday — only Sundays belong on the Sunday sheet`);
+      const preService = dto.pre_service === true;
+      const service = dto.service === true;
+      // Both ticks off means "not recorded", which is what NO ROW already
+      // means — and the table's not-empty check forbids storing it. So an
+      // untick deletes rather than writing an empty row.
+      if (!preService && !service) {
+        unwrap(
+          await db
+            .from('sunday_attendance')
+            .delete()
+            .eq('hall_id', hallId)
+            .eq('service_date', serviceDate)
+            .eq('member_id', memberId)
+            .select('id'),
+        );
+        return json({ hall_id: hallId, service_date: serviceDate, member_id: memberId, pre_service: false, service: false });
+      }
+      return json(
+        unwrap(
+          await db
+            .from('sunday_attendance')
+            .upsert(
+              {
+                hall_id: hallId,
+                service_date: serviceDate,
+                member_id: memberId,
+                pre_service: preService,
+                service,
+              },
+              { onConflict: 'hall_id,service_date,member_id' },
+            )
+            .select('hall_id,service_date,member_id,pre_service,service')
+            .single(),
+        ),
+      );
     }
   }
 
@@ -1065,24 +1137,31 @@ const WEEKDAY_INDEX: Record<string, number> = {
 };
 
 /**
- * Top up the calendar from the 循环聚会 rules so a weekly service never has to
- * be added by hand. Runs on GET /events — generation is lazy on purpose: the
- * schedule only needs to be correct for someone actually looking at it, which
- * avoids a cron job that can fail silently.
+ * Top up the calendar from the 循环聚会 rules so a recurring weeknight meeting
+ * never has to be added by hand. Runs on GET /events — generation is lazy on
+ * purpose: the schedule only needs to be correct for someone actually looking
+ * at it, which avoids a cron job that can fail silently.
  *
- * Two things keep it from fighting the user:
+ * SUNDAYS ARE NOT GENERATED ANY MORE (migration 0013). Every Sunday happens,
+ * so manufacturing a 主日崇拜 row to hang attendance off was only ever a way of
+ * inventing a date the calendar already knew about; the Sunday sheet
+ * (`sunday_attendance`) holds that attendance now, per congregation, with no
+ * event row involved. A Sunday rule left over from before is therefore skipped
+ * rather than deleted — its past occurrences stay readable as ordinary
+ * meetings, and 循环聚会 keeps working for every other weekday.
+ *
+ * Two things keep the remaining generation from fighting the user:
  *  - `generated_through` means a rule only ever looks at dates AFTER the last
  *    one it produced. Deleting a single occurrence (a public holiday) makes it
  *    stay deleted, and editing a rule's weekday/time doesn't regenerate the
  *    window it already filled at the old time.
  *  - A slot already occupied by an equivalent event — same hall, same type,
- *    same moment, whoever created it — is skipped. That covers services that
+ *    same moment, whoever created it — is skipped. That covers meetings that
  *    predate the rules (their `recurring_id` is null) and anything added by
- *    hand, and stops the insert from colliding with the Sunday-service unique
- *    index from 0008.
+ *    hand.
  */
 async function ensureRecurringEvents(db: ReturnType<typeof getDb>) {
-  const rules = unwrap(
+  const rules = (unwrap(
     await db
       .from('recurring_events')
       .select('id,title,event_type,weekday,start_time,location,hall_id,lookahead_days,generated_through')
@@ -1097,7 +1176,7 @@ async function ensureRecurringEvents(db: ReturnType<typeof getDb>) {
     hall_id: string | null;
     lookahead_days: number;
     generated_through: string | null;
-  }>;
+  }>).filter((r) => r.weekday !== 'sunday');
   if (rules.length === 0) return;
 
   // Malaysia's calendar date, via the same helper the UI reads with.
@@ -1171,6 +1250,92 @@ async function ensureRecurringEvents(db: ReturnType<typeof getDb>) {
       db.from('recurring_events').update({ generated_through: date }).eq('id', id),
     ),
   );
+}
+
+/**
+ * Which congregation's Sunday sheet is being read.
+ *
+ * `hallFilter` already carries the whole precedence rule — the session's own
+ * hall first, the congregation switcher's `?hall_id=` only for an account that
+ * spans every hall (rule G2), so a hall-pinned account can never reach another
+ * hall's sheet. What is special here is the FALLBACK: every other list happily
+ * answers "all congregations", but a sheet is always exactly one. Rather than
+ * merging three congregations' Sundays into one grid — the very thing this
+ * model removes — an unnarrowed request is refused, unless the church has only
+ * one congregation, where the answer is unambiguous.
+ */
+async function resolveSheetHall(
+  db: ReturnType<typeof getDb>,
+  hallFilter: string | null,
+): Promise<string> {
+  if (hallFilter) return hallFilter;
+  const halls = unwrap<Array<{ id: string }>>(
+    await db.from('halls').select('id').order('sort_order'),
+  );
+  if (halls.length === 1) return halls[0].id;
+  if (halls.length === 0) throw new HttpError(500, 'No congregations configured yet');
+  throw new HttpError(
+    400,
+    'Choose one congregation: a Sunday sheet always belongs to a single congregation, never to all of them at once',
+  );
+}
+
+/**
+ * One congregation's Sunday sheet for one month: its active members down the
+ * left, that month's Sundays across the top, two ticks per Sunday.
+ *
+ * The dates come from the calendar, not from the data — that is the whole
+ * point of 0013. A Sunday nobody has been marked on still gets its column.
+ */
+async function sundaySheet(
+  db: ReturnType<typeof getDb>,
+  hallId: string,
+  year: number,
+  month: number,
+) {
+  const dates = sundaysOfMonth(year, month);
+
+  const members = unwrap(
+    await db
+      .from('members')
+      .select(MEMBER_BRIEF)
+      .eq('hall_id', hallId)
+      .eq('status', 'active')
+      .order('full_name'),
+  ) as Array<{ id: string; full_name: string }>;
+
+  // Independent of the member read, so they go together (rule G6). An empty
+  // month (a calendar with no Sundays cannot happen, but be explicit) would
+  // make the range filter meaningless.
+  const marks = dates.length
+    ? (unwrap(
+        await db
+          .from('sunday_attendance')
+          .select('service_date,member_id,pre_service,service')
+          .eq('hall_id', hallId)
+          .gte('service_date', dates[0])
+          .lte('service_date', dates[dates.length - 1]),
+      ) as Array<{
+        service_date: string;
+        member_id: string;
+        pre_service: boolean;
+        service: boolean;
+      }>)
+    : [];
+
+  const byMember = new Map<string, Record<string, { pre_service: boolean; service: boolean }>>();
+  for (const m of marks) {
+    const date = m.service_date.slice(0, 10);
+    const cells = byMember.get(m.member_id) ?? {};
+    cells[date] = { pre_service: m.pre_service, service: m.service };
+    byMember.set(m.member_id, cells);
+  }
+
+  return {
+    hall_id: hallId,
+    dates,
+    rows: members.map((member) => ({ member, cells: byMember.get(member.id) ?? {} })),
+  };
 }
 
 async function groupAttendance(db: ReturnType<typeof getDb>, groupId: string) {
@@ -1522,5 +1687,10 @@ async function run(method: string, req: Request, ctx: Ctx): Promise<Response> {
 
 export const GET = (req: Request, ctx: Ctx) => run('GET', req, ctx);
 export const POST = (req: Request, ctx: Ctx) => run('POST', req, ctx);
+// PUT exists for the Sunday sheet's one-cell write: the row for (hall, Sunday,
+// member) is created, updated or removed by the same call, so the client never
+// has to know which. It goes through the same gate as every other method — a
+// `readonly` account is refused by the `method !== 'GET'` branch in dispatch().
+export const PUT = (req: Request, ctx: Ctx) => run('PUT', req, ctx);
 export const PATCH = (req: Request, ctx: Ctx) => run('PATCH', req, ctx);
 export const DELETE = (req: Request, ctx: Ctx) => run('DELETE', req, ctx);

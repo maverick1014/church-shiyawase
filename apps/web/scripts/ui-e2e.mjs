@@ -317,15 +317,19 @@ async function main() {
     };
   };
 
-  /** A throwaway event starting now, so it lands in the page's "Today" section. */
+  /**
+   * A throwaway hand-added meeting, starting now so it lands in the month the
+   * 崇拜与祷告会 page opens on. Sundays are no longer events at all (they are
+   * the sheet), so this is a plain `meeting` — the shape someone actually adds.
+   */
   const makeEvent = async () => {
     const row = await apiPost('/events', {
-      title: fixtureName('EVENT'),
-      event_type: 'service',
+      title: fixtureName('MEETING'),
+      event_type: 'meeting',
       starts_at: new Date().toISOString(),
       hall_id: await someHallId(),
     });
-    return { id: row.id, name: row.title, remove: disposable(`event ${row.title}`, `/events/${row.id}`) };
+    return { id: row.id, name: row.title, remove: disposable(`meeting ${row.title}`, `/events/${row.id}`) };
   };
 
   /**
@@ -462,7 +466,7 @@ async function main() {
     const sidebar = await page.locator('.sidebar').innerText();
     check(
       'sidebar lists every module + Users and Church settings (super admin only)',
-      ['Members', 'Life Groups', 'Events & Attendance', 'Trainings', 'Forty Days', 'Users', 'Church settings']
+      ['Members', 'Life Groups', 'Services', 'Trainings', 'Forty Days', 'Users', 'Church settings']
         .every((label) => sidebar.includes(label)),
     );
     // The brand at the top of the sidebar is the CHURCH's own name, read from
@@ -559,31 +563,115 @@ async function main() {
       await fxGroup.remove();
     }
 
-    /* -- events & attendance ---------------------------------------------- */
-    // Roll call and the edit dialog both need an event to open. The calendar is
-    // empty in the live database, so this module supplies one and works on it
-    // by name — never on "whatever sorts first".
-    mod('events & attendance');
-    const fxEvent = await makeEvent();
+    /* -- services · the Sunday sheet + hand-added meetings ----------------- */
+    // The page is a SHEET now: members down the left, the month's Sundays
+    // across the top, two ticks per Sunday (会前 / 主日). Nothing creates a
+    // Sunday — the calendar already has them — so this module needs only a
+    // member to put on the sheet, plus one hand-added meeting for the card
+    // underneath it.
+    //
+    // A sheet is always ONE congregation, so a full-access account has to pick
+    // one first; on a phone the switcher lives in the nav drawer. That choice
+    // is client state only, so a later page load resets it — nothing to undo.
+    mod('services · sunday sheet · meetings');
+    const fxSheetMember = await makeMember('SUNDAY');
+    const fxMeeting = await makeEvent();
+    const sheetHallId = await someHallId();
+    // Which month the page opens on: Malaysia's, not the runner's (the page
+    // reads it the same way, so an August-in-KL / July-in-UTC run still agrees).
+    const [sheetYear, sheetMonth] = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Kuala_Lumpur',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    })
+      .format(new Date())
+      .split('-');
+    /** That member's cells on the live sheet, straight from the API. */
+    const sheetCells = async () => {
+      const sheet = await apiGet(
+        `/attendance/sundays?hall_id=${sheetHallId}&year=${sheetYear}&month=${Number(sheetMonth)}`,
+      );
+      return sheet.rows.find((r) => r.member?.id === fxSheetMember.id)?.cells ?? {};
+    };
     try {
       await page.goto(`${BASE}/events`, { waitUntil: 'domcontentloaded' });
-      const eventCard = page.locator('.card', { hasText: fxEvent.name });
-      await eventCard.first().waitFor({ timeout: 20000 });
-      check('a created event appears on the events page', (await eventCard.count()) === 1);
-      await eventCard.locator('button:visible:has-text("Roll call")').first().click();
+      await page.locator('.page-bar').first().waitFor({ state: 'attached', timeout: 20000 });
+      // Whether a congregation has to be picked is a property of the ACCOUNT,
+      // not of what has rendered yet — so ask the API rather than racing the
+      // switcher into the DOM.
+      const sheetHalls = await apiGet('/halls');
+      if (sheetHalls.length > 1) {
+        const hallSelect = page.locator('.sidebar .nav-hall select');
+        await hallSelect.waitFor({ state: 'attached', timeout: 20000 });
+        await w(600);
+        const beforePick = await page.locator('.content').innerText();
+        check('on 全部堂会 the sheet asks for a congregation instead of merging them',
+          /congregation/i.test(beforePick), beforePick.replace(/\s+/g, ' ').slice(0, 120));
+        await page.locator('.hamburger').click();
+        await hallSelect.selectOption(sheetHallId);
+        await w(400);
+        await page.locator('.hamburger').click();
+        await w(300);
+      }
+      const memberCell = page.locator(`td:has-text("${fxSheetMember.name}")`);
+      await memberCell.first().waitFor({ timeout: 20000 });
+      check('the Sunday sheet lists the congregation’s members on roll',
+        (await memberCell.count()) === 1);
+      // One column group per Sunday, each split in two, plus the totals pair —
+      // so at least five 会前 headers in any month.
+      const preHeads = await page.locator('th:has-text("Pre-service")').count();
+      check('every Sunday gets a 会前 / 主日 pair of columns', preHeads >= 5, `${preHeads} headers`);
+      check('the sheet is ticked with check boxes, like the life-group sheet',
+        (await page.locator('input[type=checkbox]').count()) > 0);
+
+      // Tick → the cell is stored; untick → the row is GONE, not stored as two
+      // falses ("no row" already means "not recorded").
+      const sheetRow = page.locator('tr', { has: page.locator(`td:has-text("${fxSheetMember.name}")`) });
+      const firstTick = sheetRow.locator('input[type=checkbox]').first();
+      await firstTick.check();
+      await w(1500);
+      const ticked = await sheetCells();
+      check('ticking a cell records that Sunday',
+        Object.values(ticked).some((c) => c.pre_service), JSON.stringify(ticked));
+      await firstTick.uncheck();
+      await w(1500);
+      const cleared = await sheetCells();
+      check('unticking it leaves no row behind', Object.keys(cleared).length === 0, JSON.stringify(cleared));
+
+      // The card below: the meetings someone genuinely added this month.
+      const meetingLine = page.locator('.meeting-row', { hasText: fxMeeting.name });
+      await meetingLine.first().waitFor({ timeout: 20000 });
+      check('a hand-added meeting is listed under the sheet', (await meetingLine.count()) === 1);
+      await meetingLine.locator('button:visible:has-text("Roll call")').first().click();
       await page.locator('.modal').waitFor({ timeout: 8000 });
       check('roll call opens the attendance modal', true);
       await page.locator('.modal .icon-btn, .modal button:has-text("Close")').first().click();
       await w(300);
-      await eventCard.locator('button:visible:has-text("Edit")').first().click();
+      await meetingLine.locator('button:visible:has-text("Edit")').first().click();
       await page.locator('.modal').waitFor({ timeout: 8000 });
-      check('the event edit modal opens', true);
-      check('the edit modal opens on that event',
-        (await page.locator('.modal input').first().inputValue()) === fxEvent.name);
+      check('the edit modal opens on that meeting',
+        (await page.locator('.modal input').first().inputValue()) === fxMeeting.name);
+      // A hand-added meeting needs a name and a date, nothing else: no type,
+      // no location. Two inputs (+ the congregation select) and no more.
+      check('a meeting asks only for a name and a date',
+        (await page.locator('.modal input').count()) === 2,
+        `${await page.locator('.modal input').count()} inputs`);
       await page.locator('.modal button:has-text("Cancel")').first().click();
+      await w(300);
+
+      // The sheet is the widest thing in the app. It has to scroll inside its
+      // own card — the page body must never scroll sideways on a phone, and
+      // the sweep further down measures /events on 全部堂会, where the sheet
+      // is not drawn at all.
+      const over = await page.evaluate(
+        () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      );
+      check('the wide sheet scrolls inside its card, not the page', over <= 1, `+${over}px`);
       await shot('05-events');
     } finally {
-      await fxEvent.remove();
+      await fxMeeting.remove();
+      await fxSheetMember.remove();
     }
 
     /* -- trainings -------------------------------------------------------- */

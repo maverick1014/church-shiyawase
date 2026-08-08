@@ -123,6 +123,64 @@ export function fromChurchInput(value: string | null | undefined): string | null
   return churchInstant(+m[1], +m[2], +m[3], +m[4], +m[5]).toISOString();
 }
 
+/* -------------------------------------------------------------------------
+ * Calendar-label arithmetic
+ *
+ * The helpers below work on `YYYY-MM-DD` LABELS, not on instants: which dates
+ * a month contains is the same question in every zone, so they do their
+ * counting on a UTC-anchored `Date` and only ever read it back with the `UTC`
+ * accessors. That is what makes them safe under `TZ=America/New_York` — the
+ * banned accessors (`getFullYear` / `getMonth` / `getDate` / `getHours`) read
+ * the runtime's zone, `getUTCDay` / `getUTCDate` never do.
+ * ---------------------------------------------------------------------- */
+
+/**
+ * Every date in one calendar month that falls on `weekday` (0 = Sunday), as
+ * `YYYY-MM-DD` in order.
+ *
+ * Both attendance sheets are built on this: the Sunday roll call takes the
+ * Sundays of the month it is showing, and a life group takes the month's
+ * copies of its own meeting day. Neither may hand-roll it — one of them
+ * counted Sundays for a Tuesday group before this was shared (rule G4).
+ */
+export function weekdayDatesOfMonth(
+  year: number,
+  month1to12: number,
+  weekday: number,
+): string[] {
+  const dates: string[] = [];
+  const d = new Date(Date.UTC(year, month1to12 - 1, 1));
+  while (d.getUTCDay() !== weekday) d.setUTCDate(d.getUTCDate() + 1);
+  while (d.getUTCMonth() === month1to12 - 1) {
+    dates.push(d.toISOString().slice(0, 10));
+    d.setUTCDate(d.getUTCDate() + 7);
+  }
+  return dates;
+}
+
+/** The Sundays of one Malaysian calendar month — the Sunday sheet's columns. */
+export function sundaysOfMonth(year: number, month1to12: number): string[] {
+  return weekdayDatesOfMonth(year, month1to12, 0);
+}
+
+/**
+ * Is this `YYYY-MM-DD` a real date, and is it a Sunday? The Sunday sheet's
+ * table refuses anything else (a CHECK constraint in migration 0013), and the
+ * API says so in words rather than letting Postgres answer with a constraint
+ * name.
+ */
+export function isSundayDate(dateOnly: string | null | undefined): boolean {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateOnly ?? '');
+  if (!m) return false;
+  const [y, mo, d] = [+m[1], +m[2], +m[3]];
+  const at = new Date(Date.UTC(y, mo - 1, d));
+  // Date.UTC rolls 2026-02-31 forward into March — compare it back so an
+  // impossible date is rejected rather than silently moved.
+  if (at.getUTCFullYear() !== y || at.getUTCMonth() !== mo - 1 || at.getUTCDate() !== d)
+    return false;
+  return at.getUTCDay() === 0;
+}
+
 /**
  * A stored DATE (`YYYY-MM-DD`) covers its whole Malaysian day. Comparing a
  * course's `ends_on` against `new Date(ends_on)` would retire it at 08:00 that

@@ -17,6 +17,19 @@ nav href it owns and the API prefixes it owns; today the one entry is
 `discipleship` (四十天守望). Core surfaces are not switchable and are not in
 the registry.
 
+**Attendance is two different shapes, on purpose.** A Sunday is not an event:
+every Sunday simply happens, so `/events` (崇拜与祷告会) opens on a **sheet** —
+`sunday_attendance`, one row per (堂会, Sunday, member) carrying the two ticks
+a Sunday has, 会前 and 主日 (migration 0013). Its columns come from the
+calendar, so nothing creates a Sunday and a Sunday nobody marked has no rows at
+all. **A sheet is always one congregation** — each hall rolls its own call even
+on a joint week, so there is no 联合聚会 concept left and an all-congregations
+read is a 400, never a merge. The `events` table is now only for the meetings
+someone genuinely adds by hand (an occasional Wednesday prayer meeting: a name,
+a date, a hall), which keep the old 出席/请假/缺席 roll call. Nothing
+manufactures a 主日崇拜 row any more — 循环聚会 still tops the calendar up for
+weeknight rules and skips Sunday ones.
+
 Run before every push: `npm run --workspace @tog/web -s build` (or in
 `apps/web`: `npx tsc --noEmit && npm test && npm run build`). Deploys are gated
 on unit tests + a post-deploy smoke test (`.github/workflows/deploy.yml`).
@@ -27,9 +40,10 @@ Testing layers (in `apps/web`):
   matrix, full CRUD, public form).
 - `npm run test:ui-e2e` — **browser UI end-to-end**: drives the real site in
   Chromium and asserts each interaction's expected outcome (login, search,
-  filters, modals, weekly attendance, discipleship day-notes, an
-  interface-language round-trip, a 守望模块 create→edit→delete cycle, an
-  add-on module off→on cycle on 教会设置, a create→delete member write-cycle).
+  filters, modals, weekly attendance, a 主日点名 tick→untick round-trip,
+  discipleship day-notes, an interface-language round-trip, a 守望模块
+  create→edit→delete cycle, an add-on module off→on cycle on 教会设置, a
+  create→delete member write-cycle).
   It restores anything it changes — including the module states, which it
   reads first and puts back in a `finally`. It runs a tiny in-process reverse proxy so the browser
   works even behind an egress proxy. `UI_E2E_PASSWORD` is required (never
@@ -65,7 +79,7 @@ These are hard requirements for this codebase. A change that breaks one is a
 review finding, not a preference. Cite the rule number in the finding.
 
 ### G1 — CRUD completeness on every management page
-Every entity page (成员、小组、聚会、培训、四十天守望模块与配对、账户) must offer
+Every entity page (成员、小组、额外聚会、培训、四十天守望模块与配对、账户) must offer
 the full set its users need: **Create, Read, Update, Delete**. If the API supports an
 operation, the UI must expose it (or the omission must be a deliberate,
 documented decision). A page that can only create + list is incomplete.
@@ -103,9 +117,12 @@ whether the **module** owning the path is enabled for this church.
   `hallFilter = hallScope ?? q.get('hall_id')` — the **session's own hall always
   wins**, so a hall-pinned account can never widen its view by sending a
   different `hall_id`; that precedence is the security property. Every
-  hall-owned list GET (成员/小组/聚会/循环聚会/培训/守望配对 + 牧养总览) reads
-  `hallFilter`, so switching congregation moves the whole app — dashboard KPIs
-  included — not just some pages.
+  hall-owned list GET (成员/小组/聚会/循环聚会/培训/守望配对/主日点名 + 牧养总览)
+  reads `hallFilter`, so switching congregation moves the whole app — dashboard
+  KPIs included — not just some pages.
+  **主日点名 is the one read that refuses to answer "all congregations"**: a
+  sheet is always exactly one hall, so with no narrowing (and more than one
+  hall) it is a 400 rather than three member lists merged into one grid.
 - **Server (authoritative):** every non-public API path goes through the gate in
   `route.ts`. Writes are denied for `readonly`; account management
   (`/accounts*`, both **read and write**) is `super_admin` only; church
@@ -132,7 +149,8 @@ like 移除/清空/重置 that discards data) MUST go through the shared
 ### G4 — One mechanism, not per-page reimplementations (altitude)
 Reuse the shared primitives instead of re-rolling them per page:
 `Modal`, `Field`, `PasswordInput`, `useConfirm`, `useToast`, `RoleBadge`,
-`Avatar`, `PairProgressModal`, `exportRows`/`exportMatrix` (`lib/export.ts`),
+`Avatar`, `PairProgressModal`, `MonthPicker`/`SheetTick` (the pieces the 主日
+and 小组 attendance sheets share), `exportRows`/`exportMatrix` (`lib/export.ts`),
 `api` (`lib/api.ts`), and the label/style helpers in `lib/labels.ts`
 (`roleTagStyle`, `roleDot`, `memberRoleZh`, `positionZh`, status/category
 classes). New code that duplicates one of these is a finding — name the helper
@@ -178,7 +196,9 @@ two CJK glyphs clips the moment the same label is English.
 The church is in one place, so a 10:00 service reads 10:00 on every screen.
 All date/time work goes through `lib/time.ts` (`churchParts`,
 `churchInstant`, `startOfChurchDay`, `addChurchDays`, `churchDayOfWeek`,
-`churchDateKey`, `toChurchInput` / `fromChurchInput`, `endOfChurchDate`).
+`churchDateKey`, `toChurchInput` / `fromChurchInput`, `endOfChurchDate`,
+and the calendar-label helpers `weekdayDatesOfMonth` / `sundaysOfMonth` /
+`isSundayDate` that both attendance sheets take their columns from).
 Never call `getHours` / `setHours` / `getFullYear` / `getMonth` / `getDate` /
 `getTimezoneOffset` on a `Date` in app code — they read the *runtime's* zone,
 which is UTC inside the Worker and the viewer's own zone in the browser, so

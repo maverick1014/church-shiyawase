@@ -6,7 +6,7 @@ import { useFetch } from '@/lib/hooks';
 import { useSortableRows } from '@/lib/sort';
 import { api } from '@/lib/api';
 import { usePageChrome, useMe } from '@/components/AppShell';
-import { BackButton, ErrorBanner, ExportButton, Field, HallSelect, RoleBadge, SkeletonCard, SkeletonScreen, SkeletonTable, SortTh, TagsInput, useConfirm, useToast } from '@/components/ui';
+import { BackButton, ErrorBanner, ExportButton, Field, HallSelect, MonthPicker, RoleBadge, SheetTick, SkeletonCard, SkeletonScreen, SkeletonTable, SortTh, TagsInput, useConfirm, useToast } from '@/components/ui';
 import { can } from '@/lib/perms';
 import { exportMatrix } from '@/lib/export';
 import { GroupAttendanceResponse, GroupDetail, GroupRow, MemberRow } from '@/lib/types';
@@ -20,8 +20,8 @@ import {
   weekdayKey,
   WEEKDAY_OPTIONS,
 } from '@/lib/labels';
-import { churchParts } from '@/lib/time';
-import { useLang, useT } from '@/lib/i18n';
+import { churchParts, weekdayDatesOfMonth } from '@/lib/time';
+import { useT } from '@/lib/i18n';
 import { AttendanceStatus, GroupPosition, LEADERSHIP_POSITIONS, Weekday } from '@tog/shared';
 
 export default function GroupDetailPage() {
@@ -433,16 +433,9 @@ function weeksOfMonth(
   weekday: number,
   recorded: string[] = [],
 ): { no: number; date: string; day: number }[] {
-  const dates = new Set<string>();
-  // Pure calendar arithmetic in UTC — these are date labels, not instants, so
-  // they must not depend on the runtime's zone the way the rest of the app's
-  // date handling no longer does (lib/time.ts).
-  const d = new Date(Date.UTC(year, month1to12 - 1, 1));
-  while (d.getUTCDay() !== weekday) d.setUTCDate(d.getUTCDate() + 1);
-  while (d.getUTCMonth() === month1to12 - 1) {
-    dates.add(d.toISOString().slice(0, 10));
-    d.setUTCDate(d.getUTCDate() + 7);
-  }
+  // Which dates a month holds is shared with the Sunday sheet — one helper in
+  // lib/time.ts rather than the same walk twice (rule G4).
+  const dates = new Set<string>(weekdayDatesOfMonth(year, month1to12, weekday));
   const prefix = `${year}-${String(month1to12).padStart(2, '0')}-`;
   for (const r of recorded) if (r.startsWith(prefix)) dates.add(r);
 
@@ -459,7 +452,6 @@ function WeeklyAttendance({
   meetingDay: Weekday | null;
 }) {
   const t = useT();
-  const lang = useLang();
   const toast = useToast();
   const perms = can(useMe().role);
   const { data, initialLoading, reload } = useFetch<GroupAttendanceResponse>(
@@ -549,10 +541,6 @@ function WeeklyAttendance({
     }
   };
 
-  // Month names follow the interface language rather than a hardcoded list.
-  const monthName = (m: number) =>
-    new Intl.DateTimeFormat(lang, { month: 'long' }).format(new Date(2000, m - 1, 1));
-
   const exportGrid = () => {
     if (!data) return;
     const headers = [
@@ -587,16 +575,15 @@ function WeeklyAttendance({
       </div>
 
       <div className="flex gap-8 mb-14 flex-wrap">
-        <select value={year} onChange={(e) => setYear(Number(e.target.value))} style={{ width: 'auto' }}>
-          {years.map((y) => (
-            <option key={y} value={y}>{y}</option>
-          ))}
-        </select>
-        <select value={month} onChange={(e) => setMonth(Number(e.target.value))} style={{ width: 'auto' }}>
-          {Array.from({ length: 12 }, (_, i) => i + 1).map((mo) => (
-            <option key={mo} value={mo}>{monthName(mo)}</option>
-          ))}
-        </select>
+        <MonthPicker
+          year={year}
+          month={month}
+          years={years}
+          onChange={(next) => {
+            setYear(next.year);
+            setMonth(next.month);
+          }}
+        />
       </div>
 
       {initialLoading ? (
@@ -630,12 +617,10 @@ function WeeklyAttendance({
                       const present = inner?.get(w.date) === AttendanceStatus.Present;
                       return (
                         <td key={w.date} style={{ textAlign: 'center' }}>
-                          <input
-                            type="checkbox"
+                          <SheetTick
                             checked={present}
-                            onChange={() => toggle(w.date, r.member.id, present)}
+                            onToggle={() => toggle(w.date, r.member.id, present)}
                             disabled={!perms.write}
-                            style={{ width: 18, height: 18, cursor: perms.write ? 'pointer' : 'default', accentColor: 'var(--brand)' }}
                             title={present ? t('group.attended') : t('group.notAttended')}
                           />
                         </td>

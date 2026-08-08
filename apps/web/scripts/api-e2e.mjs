@@ -141,6 +141,9 @@ async function main() {
     ok('delete event → 200', (await req('DELETE', `/api/events/${evId}`, H)).status === 200);
   }
 
+  // ---- 主日点名 (the Sunday sheet) -----------------------------------------
+  await sundaySheet(admin, halls, hallId);
+
   // ---- Recurring events (循环聚会) ------------------------------------------
   const rules = (await req('GET', '/api/recurring-events', H)).json;
   ok('recurring-events is an array', Array.isArray(rules), JSON.stringify(rules).slice(0, 120));
@@ -296,6 +299,122 @@ function memberOrNull(members) {
 }
 
 /**
+ * 主日点名 — the Sunday sheet (migration 0013).
+ *
+ * Every Sunday simply exists, so there is nothing to create: the sheet's
+ * columns come from the calendar and a cell is written straight onto
+ * (congregation, Sunday, member). Three properties have teeth here:
+ *  - a cleared cell leaves NO row behind ("not recorded" and "all false" must
+ *    not be two spellings of the same fact — the table forbids the second);
+ *  - a date that is not a Sunday is refused in words, not as a constraint name;
+ *  - an unnarrowed read is refused rather than merging congregations, which is
+ *    exactly the joint-service idea this model removes.
+ *
+ * It works on a member it CREATES, in a far-future month, and deletes it in a
+ * `finally`: this runs against the church's live database, so it must never
+ * write into — or clear — a real Sunday's roll call. Deleting the member takes
+ * its sheet rows with it (FK cascade).
+ */
+async function sundaySheet(adminCookie, halls, hallId) {
+  const H = { cookie: adminCookie };
+  if (!hallId) { ok('sunday sheet (skipped: no congregation)', true); return; }
+
+  // A Sunday far outside anything the church has recorded, so a leaked row
+  // could never be mistaken for real attendance. 2030-01-06 is a Sunday.
+  const SUNDAY = '2030-01-06';
+  const MONDAY = '2030-01-07';
+  const sheetUrl = (extra = '') => `/api/attendance/sundays?hall_id=${hallId}&year=2030&month=1${extra}`;
+
+  const mk = await req('POST', '/api/members', {
+    ...H,
+    body: { full_name: `E2E主日-${Date.now()}`, church_role: 'member', status: 'active', hall_id: hallId },
+  });
+  ok('sheet fixture member created', mk.status === 200 && mk.json?.id, `status ${mk.status}`);
+  const memberId = mk.json?.id;
+  if (!memberId) return;
+
+  /** That member's row on the sheet, or undefined if it is not on it. */
+  const readRow = async () => {
+    const r = await req('GET', sheetUrl(), H);
+    return { res: r, row: (r.json?.rows || []).find((x) => x.member?.id === memberId) };
+  };
+
+  try {
+    const first = await readRow();
+    ok('sunday sheet GET → 200', first.res.status === 200, `status ${first.res.status} ${JSON.stringify(first.res.json).slice(0, 120)}`);
+    ok('the sheet names exactly one congregation', first.res.json?.hall_id === hallId, String(first.res.json?.hall_id));
+    ok('the columns are that month’s Sundays, from the calendar',
+      JSON.stringify(first.res.json?.dates) ===
+        JSON.stringify(['2030-01-06', '2030-01-13', '2030-01-20', '2030-01-27']),
+      JSON.stringify(first.res.json?.dates));
+    ok('the congregation’s active members are the rows', !!first.row, `${(first.res.json?.rows || []).length} rows`);
+    ok('a Sunday nobody was marked on carries no cell', first.row && !first.row.cells?.[SUNDAY],
+      JSON.stringify(first.row?.cells));
+
+    // Tick 会前 only, then both — a cell is written by one call whether or not
+    // it already existed.
+    const tick = await req('PUT', '/api/attendance/sundays', {
+      ...H,
+      body: { hall_id: hallId, service_date: SUNDAY, member_id: memberId, pre_service: true, service: false },
+    });
+    ok('ticking 会前 → 200', tick.status === 200 && tick.json?.pre_service === true && tick.json?.service === false,
+      `status ${tick.status} ${JSON.stringify(tick.json)}`);
+    const afterTick = await readRow();
+    ok('the tick shows up on the sheet',
+      afterTick.row?.cells?.[SUNDAY]?.pre_service === true && afterTick.row?.cells?.[SUNDAY]?.service === false,
+      JSON.stringify(afterTick.row?.cells));
+
+    const both = await req('PUT', '/api/attendance/sundays', {
+      ...H,
+      body: { hall_id: hallId, service_date: SUNDAY, member_id: memberId, pre_service: true, service: true },
+    });
+    ok('ticking the same cell again updates it rather than duplicating',
+      both.status === 200 && both.json?.service === true, `status ${both.status} ${JSON.stringify(both.json)}`);
+
+    // Untick both → the row must be GONE, not stored as two falses.
+    const clear = await req('PUT', '/api/attendance/sundays', {
+      ...H,
+      body: { hall_id: hallId, service_date: SUNDAY, member_id: memberId, pre_service: false, service: false },
+    });
+    ok('unticking both → 200', clear.status === 200, `status ${clear.status} ${JSON.stringify(clear.json)}`);
+    const afterClear = await readRow();
+    ok('a cleared cell leaves no row behind', afterClear.row && !afterClear.row.cells?.[SUNDAY],
+      JSON.stringify(afterClear.row?.cells));
+
+    // A date that is not a Sunday is refused in words.
+    const badDay = await req('PUT', '/api/attendance/sundays', {
+      ...H,
+      body: { hall_id: hallId, service_date: MONDAY, member_id: memberId, pre_service: true, service: false },
+    });
+    ok('a date that is not a Sunday → 400', badDay.status === 400, `status ${badDay.status}`);
+    ok('…and says so in words, not as a constraint name',
+      /not a Sunday/i.test(badDay.json?.message || ''), String(badDay.json?.message));
+
+    // Missing pieces are refused too, rather than writing a half row.
+    const noDate = await req('PUT', '/api/attendance/sundays', {
+      ...H, body: { hall_id: hallId, member_id: memberId, pre_service: true },
+    });
+    ok('a write with no service_date → 400', noDate.status === 400, `status ${noDate.status}`);
+
+    // A sheet is always ONE congregation: an unnarrowed read is refused rather
+    // than merging them. (With a single-congregation church there is nothing
+    // ambiguous to refuse, so that case is skipped.)
+    if ((halls || []).length > 1) {
+      const merged = await req('GET', '/api/attendance/sundays?year=2030&month=1', H);
+      ok('an all-congregations sheet read → 400', merged.status === 400, `status ${merged.status}`);
+      ok('…and explains that a sheet is one congregation',
+        /congregation/i.test(merged.json?.message || ''), String(merged.json?.message));
+    } else {
+      ok('all-congregations refusal (skipped: one congregation)', true);
+    }
+  } finally {
+    // Deleting the member cascades to every sheet row it left behind.
+    const del = await req('DELETE', `/api/members/${memberId}`, H);
+    ok('the Sunday-sheet fixture member was deleted', del.status === 200, `status ${del.status}`);
+  }
+}
+
+/**
  * The church record and the add-on module catalog (migration 0012).
  *
  * Three properties, and one of them has teeth: switching a module off must
@@ -411,6 +530,18 @@ async function roleMatrix(freeMembers, hallId) {
       ok('readonly GET members → 200', (await req('GET', '/api/members', RH)).status === 200);
       ok('readonly POST members → 403', (await req('POST', '/api/members', { ...RH, body: { full_name: 'x', church_role: 'member', status: 'active' } })).status === 403);
       ok('readonly GET accounts → 403', (await req('GET', '/api/accounts', RH)).status === 403);
+      // The Sunday sheet writes with PUT — a verb the gate had never seen
+      // before 0013, so prove it is refused for a read-only account too, and
+      // that the refusal happens before anything is written.
+      if (hallId) {
+        ok('readonly GET sunday sheet → 200',
+          (await req('GET', `/api/attendance/sundays?hall_id=${hallId}&year=2030&month=1`, RH)).status === 200);
+        ok('readonly PUT sunday sheet → 403',
+          (await req('PUT', '/api/attendance/sundays', {
+            ...RH,
+            body: { hall_id: hallId, service_date: '2030-01-06', member_id: freeMembers[0].id, pre_service: true, service: true },
+          })).status === 403);
+      }
       await churchRoleMatrix('readonly', RH);
       await selfProfileMatrix('readonly', RH, ro, co.id);
     }

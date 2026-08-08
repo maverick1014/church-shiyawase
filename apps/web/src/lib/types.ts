@@ -96,6 +96,41 @@ export interface GroupAttendanceResponse {
   }[];
 }
 
+/* -------------------------------------------------------------------------
+ * 主日点名 — the Sunday sheet (`sunday_attendance`, migration 0013)
+ *
+ * Every Sunday simply happens, so nothing creates one: the sheet IS the data.
+ * One cell per (congregation, Sunday, member) carrying the two ticks a Sunday
+ * has. A Sunday with no ticks has no row at all, which is exactly "nothing was
+ * recorded" rather than "everyone was absent".
+ * ---------------------------------------------------------------------- */
+
+/** The two ticks of one Sunday: 会前祷告 and 主日崇拜. */
+export interface SundayCell {
+  pre_service: boolean;
+  service: boolean;
+}
+
+export interface SundaySheetRow {
+  member: {
+    id: string;
+    full_name: string;
+    church_role: ChurchRole;
+    group_position: GroupPosition | null;
+  };
+  /** Keyed by `YYYY-MM-DD`; a date with no entry was never recorded. */
+  cells: Record<string, SundayCell>;
+}
+
+/** `GET /api/attendance/sundays` — one congregation, one month. */
+export interface SundaySheet {
+  /** Always one congregation: a sheet is never a merger of several. */
+  hall_id: string;
+  /** Every Sunday of the requested Malaysian month, in order. */
+  dates: string[];
+  rows: SundaySheetRow[];
+}
+
 export interface EventRow {
   id: string;
   title: string;

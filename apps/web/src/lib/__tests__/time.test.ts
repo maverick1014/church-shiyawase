@@ -6,8 +6,11 @@ import {
   churchParts,
   endOfChurchDate,
   fromChurchInput,
+  isSundayDate,
   startOfChurchDay,
+  sundaysOfMonth,
   toChurchInput,
+  weekdayDatesOfMonth,
 } from '../time';
 
 /*
@@ -93,6 +96,85 @@ describe('form round-trip', () => {
     expect(toChurchInput('not a date')).toBe('');
     expect(fromChurchInput('')).toBeNull();
     expect(fromChurchInput('2026-08-09')).toBeNull();
+  });
+});
+
+describe('weekdayDatesOfMonth / sundaysOfMonth', () => {
+  it('lists every Sunday of a month, in order', () => {
+    // August 2026 starts on a Saturday, so its Sundays are the 2nd onwards.
+    expect(sundaysOfMonth(2026, 8)).toEqual([
+      '2026-08-02',
+      '2026-08-09',
+      '2026-08-16',
+      '2026-08-23',
+      '2026-08-30',
+    ]);
+  });
+
+  it('includes a Sunday that falls on the 1st', () => {
+    // 2026-02-01 is itself a Sunday — an off-by-one here would drop a whole
+    // column off the sheet.
+    expect(sundaysOfMonth(2026, 2)[0]).toBe('2026-02-01');
+    expect(sundaysOfMonth(2026, 2)).toHaveLength(4);
+  });
+
+  it('stops at the month boundary in both directions', () => {
+    const dec = sundaysOfMonth(2026, 12);
+    // December 2026 ends on a Thursday: the last Sunday is the 27th, and the
+    // walk must not roll into January.
+    expect(dec[dec.length - 1]).toBe('2026-12-27');
+    expect(dec.every((d) => d.startsWith('2026-12-'))).toBe(true);
+    // …and January's list starts inside January, not on 2026-12-27 + 7.
+    expect(sundaysOfMonth(2027, 1)[0]).toBe('2027-01-03');
+  });
+
+  it('handles a five-Sunday month and a leap February', () => {
+    expect(sundaysOfMonth(2026, 3)).toHaveLength(5);
+    expect(sundaysOfMonth(2024, 2)).toEqual([
+      '2024-02-04',
+      '2024-02-11',
+      '2024-02-18',
+      '2024-02-25',
+    ]);
+  });
+
+  it('answers for any weekday, which is what the life-group sheet reads', () => {
+    // Every Tuesday of August 2026 — the group sheet used to walk this itself.
+    expect(weekdayDatesOfMonth(2026, 8, 2)).toEqual([
+      '2026-08-04',
+      '2026-08-11',
+      '2026-08-18',
+      '2026-08-25',
+    ]);
+  });
+
+  it('is the same list whatever zone the runtime is in', () => {
+    // The whole point of running the suite under TZ=America/New_York: these
+    // are date LABELS, so a UTC-11 or UTC+8 runtime must not shift them.
+    expect(sundaysOfMonth(2026, 8)[0]).toBe('2026-08-02');
+    expect(new Date('2026-08-02T00:00:00Z').getUTCDay()).toBe(0);
+  });
+});
+
+describe('isSundayDate', () => {
+  it('accepts a Sunday and refuses every other day', () => {
+    expect(isSundayDate('2026-08-02')).toBe(true);
+    expect(isSundayDate('2026-08-03')).toBe(false);
+    expect(isSundayDate('2026-08-01')).toBe(false);
+  });
+
+  it('refuses a date that does not exist', () => {
+    // Date.UTC would roll this into March; the sheet must not accept it.
+    expect(isSundayDate('2026-02-31')).toBe(false);
+    expect(isSundayDate('2026-13-01')).toBe(false);
+  });
+
+  it('refuses anything that is not a bare YYYY-MM-DD', () => {
+    expect(isSundayDate('')).toBe(false);
+    expect(isSundayDate(null)).toBe(false);
+    expect(isSundayDate(undefined)).toBe(false);
+    expect(isSundayDate('2026-08-02T10:00:00Z')).toBe(false);
+    expect(isSundayDate('nope')).toBe(false);
   });
 });
 

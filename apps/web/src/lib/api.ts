@@ -38,6 +38,12 @@ export const api = {
     request<T>(path, { method: 'POST', body: JSON.stringify(body) }),
   patch: <T>(path: string, body: unknown) =>
     request<T>(path, { method: 'PATCH', body: JSON.stringify(body) }),
+  // PUT is "make this the state of that row", whether or not it existed —
+  // what one cell of the Sunday sheet needs (create / update / clear in one
+  // call). PATCH is still the right verb for editing a record that must
+  // already exist.
+  put: <T>(path: string, body: unknown) =>
+    request<T>(path, { method: 'PUT', body: JSON.stringify(body) }),
   delete: <T>(path: string) => request<T>(path, { method: 'DELETE' }),
   upload: <T>(path: string, form: FormData) =>
     request<T>(path, { method: 'POST', body: form }),

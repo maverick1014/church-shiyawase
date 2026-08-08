@@ -756,6 +756,20 @@ th.sortable:hover {
   }
 }
 
+/* One hand-added meeting on 崇拜与祷告会: name · date · congregation, with its
+   roll-call actions in the right corner. Deliberately a flex row rather than a
+   table, so a phone and a desktop render the SAME markup — there is no
+   `.only-desktop` table and `.only-mobile` tile to keep in step (rule G5) —
+   and the actions wrap under the name when they no longer fit. */
+.meeting-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 11px 0;
+  border-bottom: 1px solid var(--border);
+}
+
 /* The enrolment list scrolls within the card on desktop so it cannot push the
    attendance sheet off the screen. On a phone the rows are three lines tall
    (see .enrol-row below), so that cap cut the third row in half — and the

@@ -11,7 +11,7 @@ import {
 } from 'react';
 import { initialOf, roleDot, roleKey, roleTagStyle } from '@/lib/labels';
 import { useHallScope } from '@/lib/hall';
-import { useT } from '@/lib/i18n';
+import { useLang, useT } from '@/lib/i18n';
 
 /* -------------------------------------------------------------------------
  * State helpers
@@ -766,6 +766,98 @@ export function TagsInput({
         </datalist>
       )}
     </div>
+  );
+}
+
+/* -------------------------------------------------------------------------
+ * Attendance sheets
+ *
+ * Two pages draw a roll-call grid — the 主日点名 sheet on /events and a life
+ * group's weekly sheet on /groups/[id]. Their shapes genuinely differ (one
+ * column per Sunday split in two, versus one column per meeting), so they are
+ * not one component; but the pieces they DO share live here rather than being
+ * typed out twice (rule G4).
+ * ---------------------------------------------------------------------- */
+
+/**
+ * The year + month pair a sheet is read by. Month names follow the interface
+ * language instead of a hardcoded list, and are formatted in UTC so the label
+ * cannot slide a month under a different `TZ` (rule G6a).
+ *
+ * `years` lets a caller widen the list beyond "this year and last" — a sheet
+ * that already holds records for 2023 has to be able to show them.
+ */
+export function MonthPicker({
+  year,
+  month,
+  years,
+  onChange,
+}: {
+  year: number;
+  month: number;
+  years?: number[];
+  onChange: (next: { year: number; month: number }) => void;
+}) {
+  const lang = useLang();
+  const t = useT();
+  const options = [...new Set([...(years ?? []), year])].sort((a, b) => b - a);
+  const monthName = (m: number) =>
+    new Intl.DateTimeFormat(lang, { month: 'long', timeZone: 'UTC' }).format(
+      new Date(Date.UTC(2000, m - 1, 1)),
+    );
+  return (
+    <>
+      <select
+        value={year}
+        onChange={(e) => onChange({ year: Number(e.target.value), month })}
+        title={t('sheet.year')}
+        aria-label={t('sheet.year')}
+        style={{ width: 'auto' }}
+      >
+        {options.map((y) => (
+          <option key={y} value={y}>{y}</option>
+        ))}
+      </select>
+      <select
+        value={month}
+        onChange={(e) => onChange({ year, month: Number(e.target.value) })}
+        title={t('sheet.month')}
+        aria-label={t('sheet.month')}
+        style={{ width: 'auto' }}
+      >
+        {Array.from({ length: 12 }, (_, i) => i + 1).map((mo) => (
+          <option key={mo} value={mo}>{monthName(mo)}</option>
+        ))}
+      </select>
+    </>
+  );
+}
+
+/**
+ * One tick on a sheet. A read-only account sees the state and cannot change it
+ * — the server refuses the write regardless, this is the UI's half (rule G2).
+ */
+export function SheetTick({
+  checked,
+  onToggle,
+  disabled,
+  title,
+}: {
+  checked: boolean;
+  onToggle: () => void;
+  disabled?: boolean;
+  title: string;
+}) {
+  return (
+    <input
+      type="checkbox"
+      checked={checked}
+      onChange={onToggle}
+      disabled={disabled}
+      title={title}
+      aria-label={title}
+      style={{ width: 18, height: 18, cursor: disabled ? 'default' : 'pointer', accentColor: 'var(--brand)' }}
+    />
   );
 }
 
