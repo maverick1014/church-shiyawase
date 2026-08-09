@@ -234,6 +234,7 @@ async function main() {
   // ---- 聚会点名 (the roll-call sheet) ---------------------------------------
   await rollCallSheet(admin, halls, hallId);
   await groupScopedSheet(admin, halls, hallId);
+  await groupLeaderAccountLifecycle(admin, halls, hallId);
 
   // ---- Groups CRUD (+ weekly attendance) ----------------------------------
   const mkGrp = await req('POST', '/api/groups', { ...H, body: { name: `E2E小组-${Date.now()}`, hall_id: hallId } });
@@ -1508,6 +1509,172 @@ async function groupScopedSheet(adminCookie, halls, hallId) {
     }
     const delGroup = await req('DELETE', `/api/groups/${groupId}`, H);
     ok('the group-sheet fixture group was deleted', delGroup.status === 200, `status ${delGroup.status}`);
+  }
+}
+
+/**
+ * 小组长's auto-provisioned login (migration 0023/0026) — the fourth,
+ * group-scoped dimension of access control, end to end:
+ *
+ *  1. Promoting a member to 小组长 (`GroupPosition.Leader`) auto-creates a
+ *     `group_leader` app_users row, scoped to that group and its hall, and
+ *     the PATCH response carries the generated password ONCE.
+ *  2. That password actually signs in, and the session it gets is scoped to
+ *     exactly that group: an out-of-scope path (`/trainings`, not in the
+ *     group_leader path allowlist) is refused outright, and both
+ *     `GET /members` and `GET /groups` stay narrowed to its own group even
+ *     when the request itself asks for a different one — the same
+ *     "session always wins" precedence `hallFilter` already has.
+ *  3. Demoting the member disables the account (never deletes it) and the
+ *     generated password stops working.
+ *  4. A promotion with no email on file is a named, non-blocking event
+ *     rather than a silently missing account.
+ *
+ * Everything is fixture data, deleted in a `finally` (the account is deleted
+ * last, since a member cannot go while a login still holds it).
+ */
+async function groupLeaderAccountLifecycle(admin, halls, hallId) {
+  const H = { cookie: admin };
+  if (!hallId) { ok('group_leader account lifecycle (skipped: no congregation)', true); return; }
+
+  const mkGroup = await req('POST', '/api/groups', {
+    ...H, body: { name: `E2E小组长测试-${Date.now()}`, hall_id: hallId },
+  });
+  ok('leader-account fixture group created', mkGroup.status === 200 && mkGroup.json?.id, `status ${mkGroup.status}`);
+  const groupId = mkGroup.json?.id;
+  if (!groupId) return;
+
+  const email = `e2e-groupleader-${Date.now()}-${Math.floor(Math.random() * 1e4)}@grace.org`;
+  const mkMember = await req('POST', '/api/members', {
+    ...H,
+    body: { full_name: `E2E小组长-${Date.now()}`, church_role: 'member', status: 'active', hall_id: hallId, email },
+  });
+  ok('leader-account fixture member created', mkMember.status === 200 && mkMember.json?.id, `status ${mkMember.status}`);
+  const memberId = mkMember.json?.id;
+  let accountId;
+  let generatedPassword;
+
+  try {
+    if (!memberId) return;
+
+    // ---- 1. becoming 小组长 provisions an account, once ----------------------
+    const promote = await req('PATCH', `/api/members/${memberId}`, {
+      ...H, body: { group_id: groupId, group_position: 'leader' },
+    });
+    ok('promoting to 小组长 → 200', promote.status === 200, `status ${promote.status}`);
+    ok('…and the response carries a created leader_account_event, once',
+      promote.json?.leader_account_event?.event === 'created' &&
+        promote.json?.leader_account_event?.email === email &&
+        typeof promote.json?.leader_account_event?.password === 'string' &&
+        promote.json.leader_account_event.password.length >= 12,
+      JSON.stringify(promote.json?.leader_account_event));
+    generatedPassword = promote.json?.leader_account_event?.password;
+
+    const accountsAfter = (await req('GET', '/api/accounts', H)).json || [];
+    const account = accountsAfter.find((a) => a.member_id === memberId);
+    accountId = account?.id;
+    ok('…and an app_users row exists, scoped to the role/hall/group',
+      account?.account_role === 'group_leader' && account?.status === 'active' &&
+        account?.hall_id === hallId && account?.group_id === groupId,
+      JSON.stringify(account));
+
+    // A second write that leaves the member as leader of the SAME group must
+    // not re-provision or otherwise touch the account (it is a no-op).
+    const noop = await req('PATCH', `/api/members/${memberId}`, { ...H, body: { notes: '仍是小组长' } });
+    ok('an unrelated edit while still leader → no leader_account_event',
+      noop.status === 200 && noop.json?.leader_account_event === undefined, JSON.stringify(noop.json?.leader_account_event));
+
+    // ---- 2. the generated password signs in, scoped to this ONE group -----
+    if (!generatedPassword) { ok('group_leader session checks (skipped: no password)', true); }
+    else {
+      const cookie = await login(email, generatedPassword);
+      ok('the generated password signs in', !!cookie);
+      if (cookie) {
+        const meRes = await req('GET', '/api/auth/me', { cookie });
+        ok('…and the session is role group_leader, scoped to this group',
+          meRes.json?.role === 'group_leader' && meRes.json?.group === groupId,
+          JSON.stringify(meRes.json));
+
+        // Outside the group_leader path allowlist entirely.
+        const outOfScope = await req('GET', '/api/trainings', { cookie });
+        ok('an out-of-scope path (e.g. /trainings) → 403', outOfScope.status === 403,
+          `status ${outOfScope.status} ${JSON.stringify(outOfScope.json).slice(0, 120)}`);
+
+        // GET /members narrows to its own group even when a different one is
+        // named — the session's own scope always wins (rule G2).
+        const otherGroup = await req('POST', '/api/groups', {
+          ...H, body: { name: `E2E另一组-${Date.now()}`, hall_id: hallId },
+        });
+        const otherGroupId = otherGroup.json?.id;
+        const membersScoped = await req('GET', `/api/members?group_id=${otherGroupId || 'x'}`, { cookie });
+        const scopedIds = (membersScoped.json || []).map((m) => m.id);
+        ok('GET /members stays narrowed to its own group, even asking for another',
+          membersScoped.status === 200 && scopedIds.includes(memberId) &&
+            (membersScoped.json || []).every((m) => m.group_id === groupId),
+          `status ${membersScoped.status}, ${scopedIds.length} row(s)`);
+
+        // GET /groups: only its own group, however the request is shaped.
+        const groupsScoped = await req('GET', `/api/groups?hall_id=${hallId}`, { cookie });
+        const groupIds = (groupsScoped.json || []).map((g) => g.id);
+        ok('GET /groups lists only its own group',
+          groupsScoped.status === 200 && groupIds.length === 1 && groupIds[0] === groupId,
+          `${groupIds.length} group(s)`);
+
+        // A specific OTHER group id is refused outright, not merely absent
+        // from a list.
+        if (otherGroupId) {
+          const otherRead = await req('GET', `/api/groups/${otherGroupId}`, { cookie });
+          ok('…and reading another group by id → 403', otherRead.status === 403,
+            `status ${otherRead.status}`);
+        }
+        const ownRead = await req('GET', `/api/groups/${groupId}`, { cookie });
+        ok('…while its own group by id still answers', ownRead.status === 200, `status ${ownRead.status}`);
+
+        if (otherGroupId) await req('DELETE', `/api/groups/${otherGroupId}`, H);
+      }
+    }
+
+    // ---- 3. leaving 小组长 disables the account, and the password stops working ----
+    const demote = await req('PATCH', `/api/members/${memberId}`, {
+      ...H, body: { group_id: null, group_position: null },
+    });
+    ok('removing from the group entirely → 200', demote.status === 200, `status ${demote.status}`);
+    ok('…and the response reports the account was disabled',
+      demote.json?.leader_account_event?.event === 'disabled' &&
+        demote.json?.leader_account_event?.email === email,
+      JSON.stringify(demote.json?.leader_account_event));
+
+    const accountAfterDemote = (await req('GET', `/api/accounts/${accountId}`, H)).json;
+    ok('…and app_users now reads disabled with no group',
+      accountAfterDemote?.status === 'disabled' && accountAfterDemote?.group_id === null,
+      JSON.stringify(accountAfterDemote));
+
+    if (generatedPassword) {
+      const failedLogin = await req('POST', '/api/auth/login', { body: { email, password: generatedPassword } });
+      ok('…and the (still-correct) generated password can no longer sign in',
+        failedLogin.status === 401, `status ${failedLogin.status}`);
+    }
+
+    // ---- 4. no email on file → a named, non-blocking event ----------------
+    const mkNoEmail = await req('POST', '/api/members', {
+      ...H, body: { full_name: `E2E无邮箱组长-${Date.now()}`, church_role: 'member', status: 'active', hall_id: hallId, group_id: groupId, group_position: 'leader' },
+    });
+    ok('creating a member straight into 小组长 with no email → 200', mkNoEmail.status === 200, `status ${mkNoEmail.status}`);
+    ok('…and the event says so rather than silently skipping',
+      mkNoEmail.json?.leader_account_event?.event === 'skipped_no_email',
+      JSON.stringify(mkNoEmail.json?.leader_account_event));
+    if (mkNoEmail.json?.id) await req('DELETE', `/api/members/${mkNoEmail.json.id}`, H);
+  } finally {
+    if (accountId) {
+      const delAcc = await req('DELETE', `/api/accounts/${accountId}`, H);
+      ok('the leader-account fixture login was deleted', delAcc.status === 200, `status ${delAcc.status}`);
+    }
+    if (memberId) {
+      const delMember = await req('DELETE', `/api/members/${memberId}`, H);
+      ok('the leader-account fixture member was deleted', delMember.status === 200, `status ${delMember.status}`);
+    }
+    const delGroup = await req('DELETE', `/api/groups/${groupId}`, H);
+    ok('the leader-account fixture group was deleted', delGroup.status === 200, `status ${delGroup.status}`);
   }
 }
 

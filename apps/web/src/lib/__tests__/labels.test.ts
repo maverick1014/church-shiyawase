@@ -30,6 +30,7 @@ import { ms } from '@/lib/i18n/ms';
 import { zh } from '@/lib/i18n/zh';
 import { TICK_ORDER } from '@/lib/sheet';
 import {
+  AccountRole,
   ChurchRole,
   DisplayRole,
   GroupPosition,
@@ -37,6 +38,7 @@ import {
   TRAINING_KINDS,
   TrainingKind,
 } from '@tog/shared';
+import { ACCOUNT_ROLE_OPTIONS, accountRoleClass, accountRoleKey, accountRoleOptionKey } from '@/lib/labels';
 
 describe('role palette', () => {
   it('roleTagStyle returns the pastor palette', () => {
@@ -122,6 +124,37 @@ describe('roles: every enum value is named, coloured and offered', () => {
       .toBe(DisplayRole.Leader);
     expect(memberRole({ church_role: ChurchRole.Member, group_position: null }))
       .toBe(DisplayRole.Ungrouped);
+  });
+});
+
+/**
+ * The same drift guard `ChurchRole`/`DisplayRole` already have, for
+ * `AccountRole` — which became a much more consequential enum the moment
+ * `group_leader` started gating actual API access rather than only a client
+ * permission flag: a value missing a label, a class or an offered option is
+ * no longer just a cosmetic gap.
+ */
+describe('AccountRole: every value is named, coloured and offered', () => {
+  const DICTS = { en, zh, ms };
+
+  it('gives every account role a label and an option label in all three languages', () => {
+    for (const role of Object.values(AccountRole))
+      for (const [lang, dict] of Object.entries(DICTS)) {
+        expect({ lang, role, label: dict[accountRoleKey(role)] }).toMatchObject({
+          label: expect.stringMatching(/\S/),
+        });
+        expect({ lang, role, option: dict[accountRoleOptionKey(role)] }).toMatchObject({
+          option: expect.stringMatching(/\S/),
+        });
+      }
+  });
+
+  it('offers every account role in the 权限角色 dropdown', () => {
+    expect([...ACCOUNT_ROLE_OPTIONS].sort()).toEqual(Object.values(AccountRole).sort());
+  });
+
+  it('gives every account role its own badge class', () => {
+    for (const role of Object.values(AccountRole)) expect(accountRoleClass(role)).toBeTruthy();
   });
 });
 

@@ -942,6 +942,78 @@ async function main() {
       await fxGroup.remove();
     }
 
+    /* -- group leadership · auto-provisioned 小组长 login ------------------- */
+    // Promoting a member WITH AN EMAIL to the Leader seat auto-creates a
+    // group_leader login and shows the credential ONCE, in a modal — never a
+    // toast, which would disappear before anyone could copy a password off
+    // it (rule G6). A fresh group + member of its own, separate from the
+    // roster fixture above (which deliberately carries no email, so that
+    // module's own leadership pick stays a no-op for this mechanism).
+    mod('group leadership · auto-provisioned login (credential modal + copy)');
+    const fxLeaderGroup = await (async () => {
+      const row = await apiPost('/groups', { name: fixtureName('LEADGROUP'), hall_id: await someHallId() });
+      const removeGroup = disposable(`group ${row.name}`, `/groups/${row.id}`);
+      const leaderEmail = `zz-uitest-${STAMP}-${Math.floor(Math.random() * 1e4)}@grace.org`;
+      // The trio picker's options are the group's OWN roster only (leadership
+      // is assigned from among people already in the group) — so the member
+      // has to be on the roster BEFORE the Leader seat can offer them, the
+      // same shape `makeRosteredGroup` above sets up.
+      const member = await makeMember('LEADER', { group_id: row.id, group_position: 'core_member', email: leaderEmail });
+      return {
+        id: row.id,
+        name: row.name,
+        member,
+        email: leaderEmail,
+        remove: async () => { await member.remove(); await removeGroup(); },
+      };
+    })();
+    try {
+      await page.goto(`${BASE}/groups/${fxLeaderGroup.id}`, { waitUntil: 'domcontentloaded' });
+      await page.locator('.trio-pick input[role=combobox]').first().waitFor({ timeout: 20000 });
+      // The FIRST seat is the apex — Leader — the only one of the three this
+      // mechanism ever acts on (`GroupPosition.Leader` specifically, not the
+      // assistant/intern seats beside it).
+      const leaderSeat = page.locator('.trio-pick input[role=combobox]').first();
+      await leaderSeat.click();
+      await page.locator('.combo-list').first().waitFor({ timeout: 8000 });
+      await leaderSeat.fill(fxLeaderGroup.member.name);
+      await w(400);
+      await page.locator('.combo-list .combo-option').first().click();
+      await w(1200);
+
+      const credModal = page.locator('.modal:has-text("Login created")');
+      await credModal.first().waitFor({ timeout: 8000 });
+      check('promoting a member with an email to 小组长 shows a credential modal, once',
+        (await credModal.count()) === 1);
+      const credBody = await credModal.first().innerText();
+      check('…naming the email the login was created for', credBody.includes(fxLeaderGroup.email), credBody.slice(0, 200));
+      // A password long enough to satisfy this app's own 8-char minimum with
+      // real margin (rule G6) — not asserting the exact string, since it is
+      // randomly generated.
+      check('…and showing a generated password of a sensible length',
+        /Password/i.test(credBody) && (credBody.match(/[A-Za-z0-9]{12,}/) || []).length > 0,
+        credBody.slice(0, 200));
+
+      const assignedLeader = await apiGet(`/groups/${fxLeaderGroup.id}`);
+      check('…and the member is actually saved as this group’s leader',
+        (assignedLeader.members || []).find((m) => m.id === fxLeaderGroup.member.id)?.group_position === 'leader',
+        JSON.stringify((assignedLeader.members || []).map((m) => m.group_position)));
+
+      // The copy button answers the tap either way (rule G4's `copyText` —
+      // through `navigator.clipboard` alone a denied/unsupported permission
+      // runs no callback and the button reads as dead), the same tolerant
+      // assertion the sign-up link's own copy button uses above.
+      await credModal.first().locator('button:has-text("Copy")').first().click();
+      const copyToasted = await page.locator('.toast').first().waitFor({ timeout: 5000 }).then(() => true, () => false);
+      check('the copy button answers the tap, copied or not', copyToasted);
+
+      await credModal.first().locator('button:has-text("Close")').first().click();
+      await w(300);
+      check('closing the credential modal dismisses it', (await page.locator('.modal').count()) === 0);
+    } finally {
+      await fxLeaderGroup.remove();
+    }
+
     /* -- services · one roll-call sheet ------------------------------------ */
     // The page is ONE sheet: members down the left, and across the top the
     // month's Sundays (two ticks each, 会前 / 主日) with every hand-added

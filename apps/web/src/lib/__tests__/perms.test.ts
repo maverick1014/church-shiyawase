@@ -23,6 +23,15 @@ describe('can(role) capability map', () => {
     expect(p).toEqual({ write: false, delete: false, manageAccounts: false });
   });
 
+  it('group_leader can write (its own group) but not delete or manage accounts', () => {
+    // The NARROWER part of this role — one group, not the whole hall — is
+    // not something this boolean map expresses at all; it is enforced
+    // server-side (the group_leader path allowlist + group-scope guards) and
+    // reflected in the UI by hiding whole nav entries, not a permission flag.
+    const p = can(AccountRole.GroupLeader);
+    expect(p).toEqual({ write: true, delete: false, manageAccounts: false });
+  });
+
   it('only an explicit readonly role removes write; delete/accounts stay locked otherwise', () => {
     // The UI fails open on write for unknown roles (the server gate is the
     // authority), but delete and account management stay closed.
