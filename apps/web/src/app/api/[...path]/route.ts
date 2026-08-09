@@ -200,7 +200,14 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
   // wins" precedence) happens inside the members/groups/attendance handlers
   // themselves, below.
   if (sessionRole === AccountRole.GroupLeader) {
-    const GROUP_LEADER_PREFIXES = ['members', 'groups', 'attendance', 'auth'];
+    // `church` is included even though it owns nothing group-scoped: G2
+    // already guarantees `GET /church` (name/logo/theme) is readable by any
+    // signed-in account regardless of role, since the shell paints itself
+    // from it on every load — excluding it here would not deny anything a
+    // group_leader shouldn't see, it would just silently break their own
+    // sidebar's branding. Writing to `/church` stays gated to super_admin by
+    // its own existing role check, unaffected by this allowlist.
+    const GROUP_LEADER_PREFIXES = ['members', 'groups', 'attendance', 'auth', 'church'];
     if (!GROUP_LEADER_PREFIXES.includes(r0 ?? ''))
       throw new HttpError(403, 'A group leader account may not reach this part of the app');
     // `app_users.group_id` is `on delete set null` — a group leader whose
@@ -208,8 +215,10 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
     // rather than silently falling through to "no narrowing", which is what a
     // null `groupScope` would otherwise read as everywhere below (the same
     // reasoning `hallScope` never needs, because a member's hall never goes
-    // away from under it).
-    if (!groupScope && r0 !== 'auth')
+    // away from under it). `church` is exempt for the same branding reason
+    // as above — a group leader stuck between reassignments should not also
+    // lose the sidebar's own colours.
+    if (!groupScope && r0 !== 'auth' && r0 !== 'church')
       throw new HttpError(403, 'This account is not linked to a group — ask a church admin to reassign it');
   }
 
@@ -587,6 +596,7 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
       }
     } else if (r2 === 'trainings' && method === 'GET') {
       await assertRowReadable('members', r1);
+      await assertMemberGroupReadable(r1);
       return json(
         unwrap(
           await db
@@ -686,6 +696,20 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
           if (!memberId) throw new HttpError(400, 'every record needs a member_id');
           return { meeting_id: r2, member_id: memberId, status: r.status ?? 'present' };
         });
+        // `assertGroupMeetingWritable` above only confirms the MEETING
+        // belongs to this group_leader's own group — the member ids inside
+        // `records` are addressed directly, so a hand-crafted request could
+        // otherwise write attendance for somebody outside it. Same guard as
+        // the services sheet's own member-addressed write, just for this
+        // group's meeting instead.
+        if (groupScope) {
+          const memberIds = records.map((r) => r.member_id);
+          const members = unwrap<Array<{ id: string; group_id: string | null }>>(
+            await db.from('members').select('id,group_id').in('id', memberIds),
+          );
+          if (members.some((m) => m.group_id !== groupScope))
+            throw new HttpError(403, 'No permission to modify another group’s records');
+        }
         return json(
           unwrap(
             await db
@@ -710,8 +734,14 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
         if (groupScope) query = query.eq('id', groupScope);
         return json(unwrap(await query));
       }
-      if (method === 'POST')
+      if (method === 'POST') {
+        // A group_leader has exactly one group by definition — creating a
+        // second one is not a narrower version of that group, it is a new
+        // one nothing scopes it to. Refused outright rather than silently
+        // widening what "its own group" means.
+        if (groupScope) throw new HttpError(403, 'No permission to create a group');
         return json(unwrap(await db.from('groups').insert(withHall(await body())).select().single()));
+      }
     } else if (r2 === 'attendance' && method === 'GET') {
       await assertRowReadable('groups', r1);
       assertGroupScope(r1);
@@ -3128,15 +3158,49 @@ async function syncGroupLeaderAccount(
 
   const accountRes = await db
     .from('app_users')
-    .select('id,account_role')
+    .select('id,account_role,status')
     .eq('member_id', memberId)
     .maybeSingle();
   if (accountRes.error) throw new HttpError(500, accountRes.error.message);
-  const existingAccount = accountRes.data as { id: string; account_role: string } | null;
+  const existingAccount = accountRes.data as { id: string; account_role: string; status: string } | null;
 
   // ---- Becoming 小组长 -------------------------------------------------------
   if (!wasLeader && isLeader) {
-    if (existingAccount) return { event: 'unchanged_existing_account' };
+    // A DISABLED account of our own making is not "existing" in the sense
+    // that matters here — it is exactly the account this mechanism itself
+    // turned off on a previous demotion, and re-promoting the same person
+    // must not leave them locked out forever with no way back in. Its old
+    // password is unrecoverable (only ever the hash was kept, rule G6), so
+    // re-enabling it also issues a fresh one, same as a brand-new account.
+    if (existingAccount) {
+      if (existingAccount.account_role !== AccountRole.GroupLeader || existingAccount.status !== AccountStatus.Disabled)
+        return { event: 'unchanged_existing_account' };
+      if (!groupId) return { event: 'noop' };
+      const member = unwrap<{ email: string | null }>(
+        await db.from('members').select('email').eq('id', memberId).single(),
+      );
+      if (!member.email) return { event: 'skipped_no_email' };
+      const email = normalizeEmail(member.email);
+      const group = unwrap<{ hall_id: string }>(
+        await db.from('groups').select('hall_id').eq('id', groupId).single(),
+      );
+      const password = generateRandomPassword();
+      unwrap(
+        await db
+          .from('app_users')
+          .update({
+            email,
+            status: AccountStatus.Active,
+            hall_id: group.hall_id,
+            group_id: groupId,
+            password_hash: await hashPassword(password),
+          })
+          .eq('id', existingAccount.id)
+          .select('id')
+          .single(),
+      );
+      return { event: 'created', email, password };
+    }
     // A leader with no group at all is not a state the UI can produce, but a
     // raw API call could send one — nothing to scope an account to, so this
     // is a no-op rather than a half-provisioned account.
