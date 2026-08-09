@@ -237,6 +237,28 @@ async function main() {
       ok('public form submit progress → 200', prog.status === 200, `status ${prog.status}`);
     }
     if (mkPair.json?.id) ok('delete pair → 200', (await req('DELETE', `/api/discipleship/pairs/${mkPair.json.id}`, H)).status === 200);
+
+    // 补进度: a pair that was already partway through on paper. The days are
+    // written by a second statement AFTER the pair row exists, and that
+    // statement asks for nothing back — which is exactly how it used to answer
+    // 404 "Resource not found" for a pair it had just created successfully.
+    // So this asserts the STATUS as well as the days.
+    const backPair = await req('POST', '/api/discipleship/pairs', {
+      ...H,
+      body: { program_id: programId, mentor_id: mentor.id, trainee_id: trainee.id, backfill_days: 3 },
+    });
+    ok('create pair with 补进度 → 200, not a 404 for work it did',
+      backPair.status === 200 && backPair.json?.id,
+      `status ${backPair.status} ${JSON.stringify(backPair.json).slice(0, 140)}`);
+    if (backPair.json?.id) {
+      const read = await req('GET', `/api/discipleship/pairs/${backPair.json.id}`, H);
+      const done = (read.json?.progress || []).filter((d) => d.completed).map((d) => d.day_number);
+      ok('…and days 1–3 are marked complete',
+        done.length === 3 && done.every((n) => n >= 1 && n <= 3),
+        JSON.stringify(done));
+      ok('delete the 补进度 pair → 200',
+        (await req('DELETE', `/api/discipleship/pairs/${backPair.json.id}`, H)).status === 200);
+    }
   }
 
   // ---- Church record + add-on modules -------------------------------------

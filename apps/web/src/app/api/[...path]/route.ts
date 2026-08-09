@@ -1,4 +1,4 @@
-import { getDb, HttpError, json, unwrap } from '@/lib/server/db';
+import { getDb, HttpError, json, unwrap, unwrapWrite } from '@/lib/server/db';
 import {
   clearCookie,
   getSession,
@@ -1046,7 +1046,11 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
                 .single<{ total_days: number }>(),
             );
             const days = Math.min(n, program.total_days);
-            unwrap(
+            // unwrapWrite, not unwrap: an upsert with no `.select()` succeeds
+            // with `data: null`, which unwrap reports as a 404 — the pair was
+            // created and the days written, and the page still said "Resource
+            // not found".
+            unwrapWrite(
               await db.from('discipleship_progress').upsert(
                 Array.from({ length: days }, (_, i) => ({
                   pair_id: pair.id,

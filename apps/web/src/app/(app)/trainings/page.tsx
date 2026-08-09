@@ -18,7 +18,7 @@ import {
 } from '@/lib/labels';
 import { endOfChurchDate } from '@/lib/time';
 import { useT } from '@/lib/i18n';
-import { TRAINING_KINDS, TrainingKind } from '@tog/shared';
+import { TrainingKind } from '@tog/shared';
 
 /**
  * 培训&活动 — one catalog, two shapes (`kind`, migration 0014).
@@ -27,7 +27,9 @@ import { TRAINING_KINDS, TrainingKind } from '@tog/shared';
  * up for and get ticked off at (兄弟团爬山, 姐妹团做蛋糕). They are the same
  * record — sign-ups and a roll call — so they share this page, the detail page
  * and the public sign-up link; only the wording and the shape-specific fields
- * differ, and the filter here lets one be read without the other.
+ * differ. The catalog lists both together: each card carries its own shape
+ * badge, and a church runs few enough of either for filtering to be worth a
+ * control.
  */
 export default function TrainingsPage() {
   const router = useRouter();
@@ -39,9 +41,6 @@ export default function TrainingsPage() {
   // Which shape to CREATE — also what tells the modal apart from an edit.
   const [adding, setAdding] = useState<TrainingKind | null>(null);
   const [editing, setEditing] = useState<TrainingRow | null>(null);
-  // '' = both. The stored code, never a label, so it survives a language
-  // switch (rule G8).
-  const [kindFilter, setKindFilter] = useState<TrainingKind | ''>('');
 
   usePageChrome({ title: t('trainings.title') }, [t]);
 
@@ -51,7 +50,6 @@ export default function TrainingsPage() {
     const a: TrainingRow[] = [];
     const e: TrainingRow[] = [];
     for (const course of list) {
-      if (kindFilter && course.kind !== kindFilter) continue;
       // ends_on is a DATE and covers its whole Malaysian day — comparing
       // against new Date(ends_on) retired the course at 08:00 that morning,
       // because a bare date parses as UTC midnight. An activity stores its one
@@ -64,7 +62,7 @@ export default function TrainingsPage() {
     }
     return { active: a, ended: e };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [list, kindFilter]);
+  }, [list]);
 
   const del = async (course: TrainingRow): Promise<boolean> => {
     const isActivity = course.kind === TrainingKind.Activity;
@@ -131,21 +129,10 @@ export default function TrainingsPage() {
     <>
       <ErrorBanner message={trainings.error} />
 
+      {/* No shape filter: the catalog is one list of what the church is
+          running, every card already says which shape it is, and a church has
+          few enough of either for hiding half of them to be worth a control. */}
       <PageBar
-        filters={
-          <select
-            value={kindFilter}
-            onChange={(e) => setKindFilter(e.target.value as TrainingKind | '')}
-            aria-label={t('trainings.filter.allKinds')}
-          >
-            <option value="">{t('trainings.filter.allKinds')}</option>
-            {TRAINING_KINDS.map((k) => (
-              <option key={k} value={k}>
-                {k === TrainingKind.Activity ? t('trainings.filter.activities') : t('trainings.filter.courses')}
-              </option>
-            ))}
-          </select>
-        }
         actions={
           perms.write ? (
             <>

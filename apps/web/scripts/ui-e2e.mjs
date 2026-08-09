@@ -999,26 +999,19 @@ async function main() {
       await shot('06-training-detail');
 
       // The page is 培训&活动 now: the same catalog holds one-off activities
-      // (兄弟团爬山), so it offers both create paths and a filter between them.
+      // (兄弟团爬山), so it offers both create paths — and lists both shapes
+      // together, with no filter to hide half of them behind.
       await page.goto(`${BASE}/trainings`, { waitUntil: 'domcontentloaded' });
       await page.locator('.page-bar').first().waitFor({ state: 'attached', timeout: 20000 });
-      check('the catalog offers both “Add course” and “Add activity”',
-        (await page.locator('button:visible:has-text("Add course")').count()) > 0 &&
+      check('the catalog offers both “Add training” and “Add activity”',
+        (await page.locator('button:visible:has-text("Add training")').count()) > 0 &&
           (await page.locator('button:visible:has-text("Add activity")').count()) > 0);
       const activityCard = page.locator('.card h3', { hasText: fxActivity.name });
       await activityCard.first().waitFor({ timeout: 20000 });
       check('a created activity appears in the same catalog', (await activityCard.count()) === 1);
-      // Filtering is by the STORED code, so it survives a language switch.
-      await page.locator('.page-bar-filters select').first().selectOption('course');
-      await w(700);
-      check('“Courses only” hides the activities',
-        (await activityCard.count()) === 0 &&
-          (await page.locator('.card h3', { hasText: fxTraining.name }).count()) === 1);
-      await page.locator('.page-bar-filters select').first().selectOption('activity');
-      await w(700);
-      check('“Activities only” hides the courses',
-        (await activityCard.count()) === 1 &&
-          (await page.locator('.card h3', { hasText: fxTraining.name }).count()) === 0);
+      check('…beside the trainings, with no shape filter between them',
+        (await page.locator('.card h3', { hasText: fxTraining.name }).count()) === 1 &&
+          (await page.locator('.page-bar-filters select').count()) === 0);
 
       // An activity is ONE occasion: no session list to manage, and its roll
       // call is a single column of "came".
@@ -1032,8 +1025,8 @@ async function main() {
       check('the person who signed up is on the roll call',
         (await page.locator(`strong:has-text("${fxActivity.goer.name}")`).count()) > 0);
       const activityBody = await page.locator('.content').innerText();
-      check('the page calls it an activity, not a course',
-        /Activity/.test(activityBody) && !/Edit course/.test(activityBody),
+      check('the page calls it an activity, not a training',
+        /Activity/.test(activityBody) && !/Edit training/.test(activityBody),
         activityBody.replace(/\s+/g, ' ').slice(0, 120));
       // An activity is one occasion with a TIME and a PLACE (0016), and both
       // live on the training row — so both read off the header line, and the

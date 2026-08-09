@@ -55,6 +55,25 @@ export function unwrap<T = Record<string, unknown>>(result: {
   return result.data;
 }
 
+/**
+ * The same error mapping for a write that asked for nothing back.
+ *
+ * `insert` / `upsert` / `update` / `delete` without a `.select()` resolve with
+ * `data: null` on SUCCESS — there is no representation to return, and that is
+ * the point. `unwrap` reads that null as "no such row" and turns a completed
+ * write into a 404: the 40-day backfill created its pair, wrote the days, and
+ * then answered "Resource not found", so the page reported failure for work
+ * that had actually been done. Only the error is meaningful here.
+ */
+export function unwrapWrite(result: {
+  data: unknown;
+  error: { code?: string; message: string } | null;
+}): void {
+  // Delegate rather than re-deciding which code maps to which status, so the
+  // two can never drift.
+  if (result.error) unwrap({ data: null, error: result.error });
+}
+
 export function json(data: unknown, status = 200): Response {
   return new Response(status === 204 ? null : JSON.stringify(data), {
     status,

@@ -56,7 +56,10 @@ no way back except SQL.
 Sunday nor a hand-added meeting lives on `/trainings` now — a brothers' hike, a
 sisters' baking afternoon — because an activity is exactly what sign-ups plus a
 roll call already are. One column tells the two shapes apart: `trainings.kind`
-(`course` | `activity`, migration 0014). A **course** runs over several
+(`course` | `activity`, migration 0014). On screen the first shape is a
+**培训 / training** — the page is 培训&活动, so calling half of it a "course"
+was one name too many; `kind` stays `course` on the wire, because a user-facing
+rename stops at the API boundary (G8). A **培训** runs over several
 sessions; an **activity** is ONE occasion, whose single `training_sessions` row
 is created by the API with it and exists only to give the roll call its one
 column to tick — its date, **its time and its meeting point** are the record's
@@ -135,8 +138,8 @@ Testing layers (in `apps/web`):
   filters, modals, weekly attendance, a 主日 tick→untick round-trip on the
   roll-call sheet and the same for a hand-added meeting's own column,
   discipleship day-notes, the life-group card's own meetings sheet, a
-  培训&活动 course/activity filter plus an
-  activity's single-column roll call and its time/place, a paid course's fee
+  培训&活动 catalog listing both shapes with no filter, plus an
+  activity's single-column roll call and its time/place, a paid 培训's fee
   block and the receipt link beside Approve (with a free one proving the same
   fields are absent), a column check-all on both sheets, a
   member combobox typed→filtered→picked, an interface-language round-trip, the
@@ -178,7 +181,7 @@ These are hard requirements for this codebase. A change that breaks one is a
 review finding, not a preference. Cite the rule number in the finding.
 
 ### G1 — CRUD completeness on every management page
-Every entity page (成员、小组、聚会（点名表上的一列）、培训&活动（课程与活动两种形态）、四十天守望模块与配对、账户) must offer
+Every entity page (成员、小组、聚会（点名表上的一列）、培训&活动（培训与活动两种形态）、四十天守望模块与配对、账户) must offer
 the full set its users need: **Create, Read, Update, Delete**. If the API supports an
 operation, the UI must expose it (or the omission must be a deliberate,
 documented decision). A page that can only create + list is incomplete.
