@@ -257,6 +257,10 @@ control), `Combobox` (**every** picker whose options are members — a native
 `<select>` is a system wheel with no search on a phone, and the member list only
 grows; its matching rules are `lib/combobox.ts`),
 `exportRows`/`exportMatrix` (`lib/export.ts`),
+`copyText` (`lib/clipboard.ts` — **every** "copy this link" button: the async
+Clipboard API is missing in some in-app browsers, where `navigator.clipboard?.…`
+silently does nothing at all, so the helper falls back and always returns
+whether it worked, and the caller always says so),
 `ThemeSwatch` (**every** rendering of a theme — the preset list and the custom
 preview are the same split circle),
 `api` (`lib/api.ts`), and the label/style helpers in `lib/labels.ts`

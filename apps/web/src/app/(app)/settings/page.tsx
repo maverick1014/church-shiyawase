@@ -421,11 +421,9 @@ function AccountDetail({
             />
           </Field>
           <AccountRoleField value={role} onChange={setRole} />
-          <div className="hint" style={{ gridColumn: '1 / -1' }}>{t('settings.emailHint')}</div>
           <Field label={t('hall.label')}>
             <HallSelect value={hall} onChange={setHall} allowAll allLabel={t('hall.unlimited')} />
           </Field>
-          <div className="hint" style={{ gridColumn: '1 / -1' }}>{t('settings.hallHint')}</div>
           <div style={{ gridColumn: '1 / -1' }} className="flex-between" >
             <div style={{ background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 10, padding: '11px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
               <div>

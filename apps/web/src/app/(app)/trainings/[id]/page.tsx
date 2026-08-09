@@ -22,6 +22,7 @@ import {
   trainingKindKey,
   trainingMeta,
 } from '@/lib/labels';
+import { copyText } from '@/lib/clipboard';
 import { fromChurchInput, toChurchInput } from '@/lib/time';
 import { useT } from '@/lib/i18n';
 import { EnrollmentStatus, TrainingKind } from '@tog/shared';
@@ -218,12 +219,14 @@ export default function TrainingDetailPage() {
     );
   };
 
-  const copyEnrollLink = () => {
+  // Copy, and SAY so either way. Through `navigator.clipboard` alone a browser
+  // without the async API did nothing at all — no copy and no message — so the
+  // button read as broken (`lib/clipboard.ts` explains the fallback).
+  const copyEnrollLink = async () => {
     const link = `${window.location.origin}/enroll/${id}`;
-    navigator.clipboard?.writeText(link).then(
-      () => toast(tr('training.toast.linkCopied')),
-      () => toast(link),
-    );
+    const ok = await copyText(link);
+    if (ok) toast(tr('training.toast.linkCopied'));
+    else toast(tr('common.copyFailed', { link }), 'error');
   };
 
   return (

@@ -994,6 +994,16 @@ async function main() {
       check('the session list shows this course\'s session',
         (await page.locator(`strong:has-text("${fxTraining.sessionTitle}")`).count()) > 0);
       check('training detail shows the attendance sheet', (await page.locator('text=Attendance sheet').count()) > 0);
+      // The sign-up link button copies AND says so. Through `navigator.clipboard`
+      // alone, a browser without the async API ran no callback at all: no copy
+      // and no message, which reads as a dead button. Either outcome is now a
+      // toast, so a toast is what this asserts.
+      const linkBtn = page.locator('button:has-text("Sign-up link")');
+      if (await linkBtn.count()) {
+        await linkBtn.first().click();
+        const toasted = await page.locator('.toast').first().waitFor({ timeout: 5000 }).then(() => true, () => false);
+        check('the sign-up link button answers the tap, copied or not', toasted);
+      }
       check('a pending enrolee is offered for approval',
         (await page.locator('.enrol-row button:has-text("Approve")').count()) > 0);
       await shot('06-training-detail');

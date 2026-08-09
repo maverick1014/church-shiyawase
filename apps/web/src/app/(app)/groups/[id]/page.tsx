@@ -633,7 +633,11 @@ function WeeklyAttendance({ group }: { group: GroupDetail }) {
       {/* The card's own toolbar: the month it is showing, then export at the
           end — the same order every page bar puts them in (rule G7a). This is
           the CARD's row; the page bar belongs to the page. */}
-      <div className="flex gap-8 mb-14 flex-wrap">
+      {/* Month picker left, export in the right corner — the same halves a
+          PageBar has, so this card's row reads like every list page's
+          (rule G7a). It sat next to the picker before, which put the one
+          action on a different side here than everywhere else. */}
+      <div className="flex-between gap-8 mb-14 flex-wrap">
         <MonthPicker
           year={year}
           month={month}

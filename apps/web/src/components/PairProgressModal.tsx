@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useFetch } from '@/lib/hooks';
 import { PairDetail, PairRow, ProgressRow } from '@/lib/types';
 import { formatDate, memberRole, pairStatusClass, pairStatusKey, roleKey } from '@/lib/labels';
+import { copyText } from '@/lib/clipboard';
 import { useT } from '@/lib/i18n';
 import { ErrorBanner, Loading, Modal, useToast } from './ui';
 
@@ -42,10 +43,13 @@ export function PairProgressModal({
   const sel = selDay ? progressByDay.get(selDay) : undefined;
 
   const link = p && typeof window !== 'undefined' ? `${window.location.origin}/d/${p.form_token}` : '';
-  const copy = () =>
-    navigator.clipboard
-      ?.writeText(link)
-      .then(() => toast(t('disc.progress.linkCopied')), () => toast(link));
+  // Same copy path as the sign-up link on 培训&活动 — one helper, and a
+  // message whether or not the browser could do it (rule G4).
+  const copy = async () => {
+    const ok = await copyText(link);
+    if (ok) toast(t('disc.progress.linkCopied'));
+    else toast(t('common.copyFailed', { link }), 'error');
+  };
 
   // Walk the lineage up to the root of the relay chain.
   const byId = new Map((allPairs.data ?? []).map((x) => [x.id, x]));
