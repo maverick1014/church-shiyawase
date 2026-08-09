@@ -411,6 +411,39 @@ button {
   flex-wrap: wrap;
   margin-bottom: 14px;
 }
+/* A trailing action stays in the right corner even after the row wraps.
+ * `justify-content` only positions items ALONG a line, so once a card's title
+ * pushed the export button onto a second line of its own, space-between had
+ * nothing to space and the button sat at the left — the one place in the app
+ * where the export was not in the corner, and only on a phone. `:not(:first-child)`
+ * keeps a single-child row (a form header, a public page's title) where it is. */
+.card-head > :last-child:not(:first-child),
+.flex-between > :last-child:not(:first-child) {
+  margin-left: auto;
+}
+
+/* A detail page's fact tile (FactGrid). The value is data — an email address,
+ * a long group name — and an email has no space in it to wrap on, so without
+ * `overflow-wrap` it runs straight out of its own tile and off the card on a
+ * phone. Written here rather than inline so every tile in the app breaks the
+ * same way (rules G4/G9). */
+.fact {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  min-width: 0;
+}
+.fact-label {
+  color: var(--muted);
+  font-size: 11.5px;
+}
+.fact-value {
+  font-size: 14px;
+  font-weight: 600;
+  margin-top: 3px;
+  overflow-wrap: anywhere;
+}
 
 .grid {
   display: grid;
@@ -2009,6 +2042,12 @@ td.empty-inline {
 .mtile-row1 strong {
   font-size: 15px;
 }
+/* A tile carries data too — an email, a long group name — and a phone is the
+   narrowest screen there is. Break it inside the tile rather than widen the
+   tile past the screen. */
+.mtile {
+  overflow-wrap: anywhere;
+}
 /* The tile's "open this" affordance — the same chevron the desktop table row
    uses, so the control reads identically on both. */
 .mtile-cta {
@@ -2085,15 +2124,22 @@ td.empty-inline {
   }
 }
 
-/* On phones the top-right corner is cramped by the header — centre the toast
-   stack along the top edge instead. */
+/* On phones the top-right corner is cramped by the header, and a toast sized to
+   its own text lands wherever the sentence happens to end. Give it the full
+   width of the screen instead: one banner across the top, same edge on both
+   sides as the cards below it, and a two-line message reads as one block rather
+   than as a ragged label. */
 @media (max-width: 640px) {
   .toast-stack {
     top: 14px;
-    left: 50%;
-    right: auto;
-    transform: translateX(-50%);
-    align-items: center;
+    left: 12px;
+    right: 12px;
+    transform: none;
+    align-items: stretch;
+  }
+  .toast {
+    max-width: none;
+    width: 100%;
   }
 }
 

@@ -122,12 +122,22 @@ async function main() {
   const hallId = halls?.[0]?.id;
 
   // ---- Members CRUD -------------------------------------------------------
-  const mkMember = await req('POST', '/api/members', { ...H, body: { full_name: `E2E成员-${Date.now()}`, church_role: 'member', status: 'active', hall_id: hallId } });
+  // 服侍岗位 (migration 0019) rides along with the create: it is a `text[]`, so
+  // what is asserted is that it comes BACK as the list that went in — a column
+  // the API forgot to select would read as an ordinary absent field.
+  const mkMember = await req('POST', '/api/members', { ...H, body: { full_name: `E2E成员-${Date.now()}`, church_role: 'member', status: 'active', hall_id: hallId, serving_roles: ['敬拜', '音响'] } });
   ok('create member → 200 + id', mkMember.status === 200 && mkMember.json?.id, `status ${mkMember.status}`);
   const memberId = mkMember.json?.id;
   if (memberId) {
-    const patch = await req('PATCH', `/api/members/${memberId}`, { ...H, body: { phone: '012-000 0000' } });
+    const read = await req('GET', `/api/members/${memberId}`, H);
+    ok('…and reads back with the ministries it was created with',
+      JSON.stringify(read.json?.serving_roles) === JSON.stringify(['敬拜', '音响']),
+      JSON.stringify(read.json?.serving_roles));
+    const patch = await req('PATCH', `/api/members/${memberId}`, { ...H, body: { phone: '012-000 0000', serving_roles: ['招待'] } });
     ok('update member → 200', patch.status === 200 && patch.json?.phone === '012-000 0000');
+    ok('…and 服侍岗位 is editable, not write-once',
+      JSON.stringify(patch.json?.serving_roles) === JSON.stringify(['招待']),
+      JSON.stringify(patch.json?.serving_roles));
     const del = await req('DELETE', `/api/members/${memberId}`, H);
     ok('delete member → 200', del.status === 200);
   }
@@ -141,7 +151,12 @@ async function main() {
   ok('create event → 200 + id', mkEv.status === 200 && mkEv.json?.id, `status ${mkEv.status} ${JSON.stringify(mkEv.json).slice(0,120)}`);
   const evId = mkEv.json?.id;
   if (evId) {
-    ok('update event → 200', (await req('PATCH', `/api/events/${evId}`, { ...H, body: { location: '副堂' } })).status === 200);
+    // 地点 is the field the meeting form only just started asking for — the
+    // dashboard has always rendered it, so what is checked is that a written
+    // one comes back rather than vanishing between the form and the row.
+    const evPatch = await req('PATCH', `/api/events/${evId}`, { ...H, body: { location: '副堂' } });
+    ok('update event → 200', evPatch.status === 200);
+    ok('…and the meeting keeps the location it was given', evPatch.json?.location === '副堂', evPatch.json?.location);
     // A meeting's attendance is not its own endpoint any more: it is a column
     // on the roll-call sheet, ticked by PUT /api/attendance/sheet — exercised
     // in full by rollCallSheet() below, on a fixture of its own.
@@ -150,6 +165,7 @@ async function main() {
 
   // ---- 聚会点名 (the roll-call sheet) ---------------------------------------
   await rollCallSheet(admin, halls, hallId);
+  await groupScopedSheet(admin, halls, hallId);
 
   // ---- Groups CRUD (+ weekly attendance) ----------------------------------
   const mkGrp = await req('POST', '/api/groups', { ...H, body: { name: `E2E小组-${Date.now()}`, hall_id: hallId } });
@@ -419,7 +435,9 @@ async function memberImport(adminCookie, hallId) {
     body: {
       hall_id: hallId,
       rows: [
-        { row: 2, full_name: chinese, english_name: 'Import One', phone: '012-111 1111', email: `e2e-import-${stamp}@grace.org` },
+        // One cell, several 服侍岗位 — and the row beside it names none, which
+        // is what puts the bulk insert's column-widening on the 0019 column.
+        { row: 2, full_name: chinese, english_name: 'Import One', phone: '012-111 1111', email: `e2e-import-${stamp}@grace.org`, serving_roles: '敬拜、音响' },
         // The same Chinese name with another English name is a different
         // person — that is what the pair index is for.
         { row: 3, full_name: chinese, english_name: 'Import Two' },
@@ -446,6 +464,11 @@ async function memberImport(adminCookie, hallId) {
   ok('…and exactly two members carry that Chinese name', found.length === 2, String(found.length));
   const one = found.find((m) => m.english_name === 'Import One');
   ok('…the imported email landed', one?.email === `e2e-import-${stamp}@grace.org`, one?.email);
+  ok('…one cell of 服侍岗位 became a list',
+    JSON.stringify(one?.serving_roles) === JSON.stringify(['敬拜', '音响']), JSON.stringify(one?.serving_roles));
+  ok('…and the row that named none serves nowhere rather than being refused',
+    (found.find((m) => m.english_name === 'Import Two')?.serving_roles || []).length === 0,
+    JSON.stringify(found.find((m) => m.english_name === 'Import Two')?.serving_roles));
 
   // The re-import: the same pair, a new phone, and NO email column at all. An
   // update must take the phone and leave the email the church already had.
@@ -461,6 +484,8 @@ async function memberImport(adminCookie, hallId) {
   ok('…the phone the file supplied was written', after?.phone === '012-999 9999', after?.phone);
   ok('…and the email the file left out was NOT blanked',
     after?.email === `e2e-import-${stamp}@grace.org`, String(after?.email));
+  ok('…nor the ministries it left out',
+    JSON.stringify(after?.serving_roles) === JSON.stringify(['敬拜', '音响']), JSON.stringify(after?.serving_roles));
   ok('…and there is still only one of them',
     ((await req('GET', `/api/members?q=${encodeURIComponent(chinese)}`, H)).json || []).length === 2);
 
@@ -490,10 +515,10 @@ async function memberImport(adminCookie, hallId) {
  *
  * The only unauthenticated write that touches the member roll, so what is
  * asserted is mostly what it REFUSES: a stranger may leave their contact
- * details, and may not make themselves a pastor, park a note on their own
- * record, or reach any other method on the path. And the same pair rule as
- * everywhere else — registering twice updates the one row rather than growing
- * a twin.
+ * details, and may not make themselves a pastor, put themselves on a ministry,
+ * park a note on their own record, or reach any other method on the path. And
+ * the same pair rule as everywhere else — registering twice updates the one row
+ * rather than growing a twin.
  */
 async function selfRegistration(adminCookie, hallId) {
   const H = { cookie: adminCookie };
@@ -520,6 +545,7 @@ async function selfRegistration(adminCookie, hallId) {
       church_role: 'pastor',
       status: 'inactive',
       notes: 'promote me',
+      serving_roles: ['敬拜'],
       group_id: '00000000-0000-0000-0000-000000000000',
     },
   });
@@ -536,6 +562,10 @@ async function selfRegistration(adminCookie, hallId) {
   ok('…on the roll, not with the status it asked for', person?.status === 'active', person?.status);
   ok('…with no notes and no life group', !person?.notes && !person?.group_id,
     `${person?.notes} / ${person?.group_id}`);
+  // A ministry is something the church hands out, so the allow-list simply does
+  // not read the field — the row comes back serving nowhere, not serving 敬拜.
+  ok('…and serving nowhere, whatever ministry the body claimed',
+    (person?.serving_roles || []).length === 0, JSON.stringify(person?.serving_roles));
   ok('…and the details it WAS allowed to set',
     person?.phone === '012-222 2222' && person?.gender === 'male' && person?.date_of_birth === '1990-05-04',
     `${person?.phone} / ${person?.gender} / ${person?.date_of_birth}`);
@@ -1147,6 +1177,147 @@ async function rollCallSheet(adminCookie, halls, hallId) {
       const del2 = await req('DELETE', `/api/members/${memberId2}`, H);
       ok('the second roll-call fixture member was deleted', del2.status === 200, `status ${del2.status}`);
     }
+  }
+}
+
+/**
+ * 聚会点名, asked for ONE life group — `GET /attendance/sheet?group_id=`, which
+ * is the Sunday half of the roll-call card on `/groups/:id`.
+ *
+ * The assertion that matters most is the third one: a Sunday ticked through the
+ * group page must be visible on the UNSCOPED sheet, because it is meant to be
+ * the same `sunday_attendance` row and not a second store. Two doors, one
+ * record — if that ever stopped holding, a group leader and the office would be
+ * looking at two different answers to one question.
+ *
+ * The rest: the parameter narrows the ROWS and nothing else (the columns stay
+ * the month's Sundays), an untick still leaves no row anywhere, and the
+ * parameter cannot be used to read a group in a congregation the account is not
+ * in — the hall rules come first, exactly as they do on every other read.
+ *
+ * Everything is fixture data in a far-future month, deleted in a `finally`.
+ */
+async function groupScopedSheet(adminCookie, halls, hallId) {
+  const H = { cookie: adminCookie };
+  if (!hallId) { ok('group-scoped sheet (skipped: no congregation)', true); return; }
+
+  // The same far-future month the sheet suite uses: January 2030, whose
+  // Sundays are the 6th, 13th, 20th and 27th.
+  const SUNDAY = 'sunday:2030-01-06';
+  const WHEN = 'year=2030&month=1';
+
+  const mkGroup = await req('POST', '/api/groups', {
+    ...H, body: { name: `E2E小组点名-${Date.now()}`, hall_id: hallId },
+  });
+  ok('group-sheet fixture group created', mkGroup.status === 200 && mkGroup.json?.id, `status ${mkGroup.status}`);
+  const groupId = mkGroup.json?.id;
+  if (!groupId) return;
+
+  const mkIn = await req('POST', '/api/members', {
+    ...H,
+    body: { full_name: `E2E组内-${Date.now()}`, church_role: 'member', status: 'active', hall_id: hallId, group_id: groupId },
+  });
+  const mkOut = await req('POST', '/api/members', {
+    ...H,
+    body: { full_name: `E2E组外-${Date.now()}`, church_role: 'member', status: 'active', hall_id: hallId },
+  });
+  ok('group-sheet fixture members created',
+    mkIn.status === 200 && mkIn.json?.id && mkOut.status === 200 && mkOut.json?.id,
+    `${mkIn.status} / ${mkOut.status}`);
+  const insider = mkIn.json?.id;
+  const outsider = mkOut.json?.id;
+
+  /** The insider's cells, on whichever sheet is asked for. */
+  const cellsOn = async (url) => {
+    const r = await req('GET', url, H);
+    return { res: r, cells: (r.json?.rows || []).find((x) => x.member?.id === insider)?.cells ?? null };
+  };
+
+  try {
+    const scoped = await req('GET', `/api/attendance/sheet?${WHEN}&group_id=${groupId}`, H);
+    ok('a group-scoped sheet GET → 200', scoped.status === 200, `status ${scoped.status} ${JSON.stringify(scoped.json).slice(0, 120)}`);
+    const ids = (scoped.json?.rows || []).map((r) => r.member?.id);
+    ok('…and its rows are that group’s roster, nobody else',
+      ids.includes(insider) && !ids.includes(outsider) && ids.length === 1,
+      `${ids.length} row(s)`);
+    ok('…while the columns stay the month’s Sundays',
+      (scoped.json?.columns || []).length === 4 &&
+        (scoped.json?.columns || []).every((c) => c.kind === 'sunday'),
+      JSON.stringify((scoped.json?.columns || []).map((c) => `${c.date}/${c.kind}`)));
+
+    // ---- the one that matters: two doors, ONE record ----------------------
+    const tick = await req('PUT', '/api/attendance/sheet', {
+      ...H, body: { column: SUNDAY, member_id: insider, pre_service: false, service: true },
+    });
+    ok('ticking 主日 from the group page → 200', tick.status === 200, `status ${tick.status} ${JSON.stringify(tick.json)}`);
+    const wide = await cellsOn(`/api/attendance/sheet?${WHEN}&hall_id=${hallId}`);
+    ok('a Sunday ticked on the group page is the SAME row the services sheet shows',
+      wide.cells?.[SUNDAY]?.service === true, JSON.stringify(wide.cells));
+    const back = await cellsOn(`/api/attendance/sheet?${WHEN}&group_id=${groupId}`);
+    ok('…and reads back the same way on the group’s own sheet',
+      back.cells?.[SUNDAY]?.service === true, JSON.stringify(back.cells));
+
+    const clear = await req('PUT', '/api/attendance/sheet', {
+      ...H, body: { column: SUNDAY, member_id: insider, pre_service: false, service: false },
+    });
+    ok('unticking it → 200', clear.status === 200, `status ${clear.status}`);
+    const gone = await cellsOn(`/api/attendance/sheet?${WHEN}&hall_id=${hallId}`);
+    ok('…and it leaves no row behind on either sheet', gone.cells && !gone.cells[SUNDAY], JSON.stringify(gone.cells));
+
+    // ---- the hall rule comes first ----------------------------------------
+    const otherHall = (halls || []).find((h) => h.id !== hallId);
+    if (!otherHall) {
+      ok('a hall-scoped account cannot read another congregation’s group (skipped: one congregation)', true);
+    } else {
+      // A login pinned to the OTHER congregation, on a fixture member of its
+      // own — nothing on a real person is touched, and both go in the finally.
+      const email = `e2e-groupsheet-${Date.now()}-${Math.floor(Math.random() * 1e4)}@grace.org`;
+      const stranger = await req('POST', '/api/members', {
+        ...H,
+        body: { full_name: `E2E外堂-${Date.now()}`, church_role: 'member', status: 'active', hall_id: otherHall.id, email },
+      });
+      const account = await req('POST', '/api/accounts', {
+        ...H,
+        body: { member_id: stranger.json?.id, account_role: 'coworker', hall_id: otherHall.id, password: 'e2ePass2026' },
+      });
+      ok('a congregation-scoped login was provisioned',
+        stranger.status === 200 && account.status === 200,
+        `${stranger.status} / ${account.status} ${JSON.stringify(account.json).slice(0, 120)}`);
+      try {
+        const cookie = await login(email, 'e2ePass2026');
+        ok('…and can sign in', !!cookie);
+        if (cookie) {
+          const across = await req('GET', `/api/attendance/sheet?${WHEN}&group_id=${groupId}`, { cookie });
+          ok('group_id cannot reach another congregation’s roster', across.status === 403,
+            `status ${across.status} ${JSON.stringify(across.json).slice(0, 120)}`);
+          const own = await req('GET', `/api/attendance/sheet?${WHEN}`, { cookie });
+          ok('…while its own congregation’s sheet still answers', own.status === 200, `status ${own.status}`);
+          ok('…and that sheet holds none of the other congregation’s members',
+            !(own.json?.rows || []).some((r) => r.member?.id === insider),
+            `${(own.json?.rows || []).length} rows`);
+        }
+      } finally {
+        // The account first: a member cannot go while a login holds it.
+        if (account.json?.id) {
+          const delAcc = await req('DELETE', `/api/accounts/${account.json.id}`, H);
+          ok('the congregation-scoped login was deleted', delAcc.status === 200, `status ${delAcc.status}`);
+        }
+        if (stranger.json?.id) {
+          const delStranger = await req('DELETE', `/api/members/${stranger.json.id}`, H);
+          ok('the other congregation’s fixture member was deleted', delStranger.status === 200, `status ${delStranger.status}`);
+        }
+      }
+    }
+  } finally {
+    // Members first: deleting the group would only unset their group_id and
+    // strand them (`group_id` is ON DELETE SET NULL).
+    for (const [what, id] of [['in-group', insider], ['ungrouped', outsider]]) {
+      if (!id) continue;
+      const del = await req('DELETE', `/api/members/${id}`, H);
+      ok(`the ${what} group-sheet fixture member was deleted`, del.status === 200, `status ${del.status}`);
+    }
+    const delGroup = await req('DELETE', `/api/groups/${groupId}`, H);
+    ok('the group-sheet fixture group was deleted', delGroup.status === 200, `status ${delGroup.status}`);
   }
 }
 

@@ -31,7 +31,7 @@ import {
   SheetMeeting,
   SheetTickName,
 } from '@/lib/types';
-import { columnTickState, type ColumnTickState } from '@/lib/sheet';
+import { sheetColumnStates, sheetColumnWrites } from '@/lib/sheet';
 import { sheetTickKey } from '@/lib/labels';
 import { churchParts, fromChurchInput, toChurchInput } from '@/lib/time';
 import { useT } from '@/lib/i18n';
@@ -129,19 +129,7 @@ export default function EventsPage() {
    * is about to throw away) AND what the totals row at the foot of the sheet
    * shows: both are the same question — how many people were there.
    */
-  const columnStates = useMemo(() => {
-    const map = new Map<string, { state: ColumnTickState; ticked: number }>();
-    for (const c of columns) {
-      for (const tick of c.ticks) {
-        const flags = rows.map((r) => !!r.cells[c.key]?.[tick]);
-        map.set(`${c.key}|${tick}`, {
-          state: columnTickState(flags),
-          ticked: flags.filter(Boolean).length,
-        });
-      }
-    }
-    return map;
-  }, [columns, rows]);
+  const columnStates = useMemo(() => sheetColumnStates(columns, rows), [columns, rows]);
 
   /**
    * The foot of the sheet: one number per sub-column — how many PEOPLE carry
@@ -169,11 +157,8 @@ export default function EventsPage() {
    * the number of ticks it will remove (rule G3). Filling one needs no
    * confirmation: nothing is lost.
    *
-   * The members are grouped by what their OTHER tick in this column already
-   * says, so filling 主日 can never rewrite somebody's 会前 — which is exactly
-   * what one flat "set the whole cell for everyone" call would have done. That
-   * is at most two requests for a Sunday and one for a meeting; never one per
-   * member.
+   * Which members to write, and what to write for each, is `sheetColumnWrites`
+   * — shared with the life group's card so the two cannot drift (rule G4).
    */
   const toggleColumn = async (column: SheetColumn, tick: SheetTickName) => {
     const here = columnStates.get(`${column.key}|${tick}`);
@@ -191,19 +176,9 @@ export default function EventsPage() {
       });
       if (!ok) return;
     }
-    const groups = new Map<string, { cell: SheetCell; ids: string[] }>();
-    for (const r of rows) {
-      const current = r.cells[column.key] ?? {};
-      const cell: SheetCell = {};
-      for (const name of column.ticks) cell[name] = name === tick ? next : !!current[name];
-      const shape = column.ticks.map((name) => (cell[name] ? '1' : '0')).join('');
-      const group = groups.get(shape);
-      if (group) group.ids.push(r.member.id);
-      else groups.set(shape, { cell, ids: [r.member.id] });
-    }
     try {
       await Promise.all(
-        [...groups.values()].map((g) =>
+        sheetColumnWrites(column, tick, next, rows).map((g) =>
           api.put('/attendance/sheet', { column: column.key, member_ids: g.ids, ...g.cell }),
         ),
       );
@@ -445,9 +420,16 @@ export default function EventsPage() {
 /**
  * Add / edit one hand-added meeting. A name and a date is all it takes — the
  * sheet's Sunday columns cover the standing services, so nothing here asks for
- * a type, a location or a recurrence. An existing meeting keeps its own time of
- * day: the field only moves the date, so a 20:00 prayer meeting does not
- * silently become a midnight one.
+ * a type or a recurrence. An existing meeting keeps its own time of day: the
+ * field only moves the date, so a 20:00 prayer meeting does not silently become
+ * a midnight one.
+ *
+ * 地点 is optional and is the one field here that is not about WHEN: the
+ * dashboard's 近期聚会 line has always rendered `日期 · 地点`, and until this
+ * form asked for one there was no way to put anything into it — the column read
+ * as dead in an audit for exactly that reason (migration 0020 keeps it and says
+ * so). Worded and shaped like 培训&活动's own meeting point, since a person
+ * filling both in a week should not have to learn two words for one thing.
  *
  * Deleting it takes its ticks with it, which is why that button goes through
  * the shared confirmation (rule G3) in the page above.
@@ -470,6 +452,7 @@ function MeetingModal({
   const [form, setForm] = useState({
     title: meeting?.title ?? '',
     date: stored.slice(0, 10),
+    location: meeting?.location ?? '',
     // Editing keeps the meeting's own hall; creating defaults to the hall being
     // viewed (and to 全堂 only when viewing all congregations).
     hall_id: meeting ? meeting.hall_id : hallId || null,
@@ -489,6 +472,9 @@ function MeetingModal({
       const payload = {
         title: form.title.trim(),
         starts_at: fromChurchInput(`${form.date}T${timeOfDay}`),
+        // Emptied on purpose clears it, rather than leaving a stale room name
+        // on the dashboard for a meeting that has moved.
+        location: form.location.trim() || null,
         hall_id: form.hall_id,
       };
       if (meeting) await api.patch(`/events/${meeting.id}`, payload);
@@ -533,6 +519,13 @@ function MeetingModal({
           />
         </Field>
       </div>
+      <Field label={t('events.field.location')}>
+        <input
+          value={form.location}
+          onChange={(e) => setForm({ ...form, location: e.target.value })}
+          placeholder={t('events.locationPlaceholder')}
+        />
+      </Field>
       <div className="modal-actions">
         {onDelete && (
           <button className="btn danger" style={{ marginRight: 'auto' }} onClick={onDelete}>

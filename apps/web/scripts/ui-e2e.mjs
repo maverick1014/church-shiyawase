@@ -700,7 +700,7 @@ async function main() {
     // and which of the church's own groups are populated is not this suite's
     // business to depend on. So the module brings its own group with its own
     // member, and opens exactly that one.
-    mod('life groups · list · detail · weekly attendance');
+    mod('life groups · list · detail · attendance (Sundays + the group’s own)');
     const fxGroup = await makeRosteredGroup();
     try {
       await page.goto(`${BASE}/groups`, { waitUntil: 'domcontentloaded' });
@@ -736,10 +736,10 @@ async function main() {
         (await page.locator(`td:has-text("${fxGroup.member.name}")`).count()) > 0);
       await shot('04-group-detail');
 
-      // The group's roll call is the group's OWN meetings and nothing else:
-      // the 小组 / 会前 / 主日 tabs are gone, because a member's Sunday is one
-      // fact taken once, on 崇拜与祷告会. So there must be no segmented control
-      // anywhere on this page — neither in the card nor in the page bar.
+      // The group's roll call is ONE table with two labelled blocks of columns
+      // — the month's Sundays, then the group's own meetings. There are still
+      // no 小组 / 会前 / 主日 tabs: the Sunday half is not a second view, it is
+      // the same rows the services sheet writes, shown beside the group's own.
       check('the roll-call card offers no roll-call tabs any more',
         (await page.locator('.seg').count()) === 0, `${await page.locator('.seg').count()} segmented control(s)`);
 
@@ -761,13 +761,28 @@ async function main() {
       check('…and it is an export button, not something else',
         (await sheetCard.locator('button[aria-label*="Export"]').count()) === 1);
 
+      // Both blocks are on the one table, and each says which it is — a leader
+      // must never wonder whether the box under their finger is a Sunday or
+      // the group's own night.
+      check('the card carries the month’s Sundays as well as the group’s own',
+        (await sheetCard.locator('th:has-text("Sunday services")').count()) === 1 &&
+          (await sheetCard.locator('th:has-text("This group’s meetings")').count()) === 1);
+      check('…and the Sunday block carries a Sunday’s two ticks',
+        (await sheetCard.locator('th:has-text("Pre-service")').count()) >= 4,
+        `${await sheetCard.locator('th:has-text("Pre-service")').count()} 会前 columns`);
+
       // Ticking a week writes the group's own roll call, and unticking it puts
       // it back — the card is a sheet like every other one.
+      //
+      // Only ever the group's OWN column: the Sundays beside it are the
+      // congregation's real record (that is the whole point of the Sunday half
+      // being the same rows), and ticking one here would genuinely write it.
+      // The group's own meetings hold nothing but what this run creates.
       const groupRow = sheetCard.locator('tr', { has: page.locator(`td:has-text("${fxGroup.member.name}")`) });
       await groupRow.first().waitFor({ timeout: 20000 });
       check('the sheet lists this group’s member exactly once',
         (await groupRow.count()) === 1, `${await groupRow.count()} row(s)`);
-      const weekTick = groupRow.locator('input[type=checkbox]').first();
+      const weekTick = groupRow.locator('input[title^="Week"]').first();
       // click, not check(): the tick is optimistic and the row re-renders from
       // the server, so the checkbox's own state is not the fact worth
       // asserting — what the API returns is.
@@ -788,14 +803,20 @@ async function main() {
 
       /* -- the column check-all (全员到齐) ------------------------------- */
       // Marking a roster one person at a time is what this shortcut exists to
-      // stop. Safe to drive here: the group, its roster and its meetings were
-      // all created by this run.
+      // stop. Driven on the group's OWN week columns only, for the same reason
+      // the single tick above is: the Sunday check-alls beside them would
+      // clear the congregation's real attendance.
       const presentIn = (sheet) =>
         (sheet.rows || []).filter((r) => (r.cells || []).some((c) => c.status === 'present')).length;
-      const weekAll = sheetCard.locator('thead input.sheet-tick-all');
+      const weekAll = sheetCard.locator('thead input.sheet-tick-all[aria-label*="Week"]');
       const weekCount = await page.locator('th:has-text("Week")').count();
       check('every week column carries a check-all in its header',
         (await weekAll.count()) === weekCount, `${await weekAll.count()} of ${weekCount}`);
+      // The Sunday half has its own, one per sub-column, exactly as it does on
+      // 崇拜与祷告会 — asserted by counting, never by pressing one.
+      const sundayAllsHere = await sheetCard.locator('thead input.sheet-tick-all[aria-label*="Pre-service"]').count();
+      check('each Sunday’s ticks carry their own check-all here too',
+        sundayAllsHere >= 4, `${sundayAllsHere} 会前 check-alls`);
       const firstAll = weekAll.first();
       check('…which reads as empty while nobody is ticked',
         !(await firstAll.isChecked()) && (await firstAll.evaluate((el) => el.indeterminate)) === false);
@@ -1026,15 +1047,28 @@ async function main() {
       await page.locator('.modal').waitFor({ timeout: 8000 });
       check('the edit modal opens on that meeting',
         (await page.locator('.modal input').first().inputValue()) === fxMeeting.name);
-      // A hand-added meeting needs a name and a date, nothing else: no type,
-      // no location. Two inputs (+ the congregation select) and no more.
-      check('a meeting asks only for a name and a date',
-        (await page.locator('.modal input').count()) === 2,
+      // A hand-added meeting is a name, a date and where to go: no type and no
+      // recurrence. Three inputs (+ the congregation select) and no more.
+      check('a meeting asks for a name, a date and a place',
+        (await page.locator('.modal input').count()) === 3,
         `${await page.locator('.modal input').count()} inputs`);
+      // 地点 is what the dashboard has always rendered and nothing could fill,
+      // so what matters is the round trip: typed here, stored on the row.
+      const placeBox = page.locator('.modal input[placeholder*="prayer room"]');
+      check('the meeting form offers a place to meet', (await placeBox.count()) === 1);
+      if (await placeBox.count()) {
+        await placeBox.fill('ZZ_UITEST_地点');
+        await page.locator('.modal button:has-text("Save")').first().click();
+        await w(1500);
+        const savedMeeting = await apiGet(`/events/${fxMeeting.id}`).catch(() => null);
+        check('a place typed into the meeting form is stored on it',
+          savedMeeting?.location === 'ZZ_UITEST_地点', String(savedMeeting?.location));
+      } else {
+        await page.locator('.modal button:has-text("Cancel")').first().click();
+      }
 
       // The sheet is the widest thing in the app. It has to scroll inside its
       // own card — the page body must never scroll sideways on a phone.
-      await page.locator('.modal button:has-text("Cancel")').first().click();
       await w(300);
       const over = await page.evaluate(
         () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
@@ -1857,18 +1891,38 @@ async function main() {
     const hallSel = page.locator('.modal select').first();
     const hallOpt = await hallSel.locator('option').nth(1).getAttribute('value');
     if (hallOpt) await hallSel.selectOption(hallOpt);
+    /* 服侍岗位 (migration 0019) — the shared TagsInput, entered the way a tag
+       is: type, Enter, and a chip appears. The ministry is fixture-named, so
+       the filter assertion below can look for a value only this run put there,
+       and it leaves with the member. */
+    const testMinistry = 'ZZ_UITEST_服侍';
+    const servingBox = page.locator('.modal input[placeholder*="Worship"]');
+    check('the add-member form offers a 服侍岗位 field', (await servingBox.count()) === 1);
+    if (await servingBox.count()) {
+      await servingBox.fill(testMinistry);
+      await servingBox.press('Enter');
+      await w(200);
+      check('a ministry typed into it becomes a chip',
+        (await page.locator(`.modal .chip:has-text("${testMinistry}")`).count()) === 1);
+    }
     await page.locator('.modal button:has-text("Save")').first().click();
     await w(1800);
     await page.fill('input[placeholder*="Search"]', testName);
     await w(700);
     const created = (await page.locator(`.mtile:has-text("${testName}")`).count()) > 0;
     check('creating a member through the UI adds it to the list', created);
+    // The filter is derived from the ministries members actually serve in, so
+    // the one just saved has to be an option on the page bar.
+    check('the members page offers a ministry filter carrying it',
+      (await page.locator(`.page-bar-filters select option[value="${testMinistry}"]`).count()) === 1);
 
     if (created) {
       // capture id for API-fallback cleanup
       await page.locator(`.mtile:has-text("${testName}")`).first().click();
       await page.waitForURL(/\/members\/[0-9a-f-]+/, { timeout: 15000 });
       createdMemberId = page.url().match(/\/members\/([0-9a-f-]+)/)?.[1] ?? null;
+      check('the member’s profile shows the ministry as a badge',
+        (await page.locator(`.fact .badge:has-text("${testMinistry}")`).count()) === 1);
       await page.locator('button:visible:has-text("Delete")').first().click();
       await page.locator('.modal-backdrop').waitFor({ timeout: 8000 });
       await page.locator('.modal-backdrop button:has-text("Delete")').last().click();

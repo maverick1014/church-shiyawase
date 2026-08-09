@@ -48,7 +48,7 @@ export interface HallRow {
 }
 
 /**
- * A member row as returned by the API (joins group + household names).
+ * A member row as returned by the API (joins the group and hall names).
  *
  * The two names together are the person (migration 0018): `full_name` is the
  * CHINESE name, `english_name` the English one — nullable, because plenty of
@@ -67,13 +67,18 @@ export interface MemberRow {
   status: MemberStatus;
   group_id: string | null;
   group_position: GroupPosition | null;
-  household_id: string | null;
   hall_id: string;
   joined_at: string | null;
   notes: string | null;
+  /**
+   * 服侍岗位 — the ministries this person serves in (migration 0019). Free text
+   * and several per person, the same shape `groups.tags` has, so the UI enters
+   * them with the same `TagsInput`. Empty = serves nowhere, which is a fact
+   * rather than a missing value; never null (the column defaults to `{}`).
+   */
+  serving_roles: string[];
   avatar_url: string | null;
   group?: { id: string; name: string } | null;
-  household?: { id: string; name: string } | null;
   hall?: { id: string; name: string } | null;
 }
 
@@ -102,7 +107,6 @@ export interface GroupDetail extends GroupRow {
 export interface GroupMeeting {
   id: string;
   meeting_date: string;
-  note: string | null;
 }
 
 export interface GroupAttendanceResponse {
@@ -134,6 +138,8 @@ export interface SheetMeeting {
   id: string;
   title: string;
   starts_at: string;
+  /** Where it meets; null = not said. */
+  location: string | null;
   /** null = 全堂开放. */
   hall_id: string | null;
 }
@@ -173,14 +179,14 @@ export interface RollCallSheet {
   rows: RollCallSheetRow[];
 }
 
+/** A hand-added meeting: a title, a date, a congregation and where to go. */
 export interface EventRow {
   id: string;
   title: string;
-  description: string | null;
   event_type: EventType;
-  location: string | null;
   starts_at: string;
-  ends_at: string | null;
+  /** Where it meets. Shown on the dashboard beside the date; null = not said. */
+  location: string | null;
   /** null = 全堂 / 联合聚会. */
   hall_id: string | null;
   hall?: { id: string; name: string } | null;
@@ -222,7 +228,6 @@ export interface SessionRow {
   title: string | null;
   scheduled_at: string | null;
   location: string | null;
-  notes: string | null;
 }
 
 export interface EnrollmentRow {
@@ -318,11 +323,7 @@ export interface AccountRow {
   /** null = 全堂权限. */
   hall_id: string | null;
   status: AccountStatus;
-  two_factor: boolean;
   language: string;
-  notify_discipleship: boolean;
-  notify_donation: boolean;
-  notify_weekly: boolean;
   last_sign_in_at: string | null;
   member?: {
     id: string;
