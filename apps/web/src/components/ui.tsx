@@ -295,6 +295,44 @@ export function Avatar({
   return <div className={cls}>{initialOf(name)}</div>;
 }
 
+/**
+ * A person's name — the ONE way any of them is drawn (rule G4).
+ *
+ * A member is two names (migration 0018): the Chinese name the church files
+ * them under, and an English name that is often the only one half the
+ * congregation knows. Both belong on screen wherever a person is listed, so
+ * this renders the Chinese name and, on its own line beneath it, the English
+ * one — smaller and muted, because the second line is the aid to recognition
+ * and not the identity. An English name is nullable, and when there is none
+ * nothing extra is drawn: the row stays exactly as tall as it used to be.
+ *
+ * It is a two-line block rather than "陈约翰 (John Tan)" on one line because an
+ * English name is routinely three times the width of the Chinese one, and every
+ * list this appears in already has a name column competing with real content.
+ *
+ * `member` may be null — an enrolment whose member row was deleted, an account
+ * with nobody linked — and then the caller's `fallback` stands in, so no call
+ * site has to write its own `?? '—'` around this.
+ */
+export function MemberName({
+  member,
+  fallback = '—',
+  style,
+}: {
+  member: { full_name: string; english_name?: string | null } | null | undefined;
+  fallback?: ReactNode;
+  /** Typography only (a tile's smaller name); never geometry. */
+  style?: React.CSSProperties;
+}) {
+  if (!member) return <>{fallback}</>;
+  return (
+    <span className="member-name" style={style}>
+      <strong>{member.full_name}</strong>
+      {member.english_name && <span className="member-name-en">{member.english_name}</span>}
+    </span>
+  );
+}
+
 export function Badge({
   tone,
   dot,
@@ -928,7 +966,14 @@ export function Combobox({
               }}
               onMouseEnter={() => setActive(i)}
             >
-              <span>{o.label}</span>
+              {/* Label over its second line, hint beside them — the same
+                  two-line shape `<MemberName />` draws in the lists this
+                  picker chooses from, so a person looks the same wherever
+                  they appear. */}
+              <span className="combo-label">
+                {o.label}
+                {o.sub && <span className="faint combo-sub">{o.sub}</span>}
+              </span>
               {o.hint && <span className="faint combo-hint">{o.hint}</span>}
             </li>
           ))}

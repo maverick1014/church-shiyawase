@@ -11,12 +11,20 @@ export interface ComboOption {
   value: string;
   /** What the user reads and types against. */
   label: string;
+  /**
+   * A second line under the label, searched as well as shown. For a member
+   * picker this is their English name (migration 0018): the same two-line shape
+   * `<MemberName />` draws in every list, so somebody looked up as "John" is
+   * found here too, not only where they are filed as 陈约翰.
+   */
+  sub?: string | null;
   /** Secondary text (a role, a group…), searched as well as shown. */
   hint?: string;
 }
 
 /**
- * Case- and order-insensitive AND-matching over the label and its hint.
+ * Case- and order-insensitive AND-matching over the label, its second line and
+ * its hint.
  *
  * Every whitespace-separated word of the query has to appear somewhere, so
  * "chen elder" finds 陈牧师 filed as "陈 · Elder" whichever way round it was
@@ -30,7 +38,7 @@ export function comboboxFilter<T extends ComboOption>(
   const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
   if (words.length === 0) return [...options];
   return options.filter((o) => {
-    const hay = `${o.label} ${o.hint ?? ''}`.toLowerCase();
+    const hay = `${o.label} ${o.sub ?? ''} ${o.hint ?? ''}`.toLowerCase();
     return words.every((w) => hay.includes(w));
   });
 }

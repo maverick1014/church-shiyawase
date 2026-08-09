@@ -6,7 +6,7 @@ import { PairDetail, PairRow, ProgressRow } from '@/lib/types';
 import { formatDate, memberRole, pairStatusClass, pairStatusKey, roleKey } from '@/lib/labels';
 import { copyText } from '@/lib/clipboard';
 import { useT } from '@/lib/i18n';
-import { ErrorBanner, Loading, Modal, useToast } from './ui';
+import { ErrorBanner, Loading, MemberName, Modal, useToast } from './ui';
 
 /**
  * Self-contained 40-day progress dialog for a discipleship pair. Fetches the
@@ -73,9 +73,9 @@ export function PairProgressModal({
           <div className="flex" style={{ alignItems: 'flex-start', gap: 10 }}>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div className="flex items-center gap-8 flex-wrap">
-                <strong className="serif" style={{ fontSize: 16 }}>{p.mentor?.full_name}</strong>
+                <MemberName member={p.mentor} fallback="" style={{ fontSize: 16 }} />
                 <span style={{ color: 'var(--accent)', fontWeight: 700 }}>➜</span>
-                <strong className="serif" style={{ fontSize: 16 }}>{p.trainee?.full_name}</strong>
+                <MemberName member={p.trainee} fallback="" style={{ fontSize: 16 }} />
               </div>
               <div className="muted" style={{ fontSize: 12, marginTop: 3 }}>
                 {t('disc.progress.direction')}
@@ -157,6 +157,10 @@ export function PairProgressModal({
           {lineage.length > 1 && (
             <div style={{ marginTop: 18 }}>
               <div className="section-label" style={{ marginBottom: 8 }}>{t('disc.progress.lineage')}</div>
+              {/* The lineage is a row of BADGES — a chip is one line by
+                  definition, and this chain can be six people long, so the
+                  Chinese name alone stands for each of them here. The header
+                  above carries both names for the pair being looked at. */}
               <div className="flex items-center gap-8 flex-wrap">
                 {lineage.map((x, i) => (
                   <div key={x.id} className="flex items-center gap-8">

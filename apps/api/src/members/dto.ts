@@ -15,10 +15,13 @@ export class CreateMemberDto {
   @MaxLength(200)
   full_name!: string;
 
+  // Renamed with the column in 0018: this field has always held the English
+  // name, so a DTO that still said `chinese_name` would write into a column
+  // that no longer exists.
   @IsOptional()
   @IsString()
   @MaxLength(200)
-  chinese_name?: string;
+  english_name?: string;
 
   @IsOptional()
   @IsEmail()

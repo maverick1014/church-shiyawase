@@ -132,6 +132,8 @@ async function main() {
     ok('delete member → 200', del.status === 200);
   }
 
+  await namePairIdentity(admin, hallId);
+
   // ---- Events CRUD --------------------------------------------------------
   const mkEv = await req('POST', '/api/events', { ...H, body: { title: `E2E聚会-${Date.now()}`, event_type: 'service', starts_at: new Date('2026-08-01T10:00:00Z').toISOString() } });
   ok('create event → 200 + id', mkEv.status === 200 && mkEv.json?.id, `status ${mkEv.status} ${JSON.stringify(mkEv.json).slice(0,120)}`);
@@ -326,6 +328,68 @@ async function main() {
  * The public sign-up link has to keep working for an activity too — same link,
  * same full-name match, different wording — so it is exercised here as well.
  */
+/**
+ * A member is identified by the PAIR of names (migration 0018).
+ *
+ * `full_name` is the Chinese name and `english_name` the English one, and the
+ * database holds a unique index over the two together — case- and
+ * whitespace-insensitively, with "no English name" counting as a value of its
+ * own. So the same Chinese name may be used again ONLY by somebody with a
+ * different English name, and the collision has to come back as a 409 that a
+ * church secretary can read rather than a Postgres constraint name.
+ *
+ * Everything it creates is deleted again, including on the failing paths.
+ */
+async function namePairIdentity(adminCookie, hallId) {
+  const H = { cookie: adminCookie };
+  const shared = `E2E同名-${Date.now()}`;
+  const base = { church_role: 'member', status: 'active', hall_id: hallId };
+  const made = [];
+
+  const first = await req('POST', '/api/members', {
+    ...H,
+    body: { ...base, full_name: shared, english_name: 'E2E Pair One' },
+  });
+  ok('create member with both names → 200', first.status === 200 && first.json?.id, `status ${first.status}`);
+  if (first.json?.id) made.push(first.json.id);
+
+  // The SAME pair, typed the way it would really be re-typed: different case,
+  // a stray trailing space. Both are normalised away by the index, so this is
+  // the same person and must be refused.
+  const dup = await req('POST', '/api/members', {
+    ...H,
+    body: { ...base, full_name: `${shared} `, english_name: 'e2e pair one' },
+  });
+  ok('a duplicate name pair → 409', dup.status === 409, `status ${dup.status}`);
+  ok('…and says what collided, not a constraint name',
+    typeof dup.json?.message === 'string' &&
+      /pair of names/i.test(dup.json.message) &&
+      !/duplicate key|members_name_pair_key/i.test(dup.json.message),
+    JSON.stringify(dup.json).slice(0, 160));
+  if (dup.json?.id) made.push(dup.json.id); // should not exist; clean up if it does
+
+  // Same Chinese name, different English name — a different person, allowed.
+  const sibling = await req('POST', '/api/members', {
+    ...H,
+    body: { ...base, full_name: shared, english_name: 'E2E Pair Two' },
+  });
+  ok('the same Chinese name with another English name → 200',
+    sibling.status === 200 && sibling.json?.id, `status ${sibling.status}`);
+  if (sibling.json?.id) made.push(sibling.json.id);
+
+  // Editing one INTO the other's pair is the same collision on the update path.
+  if (sibling.json?.id) {
+    const patch = await req('PATCH', `/api/members/${sibling.json.id}`, {
+      ...H,
+      body: { english_name: 'E2E Pair One' },
+    });
+    ok('renaming a member onto an existing pair → 409', patch.status === 409, `status ${patch.status}`);
+  }
+
+  for (const id of made) await req('DELETE', `/api/members/${id}`, H);
+  ok('name-pair fixtures cleaned up', true, `${made.length} removed`);
+}
+
 async function activityShape(adminCookie, members, hallId) {
   const H = { cookie: adminCookie };
   const mk = await req('POST', '/api/trainings', {

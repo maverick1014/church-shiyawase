@@ -12,6 +12,7 @@ import {
   ExportButton,
   Field,
   HallSelect,
+  MemberName,
   Modal,
   PageBar,
   RoleBadge,
@@ -90,7 +91,7 @@ export default function MembersPage() {
   }, [members]);
 
   const rows = useMemo(() => {
-    const term = q.trim();
+    const term = q.trim().toLowerCase();
     return members.filter((m) => {
       const role = memberRole(m);
       if (roleFilter !== 'all' && role !== roleFilter) return false;
@@ -99,7 +100,10 @@ export default function MembersPage() {
       } else if (groupFilter !== 'all' && m.group?.id !== groupFilter) {
         return false;
       }
-      if (term && !`${m.full_name}${m.chinese_name ?? ''}`.includes(term)) return false;
+      // Either name finds a person (0018), and case-insensitively: an English
+      // name is typed "john" as often as "John", while a Chinese name is
+      // unaffected by lowercasing.
+      if (term && !`${m.full_name} ${m.english_name ?? ''}`.toLowerCase().includes(term)) return false;
       return true;
     });
   }, [members, q, roleFilter, groupFilter]);
@@ -135,6 +139,7 @@ export default function MembersPage() {
       t('members.col.member'),
       sorted.map((m) => ({
         [t('export.name')]: m.full_name,
+        [t('members.field.englishName')]: m.english_name ?? '',
         [t('export.role')]: t(roleKey(memberRole(m))),
         [t('export.group')]: m.group?.name ?? t('members.filter.ungrouped'),
         [t('export.email')]: m.email ?? '',
@@ -214,7 +219,7 @@ export default function MembersPage() {
                     return (
                       <tr key={m.id}>
                         <td>
-                          <strong>{m.full_name}</strong>
+                          <MemberName member={m} />
                         </td>
                         <td>
                           <RoleBadge role={role} />
@@ -254,7 +259,7 @@ export default function MembersPage() {
                 <div key={m.id} className="mtile" onClick={() => router.push(`/members/${m.id}`)}>
                   <div className="mtile-row1">
                     <div className="flex items-center gap-8 flex-wrap" style={{ minWidth: 0 }}>
-                      <strong>{m.full_name}</strong>
+                      <MemberName member={m} />
                       <span className="muted" style={{ fontSize: 12.5 }}>· {m.group?.name ?? t('members.filter.ungrouped')}</span>
                       <RoleBadge role={role} />
                     </div>
@@ -311,7 +316,7 @@ function AddMemberModal({
   const { halls, hallId } = useHallScope();
   const [form, setForm] = useState({
     full_name: '',
-    chinese_name: '',
+    english_name: '',
     phone: '',
     email: '',
     group_id: '',
@@ -355,7 +360,7 @@ function AddMemberModal({
       }
       await api.post('/members', {
         full_name: form.full_name.trim(),
-        chinese_name: form.chinese_name || undefined,
+        english_name: form.english_name || undefined,
         phone: form.phone || undefined,
         email: form.email || undefined,
         hall_id: effectiveHallId,
@@ -382,8 +387,8 @@ function AddMemberModal({
             onChange={(e) => setForm({ ...form, full_name: e.target.value })}
           />
         </Field>
-        <Field label={t('members.field.nickname')}>
-          <input value={form.chinese_name} onChange={(e) => setForm({ ...form, chinese_name: e.target.value })} />
+        <Field label={t('members.field.englishName')}>
+          <input value={form.english_name} onChange={(e) => setForm({ ...form, english_name: e.target.value })} />
         </Field>
       </div>
       <div className="form-row">

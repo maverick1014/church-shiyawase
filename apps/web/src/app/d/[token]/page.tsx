@@ -4,15 +4,15 @@ import { useParams } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '@/lib/api';
 import { BrandLogo } from '@/components/BrandLogo';
-import { Field } from '@/components/ui';
+import { Field, MemberName } from '@/components/ui';
 import { useChurchProfile } from '@/lib/church';
 import { useT } from '@/lib/i18n';
 
 interface FormPair {
   id: string;
   form_token: string;
-  mentor?: { full_name: string };
-  trainee?: { full_name: string };
+  mentor?: { full_name: string; english_name: string | null };
+  trainee?: { full_name: string; english_name: string | null };
   program?: { name: string; total_days: number };
   progress: { day_number: number; completed: boolean }[];
 }
@@ -116,10 +116,10 @@ export default function DailyFormPage() {
             <>
               <div className="flex items-center gap-10 flex-wrap" style={{ marginBottom: 4 }}>
                 <span className="badge b-brand">{t('disc.col.mentor')}</span>
-                <strong>{pair?.mentor?.full_name}</strong>
+                <MemberName member={pair?.mentor} fallback="" />
                 <span style={{ color: 'var(--accent)', fontWeight: 700 }}>➜</span>
                 <span className="badge b-accent">{t('disc.col.trainee')}</span>
-                <strong>{pair?.trainee?.full_name}</strong>
+                <MemberName member={pair?.trainee} fallback="" />
               </div>
               <div className="muted" style={{ fontSize: 12.5 }}>
                 {t('form.progressSummary', { done, total })}

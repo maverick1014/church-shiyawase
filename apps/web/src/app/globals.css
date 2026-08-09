@@ -535,6 +535,28 @@ tbody tr:last-child td {
   font-variant-numeric: tabular-nums;
 }
 
+/* A person is TWO names (migration 0018): the Chinese name the church files
+   them under, and the English name half the congregation actually knows them
+   by. `<MemberName />` is the only thing that draws them, and this is the whole
+   of its look — the Chinese name in the row's own weight, the English one on
+   its own line beneath it, smaller and muted so it reads as an aid to
+   recognition rather than as a second field. A column block, so it sits inside
+   a table cell, a mobile tile and a flex row of badges without any of them
+   needing to know there are two lines. */
+.member-name {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+  line-height: 1.3;
+}
+.member-name-en {
+  font-size: 11.5px;
+  font-weight: 400;
+  color: var(--muted);
+  line-height: 1.25;
+}
+
 /* A roll-call sheet is a name column followed by however many occasions the
    month happened to have, so it is the one table whose width is not up to it.
    Auto layout hands the leftover space out proportionally, and once the tick
@@ -543,10 +565,16 @@ tbody tr:last-child td {
    勒") and the row grows three lines tall. Pin the name column to a real
    minimum and let it refuse to wrap: when the ticks no longer fit beside it the
    table scrolls sideways inside its own .table-wrap, which is the behaviour
-   every wide table in this app already has. */
+   every wide table in this app already has.
+
+   The same nowrap covers the English name on the second line (0018), which is
+   the longer of the two and the one that would otherwise wrap: the cell is
+   sized by whichever name is wider and the sheet scrolls, so a row is two lines
+   tall and never three. The floor is a little wider than one Chinese name for
+   the same reason. */
 .sheet-table th:first-child,
 .sheet-table td:first-child {
-  min-width: 96px;
+  min-width: 120px;
   white-space: nowrap;
 }
 /* The totals row at the FOOT of a roll-call sheet (`SheetTotals`): for each
@@ -1251,6 +1279,18 @@ textarea {
 }
 .combo-option[aria-selected='true'] {
   font-weight: 600;
+}
+/* An option is its label over its second line (a member's English name), with
+   the hint beside them — the same shape `.member-name` gives every list, so the
+   person you pick looks like the person you saw. */
+.combo-label {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.combo-sub {
+  font-size: 11px;
+  line-height: 1.25;
 }
 .combo-hint {
   font-size: 11.5px;

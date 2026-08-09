@@ -383,8 +383,15 @@ export enum Gender {
 
 export interface Member {
   id: string;
+  /** The CHINESE name — what the church types and what every list is sorted by. */
   full_name: string;
-  chinese_name: string | null;
+  /**
+   * The English name (migration 0018), null when the person has none. Together
+   * with `full_name` it is the identity of a member: the database refuses a
+   * second row with the same pair, so two people who share a Chinese name are
+   * told apart here.
+   */
+  english_name: string | null;
   email: string | null;
   phone: string | null;
   gender: Gender | null;

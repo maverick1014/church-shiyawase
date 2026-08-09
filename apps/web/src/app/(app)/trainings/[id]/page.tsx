@@ -6,7 +6,7 @@ import { useFetch } from '@/lib/hooks';
 import { useSortableRows } from '@/lib/sort';
 import { api } from '@/lib/api';
 import { usePageChrome, useMe } from '@/components/AppShell';
-import { BackButton, Combobox, ErrorBanner, ExportButton, Field, LinkIcon, Modal, SheetTotals, SkeletonCard, SkeletonScreen, SortTh, useConfirm, useToast } from '@/components/ui';
+import { BackButton, Combobox, ErrorBanner, ExportButton, Field, LinkIcon, MemberName, Modal, SheetTotals, SkeletonCard, SkeletonScreen, SortTh, useConfirm, useToast } from '@/components/ui';
 import { can } from '@/lib/perms';
 import { exportMatrix } from '@/lib/export';
 import { EnrollmentRow, MemberRow, NamelistResponse, SessionRow, TrainingDetail } from '@/lib/types';
@@ -373,6 +373,7 @@ export default function TrainingDetailPage() {
                   .map((m) => ({
                     value: m.id,
                     label: m.full_name,
+                    sub: m.english_name,
                     hint: tr(roleKey(memberRole(m))),
                   }))}
                 placeholder={tr('training.addEnrollee')}
@@ -387,7 +388,7 @@ export default function TrainingDetailPage() {
               return (
               <div key={e.id} className="enrol-row flex items-center gap-10" style={{ padding: '9px 0', borderBottom: '1px solid var(--border)' }}>
                 <div className="grow">
-                  <strong style={{ fontSize: 13 }}>{e.member?.full_name ?? '—'}</strong>
+                  <MemberName member={e.member} style={{ fontSize: 13 }} />
                   <div className="muted" style={{ fontSize: 11.5 }}>
                     {e.member ? tr(roleKey(memberRole(e.member))) : ''}
                   </div>
@@ -491,7 +492,7 @@ export default function TrainingDetailPage() {
               {sortedNamelist.map((r) => (
                 <tr key={r.member.id}>
                   <td style={{ whiteSpace: 'nowrap' }}>
-                    <strong>{r.member.full_name}</strong>
+                    <MemberName member={r.member} />
                   </td>
                   <td className="muted" style={{ whiteSpace: 'nowrap' }}>{tr(roleKey(memberRole(r.member)))}</td>
                   {r.attendance.map((a) => (

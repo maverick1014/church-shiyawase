@@ -202,6 +202,11 @@ export default function DashboardPage() {
           ) : (
             discFocus.map((d) => (
               <div key={d.pair_id} className="flex items-center gap-12" style={{ padding: '9px 0', borderBottom: '1px solid var(--border)' }}>
+                {/* One line per pair, and the Chinese name only: this KPI card
+                    reads off `discipleship_pair_summary`, a database VIEW that
+                    aggregates a pair down to two names and a percentage. The
+                    English name lives on the member row, which this summary
+                    never joins — 守望配对 itself, one tap away, shows both. */}
                 <div className="grow" style={{ fontSize: 13 }}>
                   {d.trainee_name} <span className="faint">← {d.mentor_name}</span>
                 </div>

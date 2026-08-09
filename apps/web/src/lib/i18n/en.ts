@@ -144,7 +144,7 @@ export const en = {
   'members.hint': '💡 Tap a member to see their training record and discipleship pairs, and to edit their profile there.',
   'members.new.title': 'Add member',
   'members.field.name': 'Name',
-  'members.field.nickname': 'Nickname / alias',
+  'members.field.englishName': 'English name',
   'members.field.phone': 'Phone',
   'members.field.email': 'Email',
   'members.field.group': 'Life group',

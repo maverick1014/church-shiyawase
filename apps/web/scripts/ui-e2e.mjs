@@ -594,6 +594,34 @@ async function main() {
     check('the export button is present', (await page.locator('button[aria-label*="Export"]').count()) > 0);
     await filters.first().selectOption('all');
     await w(300);
+
+    /* A person is TWO names (migration 0018) and every list draws both: the
+       Chinese name with the English one under it, on its own line. The fixture
+       brings its own English name — the church's real members may or may not
+       have one, and "the church happens to have somebody bilingual" is not
+       something a test may depend on. Searching for the Chinese name also
+       proves the row is reachable at all. */
+    const bilingual = await makeMember('BINAME', { english_name: 'E2E English Name' });
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.locator('.mtile').first().waitFor({ timeout: 20000 });
+    await page.fill('input[placeholder*="Search"]', bilingual.name);
+    await w(600);
+    const nameTile = page.locator('.mtile').first();
+    const nameTileText = (await nameTile.count()) ? await nameTile.innerText() : '';
+    check('a member row shows the Chinese name with the English one under it',
+      nameTileText.includes(bilingual.name) &&
+        nameTileText.includes('E2E English Name') &&
+        (await nameTile.locator('.member-name-en').count()) > 0,
+      nameTileText.replace(/\n/g, ' ⏎ ').slice(0, 120));
+    // …and the search itself matches EITHER name.
+    await page.fill('input[placeholder*="Search"]', 'e2e english name');
+    await w(600);
+    check('the search box finds a member by their English name',
+      (await page.locator('.mtile').count()) === 1 &&
+        (await page.locator('.mtile').first().innerText()).includes(bilingual.name));
+    await bilingual.remove();
+    await page.fill('input[placeholder*="Search"]', '');
+    await w(300);
     // Group filter = second filter select; drive its first real option (index 1).
     const groupVal = await filters.nth(1).locator('option').nth(1).getAttribute('value');
     if (groupVal) {

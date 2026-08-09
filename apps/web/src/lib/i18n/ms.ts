@@ -141,7 +141,7 @@ export const ms: Messages = {
   'members.hint': '💡 Ketik seorang ahli untuk melihat rekod latihan dan pasangan pemuridannya, serta menyunting profilnya di sana.',
   'members.new.title': 'Tambah ahli',
   'members.field.name': 'Nama',
-  'members.field.nickname': 'Nama panggilan',
+  'members.field.englishName': 'Nama Inggeris',
   'members.field.phone': 'Telefon',
   'members.field.email': 'E-mel',
   'members.field.group': 'Kumpulan sel',

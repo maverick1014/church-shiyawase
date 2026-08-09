@@ -52,6 +52,33 @@ away every pair and every day of their records. The create path survives only
 for the empty state: with no module the page has nothing to hang pairs on, and
 no way back except SQL.
 
+**A member is TWO names, and the PAIR is who they are** (migration 0018).
+`members.full_name` is the CHINESE name — what the church types, what every
+list is sorted by, what the public sign-up form matches on — and
+`english_name` (the column that used to be called `chinese_name` and was
+labelled 昵称, which is the one thing it never held) is the English name,
+nullable because plenty of people have none. A unique index on
+`(lower(btrim(full_name)), lower(btrim(coalesce(english_name,''))))` makes the
+two of them the identity of a person: compared the way a human reads them
+(trimmed, case-insensitive) and with "no English name" counting as a value of
+its own rather than as "unknown, therefore distinct". That deliberately refuses
+a second 张伟 with no English name — two people who share a Chinese name must
+be told apart before either can be saved, which is exactly what lets an import
+say "same person, update" instead of quietly inserting a twin that then holds
+half of somebody's attendance. The violation is a **409 naming the conflict**,
+mapped once in `unwrap` (`lib/server/db.ts`) rather than at each call site,
+because a duplicate pair is a real user-facing outcome and not a bug. On screen
+the two names are ONE component — `<MemberName />` — the Chinese name with the
+English one under it, smaller and muted, and nothing extra when there is none:
+every table, every mobile tile, every roll-call row, every namelist, the
+account list and the member `Combobox` (whose options carry the English name as
+their `sub`, searched as well as shown) go through it, so a person looks the
+same everywhere. A search matches EITHER name, case-insensitively — the
+members list, the sheet's find-a-person box, `comboboxFilter`, and
+`GET /api/members?q=`. The three places a name stays on one line are a relay-chart
+node, the lineage badges and a 铁三角 seat, each a fixed box whose geometry the
+second line would break; each says so in a comment.
+
 **培训 became 培训&活动 (Trainings & Activities).** Everything that is neither a
 Sunday nor a hand-added meeting lives on `/trainings` now — a brothers' hike, a
 sisters' baking afternoon — because an activity is exactly what sign-ups plus a
@@ -154,7 +181,8 @@ Testing layers (in `apps/web`):
   member combobox typed→filtered→picked, an interface-language round-trip, the
   absence of the 守望模块 manager in the UI *and* on the server, an add-on
   module off→on cycle on 教会设置, a theme preset picked there and the sidebar
-  repainting under it, a create→delete member write-cycle).
+  repainting under it, a create→delete member write-cycle, a member row showing BOTH of a
+  person's names).
   The check-all round trip is driven **only on a meeting column this run
   created** — never on a Sunday, whose ticks are the congregation's real
   attendance and would be genuinely deleted.
@@ -260,7 +288,9 @@ like 移除/清空/重置 that discards data) MUST go through the shared
 ### G4 — One mechanism, not per-page reimplementations (altitude)
 Reuse the shared primitives instead of re-rolling them per page:
 `Modal`, `Field`, `PasswordInput`, `useConfirm`, `useToast`, `RoleBadge`,
-`Avatar`, `PairProgressModal`, `MonthPicker`/`SheetTick`/`SheetTickAll`/
+`Avatar`, `MemberName` (**every** rendering of a person's name — one component
+draws the Chinese name and the English one under it, so no page invents its own
+two-line shape or forgets the second name), `PairProgressModal`, `MonthPicker`/`SheetTick`/`SheetTickAll`/
 `SheetTotals` (the pieces the 聚会, 小组 and 培训&活动 namelists share — the
 totals `<tfoot>` in particular is written once, so its label, its numbers and
 the rule above them cannot drift between three sheets), `Segmented` (every segmented

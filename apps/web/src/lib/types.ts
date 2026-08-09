@@ -47,11 +47,18 @@ export interface HallRow {
   sort_order: number;
 }
 
-/** A member row as returned by the API (joins group + household names). */
+/**
+ * A member row as returned by the API (joins group + household names).
+ *
+ * The two names together are the person (migration 0018): `full_name` is the
+ * CHINESE name, `english_name` the English one — nullable, because plenty of
+ * people have none. Every list renders both through `<MemberName />`, and the
+ * database refuses a second row carrying the same pair.
+ */
 export interface MemberRow {
   id: string;
   full_name: string;
-  chinese_name: string | null;
+  english_name: string | null;
   email: string | null;
   phone: string | null;
   gender: Gender | null;
@@ -86,6 +93,7 @@ export interface GroupDetail extends GroupRow {
   members: {
     id: string;
     full_name: string;
+    english_name: string | null;
     group_position: GroupPosition | null;
     status: MemberStatus;
   }[];
@@ -100,7 +108,7 @@ export interface GroupMeeting {
 export interface GroupAttendanceResponse {
   meetings: GroupMeeting[];
   rows: {
-    member: { id: string; full_name: string };
+    member: { id: string; full_name: string; english_name: string | null };
     cells: { meeting_id: string; status: AttendanceStatus | null }[];
   }[];
 }
@@ -149,6 +157,7 @@ export interface RollCallSheetRow {
   member: {
     id: string;
     full_name: string;
+    english_name: string | null;
     church_role: ChurchRole;
     group_position: GroupPosition | null;
   };
@@ -233,6 +242,7 @@ export interface EnrollmentRow {
   member?: {
     id: string;
     full_name: string;
+    english_name: string | null;
     church_role: ChurchRole;
     group_position: GroupPosition | null;
   };
@@ -250,6 +260,7 @@ export interface NamelistResponse {
     member: {
       id: string;
       full_name: string;
+      english_name: string | null;
       church_role: ChurchRole;
       group_position: GroupPosition | null;
     };
@@ -267,6 +278,7 @@ export interface ProgramRow {
 interface MemberBrief {
   id: string;
   full_name: string;
+  english_name: string | null;
   church_role: ChurchRole;
   group_position: GroupPosition | null;
 }
@@ -315,6 +327,7 @@ export interface AccountRow {
   member?: {
     id: string;
     full_name: string;
+    english_name: string | null;
     email: string | null;
     church_role: ChurchRole;
     group_position: GroupPosition | null;

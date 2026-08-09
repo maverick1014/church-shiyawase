@@ -5,7 +5,7 @@ import { useFetch } from '@/lib/hooks';
 import { useSortableRows } from '@/lib/sort';
 import { api } from '@/lib/api';
 import { usePageChrome, useMe } from '@/components/AppShell';
-import { Combobox, ErrorBanner, ExportButton, Field, LinkIcon, Modal, ModuleDisabled, PageBar, Skeleton, SkeletonScreen, SkeletonTable, SkeletonText, SortTh, useConfirm, useToast } from '@/components/ui';
+import { Combobox, ErrorBanner, ExportButton, Field, LinkIcon, MemberName, Modal, ModuleDisabled, PageBar, Skeleton, SkeletonScreen, SkeletonTable, SkeletonText, SortTh, useConfirm, useToast } from '@/components/ui';
 import { PairProgressModal } from '@/components/PairProgressModal';
 import { can } from '@/lib/perms';
 import { useModuleEnabled } from '@/lib/church';
@@ -246,6 +246,11 @@ export default function DiscipleshipPage() {
                     boxShadow: 'var(--shadow)',
                   }}
                 >
+                  {/* The ONE place a person is drawn on one line: a chart node
+                      is a fixed box (NODEW / NODEH / ROWH below) and the curves
+                      between nodes are anchored to that height, so a second
+                      line of name would move every connector off its box. The
+                      names are all here in the pair rows underneath it. */}
                   <div className="flex-between gap-6">
                     <strong className="serif" style={{ fontSize: 13.5 }}>{tn.name}</strong>
                     <span className="dot" style={{ background: roleDot(tn.role) }} />
@@ -421,8 +426,14 @@ export default function DiscipleshipPage() {
                 {sortedNodes.map((n) => (
                   <tr key={n.pair.id}>
                     <td>
-                      <strong>{n.pair.trainee?.full_name}</strong>
-                      <span className="faint"> ← {n.pair.mentor?.full_name}</span>
+                      {/* Both halves of the pair carry both names — the mentor
+                          stays faint, so the row still reads "this trainee,
+                          under that mentor". */}
+                      <div className="flex items-baseline gap-6 flex-wrap">
+                        <MemberName member={n.pair.trainee} fallback="" />
+                        <span className="faint">←</span>
+                        <span className="faint"><MemberName member={n.pair.mentor} fallback="" /></span>
+                      </div>
                     </td>
                     <td>
                       <div className="progress-row">
@@ -449,9 +460,10 @@ export default function DiscipleshipPage() {
             {sortedNodes.map((n) => (
               <div key={n.pair.id} className="mtile" onClick={() => setPopup(n)}>
                 <div className="mtile-row1">
-                  <div style={{ minWidth: 0 }}>
-                    <strong>{n.pair.trainee?.full_name}</strong>
-                    <span className="faint"> ← {n.pair.mentor?.full_name}</span>
+                  <div className="flex items-baseline gap-6 flex-wrap" style={{ minWidth: 0 }}>
+                    <MemberName member={n.pair.trainee} fallback="" />
+                    <span className="faint">←</span>
+                    <span className="faint"><MemberName member={n.pair.mentor} fallback="" /></span>
                   </div>
                   <div className="flex gap-10" style={{ flexShrink: 0 }}>
                     <button
@@ -782,7 +794,7 @@ function DiscList({
           >
             <div className="grow">
               <div className="flex items-center gap-8 flex-wrap">
-                <strong style={{ fontSize: 13.5 }}>{n.pair.trainee?.full_name}</strong>
+                <MemberName member={n.pair.trainee} fallback="" style={{ fontSize: 13.5 }} />
                 <span className="badge" style={{ ...roleTagStyle(role), fontSize: 10.5 }}>{t(roleKey(role))}</span>
               </div>
               <div className="faint" style={{ fontSize: 11.5, marginTop: 1 }}>
@@ -880,6 +892,7 @@ function AddPairModal({
           options={members.map((m) => ({
             value: m.id,
             label: m.full_name,
+            sub: m.english_name,
             hint: t(roleKey(memberRole(m))),
           }))}
           placeholder={t('disc.chooseMember')}
@@ -896,6 +909,7 @@ function AddPairModal({
             .map((m) => ({
               value: m.id,
               label: m.full_name,
+              sub: m.english_name,
               hint: t(roleKey(memberRole(m))),
             }))}
           placeholder={t('disc.chooseMember')}

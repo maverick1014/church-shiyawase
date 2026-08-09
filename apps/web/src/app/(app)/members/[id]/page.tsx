@@ -6,7 +6,7 @@ import { useFetch } from '@/lib/hooks';
 import { useSortableRows } from '@/lib/sort';
 import { api } from '@/lib/api';
 import { usePageChrome, useMe } from '@/components/AppShell';
-import { Avatar, BackButton, EntityHeader, ErrorBanner, FactGrid, Field, HallSelect, Modal, ProgressBar, RoleBadge, SkeletonDetail, SkeletonScreen, SortTh, useConfirm, useToast } from '@/components/ui';
+import { Avatar, BackButton, EntityHeader, ErrorBanner, FactGrid, Field, HallSelect, MemberName, Modal, ProgressBar, RoleBadge, SkeletonDetail, SkeletonScreen, SortTh, useConfirm, useToast } from '@/components/ui';
 import { PairProgressModal } from '@/components/PairProgressModal';
 import { can } from '@/lib/perms';
 import { useModuleEnabled } from '@/lib/church';
@@ -123,16 +123,14 @@ export default function MemberDetailPage() {
       <BackButton onClick={() => router.push('/members')} />
 
       <div className="card">
+        {/* The header is the one place a member IS the page, so it carries the
+            same two-line name every list shows (rule G4) — the English name
+            moved out of the subtitle and under the Chinese one. */}
         <EntityHeader
           avatar={<Avatar name={m.full_name} url={m.avatar_url} size="passport" />}
-          title={m.full_name}
+          title={<MemberName member={m} />}
           badges={<RoleBadge role={role} />}
-          sub={
-            <>
-              {m.chinese_name ? `${m.chinese_name} · ` : ''}
-              {m.group?.name ?? tr('members.filter.ungrouped')}
-            </>
-          }
+          sub={m.group?.name ?? tr('members.filter.ungrouped')}
           below={
             <>
               {perms.write && (
@@ -233,7 +231,7 @@ export default function MemberDetailPage() {
         ) : (
           pairs.map((p) => {
             const asMentor = p.mentor_id === m.id;
-            const other = asMentor ? p.trainee?.full_name : p.mentor?.full_name;
+            const other = asMentor ? p.trainee : p.mentor;
             return (
               <div
                 key={p.id}
@@ -242,7 +240,7 @@ export default function MemberDetailPage() {
                 onClick={() => setPopupPair(p.id)}
               >
                 <span className="badge b-brand">{asMentor ? tr('disc.col.mentor') : tr('disc.col.trainee')}</span>
-                <strong>{other}</strong>
+                <MemberName member={other} fallback="" />
                 <div className="grow" />
                 <span className="badge b-warn">{tr('member.viewProgress')}</span>
               </div>
@@ -281,7 +279,7 @@ function EditMemberModal({
 }) {
   const [form, setForm] = useState({
     full_name: member.full_name ?? '',
-    chinese_name: member.chinese_name ?? '',
+    english_name: member.english_name ?? '',
     phone: member.phone ?? '',
     email: member.email ?? '',
     gender: member.gender ?? '',
@@ -335,7 +333,7 @@ function EditMemberModal({
       }
       await api.patch(`/members/${member.id}`, {
         full_name: form.full_name.trim(),
-        chinese_name: form.chinese_name || null,
+        english_name: form.english_name || null,
         phone: form.phone || null,
         email: form.email || null,
         gender: form.gender || null,
@@ -364,8 +362,8 @@ function EditMemberModal({
         <Field label={t('members.field.name')}>
           <input value={form.full_name} onChange={(e) => setForm({ ...form, full_name: e.target.value })} />
         </Field>
-        <Field label={t('members.field.nickname')}>
-          <input value={form.chinese_name} onChange={(e) => setForm({ ...form, chinese_name: e.target.value })} />
+        <Field label={t('members.field.englishName')}>
+          <input value={form.english_name} onChange={(e) => setForm({ ...form, english_name: e.target.value })} />
         </Field>
       </div>
       <div className="form-row">

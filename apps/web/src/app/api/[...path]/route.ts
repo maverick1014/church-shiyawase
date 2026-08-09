@@ -46,14 +46,33 @@ export const revalidate = 0;
 export const fetchCache = 'force-no-store';
 
 const MEMBER_SELECT = '*, group:groups(id,name), household:households(id,name), hall:halls(id,name)';
-const MEMBER_BRIEF = 'id,full_name,church_role,group_position';
-const ACCOUNT_MEMBER_BRIEF = 'id,full_name,email,church_role,group_position';
+/**
+ * A person, everywhere a name is only shown: the CHINESE name and the English
+ * one under it (0018). Both travel together in every brief, because every list,
+ * tile and roll-call row draws them as one thing (`<MemberName />`) — a payload
+ * that carried only `full_name` would silently render half a person.
+ */
+const MEMBER_BRIEF = 'id,full_name,english_name,church_role,group_position';
+const ACCOUNT_MEMBER_BRIEF = 'id,full_name,english_name,email,church_role,group_position';
 const PAIR_SELECT =
-  '*, mentor:members!discipleship_pairs_mentor_id_fkey(id,full_name,church_role,group_position), trainee:members!discipleship_pairs_trainee_id_fkey(id,full_name,church_role,group_position)';
+  `*, mentor:members!discipleship_pairs_mentor_id_fkey(${MEMBER_BRIEF}), trainee:members!discipleship_pairs_trainee_id_fkey(${MEMBER_BRIEF})`;
 /** Same shape, but an !inner mentor join so a hall filter can be pushed down. */
 const PAIR_SELECT_SCOPED =
-  '*, mentor:members!discipleship_pairs_mentor_id_fkey!inner(id,full_name,church_role,group_position), trainee:members!discipleship_pairs_trainee_id_fkey(id,full_name,church_role,group_position)';
+  `*, mentor:members!discipleship_pairs_mentor_id_fkey!inner(${MEMBER_BRIEF}), trainee:members!discipleship_pairs_trainee_id_fkey(${MEMBER_BRIEF})`;
 const ACCOUNT_SELECT = `*, member:members(${ACCOUNT_MEMBER_BRIEF}), hall:halls(id,name)`;
+
+/**
+ * One value inside a PostgREST `or(…)` filter, quoted.
+ *
+ * `or` takes a comma-separated list in a single string, so an unquoted value
+ * that contains a comma or a parenthesis does not search for those characters —
+ * it adds conditions of its own. Anything that comes from a REQUEST goes
+ * through here (a search term does; a uuid this file just read does not), with
+ * `"` and `\` escaped so the quoting itself cannot be closed early.
+ */
+function orValue(raw: string): string {
+  return `"${raw.replace(/["\\]/g, '\\$&')}"`;
+}
 
 async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Response> {
   const { path } = await ctx.params;
@@ -327,7 +346,15 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
         if (q.get('church_role')) query = query.eq('church_role', q.get('church_role'));
         if (q.get('group_position')) query = query.eq('group_position', q.get('group_position'));
         if (q.get('group_id')) query = query.eq('group_id', q.get('group_id'));
-        if (q.get('q')) query = query.ilike('full_name', `%${q.get('q')}%`);
+        // Either name finds a person (0018): somebody who is filed as 陈约翰
+        // is looked for as "John" just as often. The term is quoted, so a
+        // comma or a parenthesis in it stays part of the search rather than
+        // becoming another PostgREST filter.
+        const term = q.get('q');
+        if (term)
+          query = query.or(
+            `full_name.ilike.${orValue(`%${term}%`)},english_name.ilike.${orValue(`%${term}%`)}`,
+          );
         return json(unwrap(await query));
       }
       if (method === 'POST') {
@@ -464,7 +491,7 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
         const members = unwrap(
           await db
             .from('members')
-            .select('id,full_name,group_position,status')
+            .select('id,full_name,english_name,group_position,status')
             .eq('group_id', r1)
             .order('full_name'),
         );
@@ -860,7 +887,7 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
               .from('training_enrollments')
               .update(patch)
               .eq('id', r2)
-              .select('*, member:members(id,full_name,church_role,group_position)')
+              .select(`*, member:members(${MEMBER_BRIEF})`)
               .single(),
           ),
         );
@@ -907,7 +934,7 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
         const enrollments = unwrap(
           await db
             .from('training_enrollments')
-            .select('*, member:members(id,full_name,church_role,group_position)')
+            .select(`*, member:members(${MEMBER_BRIEF})`)
             .eq('training_id', r1)
             .order('enrolled_at'),
         );
@@ -989,7 +1016,7 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
             await db
               .from('training_enrollments')
               .insert({ training_id: r1, member_id: dto.member_id, status: dto.status ?? 'pending' })
-              .select('*, member:members(id,full_name,church_role,group_position)')
+              .select(`*, member:members(${MEMBER_BRIEF})`)
               .single(),
           ),
         );
@@ -1126,7 +1153,11 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
         await db
           .from('discipleship_pairs')
           .select(
-            '*, mentor:members!discipleship_pairs_mentor_id_fkey(id,full_name), trainee:members!discipleship_pairs_trainee_id_fkey(id,full_name), program:discipleship_programs(id,name,total_days)',
+            // Both names, like everywhere else a person is shown: the mentor
+            // reading this form knows their trainee by whichever one they use.
+            // Nothing else about either member is handed out — this path
+            // answers with no session at all.
+            '*, mentor:members!discipleship_pairs_mentor_id_fkey(id,full_name,english_name), trainee:members!discipleship_pairs_trainee_id_fkey(id,full_name,english_name), program:discipleship_programs(id,name,total_days)',
           )
           .eq('form_token', r2)
           .single(),
@@ -1418,7 +1449,7 @@ async function rollCallSheet(
 
   // Independent reads, so they go together (rule G6).
   const [memberRes, meetingRes] = await Promise.all([memberQuery, meetingQuery]);
-  const members = unwrap(memberRes) as Array<{ id: string; full_name: string }>;
+  const members = unwrap(memberRes) as Array<{ id: string; full_name: string; english_name: string | null }>;
   const meetings = unwrap(meetingRes) as SheetMeeting[];
 
   const columns = sheetColumns(year, month, meetings);
@@ -1491,10 +1522,10 @@ async function groupAttendance(db: ReturnType<typeof getDb>, groupId: string) {
   const members = unwrap(
     await db
       .from('members')
-      .select('id, full_name, church_role, group_position')
+      .select(MEMBER_BRIEF)
       .eq('group_id', groupId)
       .order('full_name'),
-  ) as Array<{ id: string; full_name: string }>;
+  ) as Array<{ id: string; full_name: string; english_name: string | null }>;
 
   const meetingIds = meetings.map((m) => m.id);
   const att = meetingIds.length
@@ -1719,7 +1750,7 @@ async function namelist(db: ReturnType<typeof getDb>, trainingId: string) {
   const enrollments = unwrap(
     await db
       .from('training_enrollments')
-      .select('id, member:members(id,full_name,church_role,group_position)')
+      .select(`id, member:members(${MEMBER_BRIEF})`)
       .eq('training_id', trainingId)
       .in('status', ['approved', 'in_progress', 'completed'])
       .order('id'),
@@ -1864,7 +1895,7 @@ async function authRoute(
  */
 const SELF_MEMBER_FIELDS = [
   'full_name',
-  'chinese_name',
+  'english_name',
   'email',
   'phone',
   'gender',

@@ -16,6 +16,7 @@ import {
   Field,
   HallSelect,
   Loading,
+  MemberName,
   Modal,
   PageBar,
   PasswordInput,
@@ -159,7 +160,7 @@ export default function SettingsPage() {
                 <tbody>
                   {sortedAccounts.map((u) => (
                     <tr key={u.id}>
-                      <td><strong>{u.member?.full_name ?? '—'}</strong></td>
+                      <td><MemberName member={u.member} /></td>
                       <td>
                         {u.member ? <RoleBadge role={churchDisplayRole(u.member.church_role)} /> : '—'}
                       </td>
@@ -186,7 +187,7 @@ export default function SettingsPage() {
               <div key={u.id} className="mtile" onClick={() => setDetailId(u.id)}>
                 <div className="mtile-row1">
                   <div className="flex items-center gap-8 flex-wrap" style={{ minWidth: 0 }}>
-                    <strong>{u.member?.full_name ?? '—'}</strong>
+                    <MemberName member={u.member} />
                     {u.member && <RoleBadge role={churchDisplayRole(u.member.church_role)} />}
                   </div>
                   <span className="mtile-cta"><ChevronRightIcon /></span>
@@ -400,7 +401,7 @@ function AccountDetail({
       <div className="card">
         <EntityHeader
           avatar={<Avatar name={account.member?.full_name ?? null} size="lg" />}
-          title={account.member?.full_name}
+          title={<MemberName member={account.member} fallback={t('settings.thisAccount')} />}
           badges={
             <>
               <span className={`badge ${accountRoleClass(role)}`}>{t(accountRoleKey(role))}</span>
@@ -572,6 +573,7 @@ function AddAccountModal({
             .map((m) => ({
               value: m.id,
               label: m.full_name,
+              sub: m.english_name,
               hint: t(roleKey(memberRole(m))),
             }))}
           placeholder={t('settings.chooseMember')}

@@ -9,6 +9,7 @@ import {
   ExportButton,
   Field,
   HallSelect,
+  MemberName,
   Modal,
   MonthPicker,
   PageBar,
@@ -87,7 +88,11 @@ export default function EventsPage() {
   const visibleRows = useMemo(() => {
     const q2 = query.trim().toLowerCase();
     if (!q2) return rows;
-    return rows.filter((r) => r.member.full_name.toLowerCase().includes(q2));
+    // Either name finds a person (0018) — the sheet lists everybody, and half
+    // the congregation is looked for by the English name they answer to.
+    return rows.filter((r) =>
+      `${r.member.full_name} ${r.member.english_name ?? ''}`.toLowerCase().includes(q2),
+    );
   }, [rows, query]);
 
   const toggle = async (row: RollCallSheetRow, column: SheetColumn, tick: SheetTickName) => {
@@ -384,7 +389,7 @@ export default function EventsPage() {
               <tbody>
                 {visibleRows.map((r) => (
                   <tr key={r.member.id}>
-                    <td><strong>{r.member.full_name}</strong></td>
+                    <td><MemberName member={r.member} /></td>
                     {columns.map((c) => (
                       <Fragment key={c.key}>
                         {c.ticks.map((tick) => (

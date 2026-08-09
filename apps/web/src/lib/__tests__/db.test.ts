@@ -19,6 +19,16 @@ const status = (fn: () => unknown): number | string => {
   }
 };
 
+/** The sentence the caller is answered with — a 409 is read by a user. */
+const message = (fn: () => unknown): string => {
+  try {
+    fn();
+    return 'no throw';
+  } catch (e) {
+    return e instanceof Error ? e.message : String(e);
+  }
+};
+
 describe('unwrap', () => {
   it('returns the data of a successful read', () => {
     expect(unwrap({ data: { id: 'a' }, error: null })).toEqual({ id: 'a' });
@@ -29,7 +39,32 @@ describe('unwrap', () => {
   });
 
   it('turns any other database error into a 500', () => {
-    expect(status(() => unwrap({ data: null, error: { code: '23505', message: 'duplicate key' } }))).toBe(500);
+    expect(status(() => unwrap({ data: null, error: { code: '23503', message: 'fk violation' } }))).toBe(500);
+  });
+
+  /* A unique violation is the one Postgres code that is a real user-facing
+     OUTCOME rather than a bug: since 0018 a member is identified by the PAIR of
+     names, so saving a second 张伟 with no English name is something the person
+     at the keyboard did and can fix. It is mapped once, here, so every write
+     that can collide answers the same way. */
+  it('turns a unique violation into a 409 that names the conflict', () => {
+    const dup = {
+      data: null,
+      error: { code: '23505', message: 'duplicate key value violates unique constraint "members_name_pair_key"' },
+    };
+    expect(status(() => unwrap(dup))).toBe(409);
+    expect(message(() => unwrap(dup))).toMatch(/pair of names/i);
+    // Never the raw Postgres text — it names internal columns and index names.
+    expect(message(() => unwrap(dup))).not.toMatch(/duplicate key/i);
+  });
+
+  it('still says something usable for a unique index nobody has worded yet', () => {
+    const dup = {
+      data: null,
+      error: { code: '23505', message: 'duplicate key value violates unique constraint "some_future_key"' },
+    };
+    expect(status(() => unwrap(dup))).toBe(409);
+    expect(message(() => unwrap(dup))).toBe('That record already exists');
   });
 
   it('treats a null payload as a missing row', () => {

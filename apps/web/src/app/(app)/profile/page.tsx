@@ -10,6 +10,7 @@ import {
   ErrorBanner,
   FactGrid,
   Field,
+  MemberName,
   Modal,
   RoleBadge,
   SkeletonDetail,
@@ -111,7 +112,7 @@ export default function MyProfilePage() {
       <div className="card">
         <EntityHeader
           avatar={<Avatar name={m?.full_name ?? p.email} url={m?.avatar_url} size="passport" />}
-          title={m?.full_name ?? p.email}
+          title={<MemberName member={m} fallback={p.email} />}
           badges={
             <>
               <span className={`badge ${accountRoleClass(p.account_role)}`}>
@@ -192,7 +193,7 @@ function EditMyProfileModal({
   const confirm = useConfirm();
   const [form, setForm] = useState({
     full_name: member.full_name ?? '',
-    chinese_name: member.chinese_name ?? '',
+    english_name: member.english_name ?? '',
     email: member.email ?? profile.email,
     phone: member.phone ?? '',
     gender: member.gender ?? '',
@@ -216,7 +217,7 @@ function EditMyProfileModal({
     try {
       await api.patch('/auth/me/profile', {
         full_name: form.full_name.trim(),
-        chinese_name: form.chinese_name || null,
+        english_name: form.english_name || null,
         email: form.email.trim(),
         phone: form.phone || null,
         gender: form.gender || null,
@@ -249,8 +250,8 @@ function EditMyProfileModal({
         <Field label={t('members.field.name')}>
           <input value={form.full_name} onChange={(e) => setForm({ ...form, full_name: e.target.value })} />
         </Field>
-        <Field label={t('members.field.nickname')}>
-          <input value={form.chinese_name} onChange={(e) => setForm({ ...form, chinese_name: e.target.value })} />
+        <Field label={t('members.field.englishName')}>
+          <input value={form.english_name} onChange={(e) => setForm({ ...form, english_name: e.target.value })} />
         </Field>
       </div>
       <div className="form-row">

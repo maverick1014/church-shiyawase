@@ -139,7 +139,7 @@ export const zh: Messages = {
   'members.hint': '💡 点击成员可查看其培训记录与守望配对，并在该页面编辑资料。',
   'members.new.title': '新增成员',
   'members.field.name': '姓名',
-  'members.field.nickname': '昵称 / 别名',
+  'members.field.englishName': '英文名',
   'members.field.phone': '电话',
   'members.field.email': '邮箱',
   'members.field.group': '小组',

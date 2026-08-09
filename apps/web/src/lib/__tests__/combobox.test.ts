@@ -6,8 +6,8 @@ import { comboboxFilter, nextActiveIndex, type ComboOption } from '@/lib/combobo
  * what a user typing a name actually gets — the component itself only draws it.
  */
 const PEOPLE: ComboOption[] = [
-  { value: 'a', label: '陈约翰', hint: 'Elder' },
-  { value: 'b', label: '陈小美', hint: 'Member' },
+  { value: 'a', label: '陈约翰', sub: 'John Chen', hint: 'Elder' },
+  { value: 'b', label: '陈小美', sub: 'Mary Chen', hint: 'Member' },
   { value: 'c', label: 'Grace Lim', hint: 'Group leader' },
   { value: 'd', label: 'Daniel Tan', hint: 'Member' },
 ];
@@ -41,6 +41,27 @@ describe('comboboxFilter', () => {
 
   it('searches the hint as well as the label', () => {
     expect(comboboxFilter(PEOPLE, 'elder').map((o) => o.value)).toEqual(['a']);
+  });
+
+  /* A member picker offers the Chinese name with the English one under it
+     (migration 0018). Somebody filed as 陈约翰 is looked for as "John" by half
+     the church, so the second line has to be searched — otherwise the picker
+     answers "nothing matches that" for a person who is right there. */
+  it('finds a member by their English name, not only their Chinese one', () => {
+    expect(comboboxFilter(PEOPLE, 'john').map((o) => o.value)).toEqual(['a']);
+    expect(comboboxFilter(PEOPLE, 'JOHN CHEN').map((o) => o.value)).toEqual(['a']);
+    expect(comboboxFilter(PEOPLE, 'chen').map((o) => o.value)).toEqual(['a', 'b']);
+  });
+
+  it('mixes the two names and the hint in one query, in any order', () => {
+    expect(comboboxFilter(PEOPLE, '陈 mary').map((o) => o.value)).toEqual(['b']);
+    expect(comboboxFilter(PEOPLE, 'john elder').map((o) => o.value)).toEqual(['a']);
+    expect(comboboxFilter(PEOPLE, 'john member')).toEqual([]);
+  });
+
+  it('copes with an option that carries no English name', () => {
+    expect(comboboxFilter(PEOPLE, 'grace').map((o) => o.value)).toEqual(['c']);
+    expect(comboboxFilter([{ value: 'x', label: '林恩', sub: null }], '林').map((o) => o.value)).toEqual(['x']);
   });
 
   it('requires every word, in any order', () => {

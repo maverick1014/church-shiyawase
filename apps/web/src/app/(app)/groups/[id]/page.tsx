@@ -6,7 +6,7 @@ import { useFetch } from '@/lib/hooks';
 import { useSortableRows } from '@/lib/sort';
 import { api } from '@/lib/api';
 import { usePageChrome, useMe } from '@/components/AppShell';
-import { BackButton, Combobox, ErrorBanner, ExportButton, Field, HallSelect, MonthPicker, RoleBadge, SheetTick, SheetTickAll, SheetTotals, SkeletonCard, SkeletonScreen, SkeletonTable, SortTh, TagsInput, useConfirm, useToast } from '@/components/ui';
+import { BackButton, Combobox, ErrorBanner, ExportButton, Field, HallSelect, MemberName, MonthPicker, RoleBadge, SheetTick, SheetTickAll, SheetTotals, SkeletonCard, SkeletonScreen, SkeletonTable, SortTh, TagsInput, useConfirm, useToast } from '@/components/ui';
 import { can } from '@/lib/perms';
 import { exportMatrix } from '@/lib/export';
 import { GroupAttendanceResponse, GroupDetail, GroupRow, MemberRow } from '@/lib/types';
@@ -260,11 +260,20 @@ function GroupPanel({
             className="trio-pick"
             value={holder?.id ?? ''}
             onChange={(id) => assignLeadership(pos, id)}
-            options={groupMembers.map((m) => ({ value: m.id, label: m.full_name }))}
+            options={groupMembers.map((m) => ({
+              value: m.id,
+              label: m.full_name,
+              sub: m.english_name,
+            }))}
             placeholder={t('common.vacant')}
             ariaLabel={t(positionKey(pos))}
           />
         ) : (
+          // One line on purpose: a seat of the 铁三角 is a fixed box in the
+          // triangle's grid, and the picker that replaces it for an account
+          // that may write is a single-line control — a two-line name here
+          // would make the three corners three different heights. The roster
+          // table below carries both names for everybody in the group.
           <strong className={`trio-name${holder ? '' : ' vacant'}`}>
             {holder?.full_name ?? t('common.vacant')}
           </strong>
@@ -370,6 +379,7 @@ function GroupPanel({
                 options={unassigned.map((m) => ({
                   value: m.id,
                   label: m.full_name,
+                  sub: m.english_name,
                   hint: m.group?.name,
                 }))}
                 placeholder={t('group.addMemberPlaceholder')}
@@ -392,7 +402,7 @@ function GroupPanel({
                 {sortedGroupMembers.map((m) => (
                   <tr key={m.id}>
                     <td>
-                      <strong>{m.full_name}</strong>
+                      <MemberName member={m} />
                     </td>
                     <td>
                       <RoleBadge role={m.group_position ?? 'ungrouped'} />
@@ -708,7 +718,7 @@ function WeeklyAttendance({ group }: { group: GroupDetail }) {
                 const inner = statusByMemberDate.get(r.member.id);
                 return (
                   <tr key={r.member.id}>
-                    <td><strong>{r.member.full_name}</strong></td>
+                    <td><MemberName member={r.member} /></td>
                     {weeks.map((w) => {
                       const present = inner?.get(w.date) === AttendanceStatus.Present;
                       return (
