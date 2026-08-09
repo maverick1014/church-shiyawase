@@ -15,6 +15,7 @@ import { initialOf, roleDot, roleKey, roleTagStyle } from '@/lib/labels';
 import { comboboxFilter, nextActiveIndex, type ComboOption } from '@/lib/combobox';
 import { isListSeparatorKey, parseList } from '@/lib/members-import';
 import { useHallScope } from '@/lib/hall';
+import { compressImage } from '@/lib/imageCompress';
 import type { ColumnTickState } from '@/lib/sheet';
 import { useLang, useT } from '@/lib/i18n';
 
@@ -407,7 +408,10 @@ export function PhotoPicker({
           type="file"
           accept="image/*"
           aria-label={t('photo.choose')}
-          onChange={(e) => onChange(e.target.files?.[0] ?? null)}
+          onChange={async (e) => {
+            const picked = e.target.files?.[0] ?? null;
+            onChange(picked ? await compressImage(picked) : null);
+          }}
           style={{ display: 'none' }}
         />
       </div>

@@ -2,6 +2,7 @@
 
 import { useRef, useState } from 'react';
 import { api } from '@/lib/api';
+import { compressImage } from '@/lib/imageCompress';
 import {
   ErrorBanner,
   Field,
@@ -165,11 +166,12 @@ export function TrainingModal({
   // The same upload path a member's photo and the church logo take: straight
   // to the row, so the QR is never half-saved with the form (rule G4).
   const onPickQr = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file || !initial) return;
+    const picked = e.target.files?.[0];
+    if (!picked || !initial) return;
     setUploading(true);
     setErr(null);
     try {
+      const file = await compressImage(picked);
       const fd = new FormData();
       fd.append('file', file);
       const row = await api.upload<TrainingRow>(`/trainings/${initial.id}/payment-qr`, fd);

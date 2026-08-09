@@ -183,7 +183,9 @@ tog/
   - **A public self-registration link** (`/join`, copied from this page): people fill in their
     own contact details and photo. See §5.7.
 - Photos use the shared `<PhotoPicker />` — `accept="image/*"` and deliberately **no `capture`**,
-  so a phone offers both the camera and the gallery.
+  so a phone offers both the camera and the gallery. Every picked image is compressed client-side
+  (`lib/imageCompress.ts`) before upload, so a full-size camera photo clears the server's 5MB cap
+  without the user doing anything.
 - **Member detail** = profile + **personal training record** (5.5) + discipleship pairs they're in.
 - The 身份 shown is **derived** (see §3); it is not edited here.
 

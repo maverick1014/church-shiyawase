@@ -211,6 +211,23 @@ force the camera and remove the choice. It previews the pick and lets it be
 removed, and never uploads anything itself (the add-member modal posts to
 `/members/:id/avatar` once the row exists; `/join` sends the file with the form).
 
+**Every image upload is compressed in the browser before it leaves the
+device**, because a phone camera photo routinely exceeds the server's 5MB cap
+(`IMAGE_UPLOAD`/`SLIP_UPLOAD`/`PHOTO_UPLOAD` in `route.ts`) while the picker
+offers no way to ask for a smaller one. `compressImage` (`lib/imageCompress.ts`)
+downscales to at most 1920px on the long edge and re-encodes as JPEG
+(PNG stays PNG, to keep transparency — JPEG has no alpha channel and would
+flatten it to black), stepping the quality down until it clears a 1.5MB
+target or bottoms out. It never enlarges a small file, never returns a result
+bigger than what came in, and passes SVG and non-images (a PDF receipt)
+through untouched, falling back to the original file on any decode error —
+so a compression bug degrades to "uploads the original", never to "the
+upload silently vanishes". It runs at every call site that hands a user
+a file picker for a photo: `PhotoPicker` itself (member forms, `/join`),
+a member's own avatar re-upload, the church logo, a training's payment QR,
+and the image half of a training's payment-receipt upload (the PDF half
+is untouched).
+
 **培训 became 培训&活动 (Trainings & Activities).** Everything that is neither a
 Sunday nor a hand-added meeting lives on `/trainings` now — a brothers' hike, a
 sisters' baking afternoon — because an activity is exactly what sign-ups plus a

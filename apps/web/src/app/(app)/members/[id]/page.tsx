@@ -6,6 +6,7 @@ import { useMemo, useRef, useState } from 'react';
 import { useFetch } from '@/lib/hooks';
 import { useSortableRows } from '@/lib/sort';
 import { api } from '@/lib/api';
+import { compressImage } from '@/lib/imageCompress';
 import { usePageChrome, useMe } from '@/components/AppShell';
 import { Avatar, BackButton, Combobox, EntityHeader, ErrorBanner, FactGrid, Field, HallSelect, MemberName, Modal, ProgressBar, RoleBadge, SkeletonDetail, SkeletonScreen, SortTh, TagsInput, useConfirm, useToast } from '@/components/ui';
 import { PairProgressModal } from '@/components/PairProgressModal';
@@ -72,10 +73,11 @@ export default function MemberDetailPage() {
   usePageChrome({ title: tr('member.title') }, [id, tr]);
 
   const onPickAvatar = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const picked = e.target.files?.[0];
+    if (!picked) return;
     setUploading(true);
     try {
+      const file = await compressImage(picked);
       const fd = new FormData();
       fd.append('file', file);
       await api.upload(`/members/${id}/avatar`, fd);

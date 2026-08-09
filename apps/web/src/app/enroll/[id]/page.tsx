@@ -3,6 +3,7 @@
 import { useParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
+import { compressImage } from '@/lib/imageCompress';
 import { BrandLogo } from '@/components/BrandLogo';
 import { Field } from '@/components/ui';
 import { useChurchProfile } from '@/lib/church';
@@ -314,7 +315,10 @@ export default function EnrollFormPage() {
                         <input
                           type="file"
                           accept="image/*,application/pdf"
-                          onChange={(e) => setSlip(e.target.files?.[0] ?? null)}
+                          onChange={async (e) => {
+                            const picked = e.target.files?.[0] ?? null;
+                            setSlip(picked ? await compressImage(picked) : null);
+                          }}
                           aria-label={t('enroll.slipPick')}
                         />
                       </Field>
