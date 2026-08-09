@@ -138,6 +138,24 @@ async function main() {
     ok('…and 服侍岗位 is editable, not write-once',
       JSON.stringify(patch.json?.serving_roles) === JSON.stringify(['招待']),
       JSON.stringify(patch.json?.serving_roles));
+    // 加入小组日期/group_joined_at (migration 0023) — a separate fact from
+    // 来访日期/joined_at, both plain columns with no server-side allow-list, so
+    // a round trip is the only thing worth asserting: the client just has to
+    // send the field and the `select('*')`-style read has to return it.
+    const dated = await req('PATCH', `/api/members/${memberId}`, {
+      ...H,
+      body: { joined_at: '2024-01-07', group_joined_at: '2024-06-01', notes: 'E2E remark' },
+    });
+    ok('joined_at (来访日期) and group_joined_at (加入小组日期) are both writable and independent',
+      dated.status === 200 && dated.json?.joined_at === '2024-01-07' && dated.json?.group_joined_at === '2024-06-01',
+      `status ${dated.status} joined_at=${dated.json?.joined_at} group_joined_at=${dated.json?.group_joined_at}`);
+    ok('…and 备注/notes rides along the same PATCH', dated.json?.notes === 'E2E remark', dated.json?.notes);
+    const readDated = await req('GET', `/api/members/${memberId}`, H);
+    ok('…all three read back from a fresh GET, not just echoed by the PATCH',
+      readDated.json?.joined_at === '2024-01-07' &&
+        readDated.json?.group_joined_at === '2024-06-01' &&
+        readDated.json?.notes === 'E2E remark',
+      JSON.stringify({ joined_at: readDated.json?.joined_at, group_joined_at: readDated.json?.group_joined_at, notes: readDated.json?.notes }));
     // 地址 + 推荐人 (0021). The referrer is a member id going in and an
     // embedded name coming back — a self-referencing embed PostgREST has to be
     // told the direction of, so what is checked is that the RIGHT person comes
@@ -635,6 +653,7 @@ async function selfRegistration(adminCookie, hallId) {
       serving_roles: ['敬拜'],
       referred_by: someone,
       group_id: '00000000-0000-0000-0000-000000000000',
+      group_joined_at: '2024-01-01',
     },
   });
   ok('public registration (no session) → created', join.status === 200 && join.json?.status === 'created',
@@ -650,6 +669,8 @@ async function selfRegistration(adminCookie, hallId) {
   ok('…on the roll, not with the status it asked for', person?.status === 'active', person?.status);
   ok('…with no notes and no life group', !person?.notes && !person?.group_id,
     `${person?.notes} / ${person?.group_id}`);
+  ok('…and no 加入小组日期, refused exactly like a role or a referral',
+    person?.group_joined_at === null, String(person?.group_joined_at));
   // A ministry is something the church hands out, so the allow-list simply does
   // not read the field — the row comes back serving nowhere, not serving 敬拜.
   ok('…and serving nowhere, whatever ministry the body claimed',

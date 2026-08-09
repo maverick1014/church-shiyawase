@@ -35,7 +35,6 @@ import { GroupDetail, GroupRow, MemberRow } from '@/lib/types';
 import {
   CHURCH_ROLE_OPTIONS,
   churchRoleKey,
-  formatDate,
   genderKey,
   GROUP_POSITION_OPTIONS,
   MEMBER_ROLE_FILTERS,
@@ -145,8 +144,6 @@ export default function MembersPage() {
         return m.phone ?? undefined;
       case 'status':
         return t(memberStatusKey(m.status));
-      case 'joined':
-        return m.joined_at ?? undefined;
       default:
         return undefined;
     }
@@ -179,7 +176,7 @@ export default function MembersPage() {
         // list in `lib/members-import.ts` is the one definition of both).
         [t(importFieldKey('serving_roles'))]: (m.serving_roles ?? []).join('、'),
         [t('export.status')]: t(memberStatusKey(m.status)),
-        [t('export.joined')]: formatDate(m.joined_at),
+        [t('member.field.notes')]: m.notes ?? '',
       })),
     );
   };
@@ -269,7 +266,9 @@ export default function MembersPage() {
                 <thead>
                   <tr>
                     {/* Member / identity / group / contact share the width equally;
-                        the utility columns (status / joined) + chevron stay narrow. */}
+                        the utility columns (status / remark) + chevron stay narrow —
+                        except remark, which is bounded and truncated rather than
+                        sized to its (potentially long) content. */}
                     <SortTh sortKey="name" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('members.col.member')}</SortTh>
                     <SortTh sortKey="role" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('members.col.role')}</SortTh>
                     {!hallLocked && (
@@ -278,7 +277,7 @@ export default function MembersPage() {
                     <SortTh sortKey="group" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('members.col.group')}</SortTh>
                     <SortTh sortKey="phone" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('members.col.contact')}</SortTh>
                     <SortTh sortKey="status" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('members.col.status')}</SortTh>
-                    <SortTh sortKey="joined" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('members.col.joined')}</SortTh>
+                    <th>{t('members.col.remark')}</th>
                     <th />
                   </tr>
                 </thead>
@@ -301,7 +300,12 @@ export default function MembersPage() {
                             {t(memberStatusKey(m.status))}
                           </span>
                         </td>
-                        <td className="muted tnum">{formatDate(m.joined_at)}</td>
+                        {/* Remarks are free text and can run long, unlike every other
+                            column here — bounded and ellipsised, with the full text
+                            still reachable through the native `title` tooltip. */}
+                        <td className="muted cell-remark" title={m.notes ?? undefined}>
+                          {m.notes ?? ''}
+                        </td>
                         <td style={{ textAlign: 'right' }}>
                           <RowChevron title={t('members.viewProfile')} onClick={() => router.push(`/members/${m.id}`)} />
                         </td>
@@ -335,17 +339,19 @@ export default function MembersPage() {
                     <span className="mtile-cta"><ChevronRightIcon /></span>
                   </div>
                   {/* Only render detail lines that have real content — a tile with no
-                      phone/date shouldn't show bare “—” placeholder rows. */}
+                      phone/remark shouldn't show bare “—” placeholder rows. */}
                   {m.phone && <div className="mtile-line">{m.phone}</div>}
-                  {(m.status !== MemberStatus.Active || m.joined_at) && (
+                  {/* Active is the norm — only surface the status when it isn't. */}
+                  {m.status !== MemberStatus.Active && (
                     <div className="mtile-line">
-                      {/* Active is the norm — only surface the status when it isn't. */}
-                      {m.status !== MemberStatus.Active && (
-                        <span className={`badge ${memberStatusClass(m.status)}`}>
-                          {t(memberStatusKey(m.status))}
-                        </span>
-                      )}
-                      {m.joined_at && <span>{formatDate(m.joined_at)}</span>}
+                      <span className={`badge ${memberStatusClass(m.status)}`}>
+                        {t(memberStatusKey(m.status))}
+                      </span>
+                    </div>
+                  )}
+                  {m.notes && (
+                    <div className="mtile-line cell-remark" title={m.notes}>
+                      {m.notes}
                     </div>
                   )}
                 </div>
@@ -406,6 +412,10 @@ function AddMemberModal({
     // the ordinary case, not a value the church has still to fill in.
     referred_by: '',
     group_id: '',
+    // 加入小组日期 — a separate fact from `joined_at` (when they joined the
+    // church); nullable, like every other date field here.
+    group_joined_at: '',
+    notes: '',
     // Default to the hall currently being viewed; a hall-scoped account only
     // ever has one option anyway (the server pins it regardless).
     hall_id: (hallId || null) as string | null,
@@ -461,6 +471,8 @@ function AddMemberModal({
         church_role: form.church_role,
         group_id: form.group_id || undefined,
         group_position: form.group_id ? form.group_position : undefined,
+        group_joined_at: form.group_joined_at || undefined,
+        notes: form.notes || undefined,
         serving_roles: serving,
       });
       // The photo goes through the SAME endpoint the member's own profile page
@@ -560,6 +572,20 @@ function AddMemberModal({
           </Field>
         )}
       </div>
+      {/* Only meaningful once a group is chosen — same rule as the group
+          position field right above it. */}
+      {form.group_id && (
+        <div className="form-row">
+          <Field label={t('member.field.groupJoinedAt')}>
+            <input
+              type="date"
+              className={form.group_joined_at ? undefined : 'date-empty'}
+              value={form.group_joined_at}
+              onChange={(e) => setForm({ ...form, group_joined_at: e.target.value })}
+            />
+          </Field>
+        </div>
+      )}
       <Field label={t('members.field.serving')}>
         <TagsInput
           value={serving}
@@ -567,6 +593,9 @@ function AddMemberModal({
           suggestions={servingSuggestions}
           placeholder={t('members.servingPlaceholder')}
         />
+      </Field>
+      <Field label={t('member.field.notes')}>
+        <textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} rows={2} />
       </Field>
       <Field label={t('members.field.photo')}>
         <PhotoPicker file={photo} onChange={setPhoto} name={form.full_name} />

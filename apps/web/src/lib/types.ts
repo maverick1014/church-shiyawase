@@ -72,7 +72,14 @@ export interface MemberRow {
   group_id: string | null;
   group_position: GroupPosition | null;
   hall_id: string;
+  /** 来访日期 — display label only; the column and its meaning are unchanged. */
   joined_at: string | null;
+  /**
+   * 加入小组日期 — when this member joined their CURRENT life group (migration
+   * 0023). A separate fact from `joined_at` (when they joined the church):
+   * nullable, and excluded from any report built on it, same as `joined_at`.
+   */
+  group_joined_at: string | null;
   notes: string | null;
   /**
    * 服侍岗位 — the ministries this person serves in (migration 0019). Free text

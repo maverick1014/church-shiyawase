@@ -553,6 +553,8 @@ async function main() {
     const removePair = disposable(`pair ${mentor.name} → ${trainee.name}`, `/discipleship/pairs/${row.id}`);
     return {
       id: row.id,
+      mentorId: mentor.id,
+      traineeId: trainee.id,
       mentorName: mentor.name,
       traineeName: trainee.name,
       remove: async () => { await removePair(); await trainee.remove(); await mentor.remove(); },
@@ -623,6 +625,32 @@ async function main() {
     check('the sidebar brand shows the church record’s name',
       sidebar.includes(churchRecord.short_name || churchRecord.name),
       churchRecord.short_name || churchRecord.name);
+
+    /* -- dashboard: trend chart · upcoming-events table · one KPI tile ----- */
+    // The dashboard was rebuilt around three sections; the old 4-tile KPI row,
+    // the "Identity distribution" bar chart and the "Discipleship progress"
+    // card are gone entirely.
+    const dashBody = await page.locator('.content').innerText();
+    check('the dashboard shows the New Visits / Active Members trend card',
+      dashBody.includes('New Visits & Active Members'));
+    check('…the upcoming-events section…', dashBody.includes('Upcoming events'));
+    check('…and a single "Total Active Members" KPI tile',
+      dashBody.includes('Total Active Members') && (await page.locator('.stat').count()) === 1);
+    check('the retired KPI row / identity chart / discipleship-progress card are gone',
+      !dashBody.includes('Identity distribution') && !dashBody.includes('Discipleship progress'));
+    // Two independent toggle chips, both on by default — each hides its own
+    // line without touching the other.
+    const trendChips = page.locator('.card:has-text("New Visits & Active Members") .chip');
+    const chipsOnByDefault = await trendChips.evaluateAll((els) => els.every((el) => el.classList.contains('on')));
+    check('the trend card offers two toggle chips, both on by default',
+      (await trendChips.count()) === 2 && chipsOnByDefault);
+    const linesBefore = await page.locator('.card:has-text("New Visits & Active Members") svg polyline').count();
+    await trendChips.first().click();
+    await w(200);
+    const linesAfter = await page.locator('.card:has-text("New Visits & Active Members") svg polyline').count();
+    check('toggling a chip off removes its own line from the chart', linesAfter === linesBefore - 1, `${linesBefore} → ${linesAfter}`);
+    await trendChips.first().click();
+    await w(200);
     await shot('01-dashboard');
 
     /* -- member directory ------------------------------------------------- */
@@ -699,6 +727,11 @@ async function main() {
     await page.locator('.modal button:has-text("Cancel")').first().click();
     await w(300);
     check('the modal closes again', (await page.locator('.modal').count()) === 0);
+    // The single long FactGrid was split into several smaller, labelled
+    // sections rather than one undifferentiated grid.
+    const detailBody = await page.locator('.content').innerText();
+    check('the member detail page groups its facts under section headers (Contact/Church/Ministry/Referral)',
+      ['Contact', 'Church', 'Ministry', 'Referral'].every((label) => detailBody.includes(label)));
     await shot('03-member-detail');
 
     /* -- life groups ------------------------------------------------------ */
@@ -887,6 +920,24 @@ async function main() {
         await seat.inputValue());
       check('the option list closes once something is picked',
         (await page.locator('.combo-list').count()) === 0);
+
+      /* -- roster row: Edit opens the SHARED member-edit modal ------------ */
+      // The same editor `/members/[id]` uses (extracted to
+      // `components/MemberEditModal.tsx`, rule G4) — not a second, roster-only
+      // copy of the form.
+      const rosterRow = page.locator('table tr', { hasText: fxGroup.member.name }).first();
+      await rosterRow.locator('button:has-text("Edit")').click();
+      await page.locator('.modal').waitFor({ timeout: 8000 });
+      check('the roster row’s Edit button opens the shared member-edit modal',
+        (await page.locator('.modal:has-text("Edit member profile")').count()) === 1);
+      const rosterPhoneInput = page.locator('.modal input[placeholder="012-000 0000"]');
+      await rosterPhoneInput.fill('012-000 1111');
+      await page.locator('.modal button:has-text("Save")').first().click();
+      await w(1200);
+      check('saving it closes the modal', (await page.locator('.modal').count()) === 0);
+      const rosterMemberAfter = await apiGet(`/members/${fxGroup.member.id}`);
+      check('…and the edit reached the server (the roster reloads, not just the modal)',
+        rosterMemberAfter.phone === '012-000 1111', String(rosterMemberAfter.phone));
     } finally {
       await fxGroup.remove();
     }
@@ -1328,6 +1379,14 @@ async function main() {
       await page.locator('.modal .icon-btn').first().click();
       await w(300);
       check('✕ closes the dialog', (await page.locator('.modal').count()) === 0);
+      // The pair reads as one sentence ("Led by X" / "Leading X") on the
+      // MEMBER's own detail page now, not a bare "Mentor"/"Trainee" badge.
+      await page.goto(`${BASE}/members/${fxPair.traineeId}`, { waitUntil: 'domcontentloaded' });
+      await page.locator('.content:has-text("Forty Days")').first().waitFor({ timeout: 15000 });
+      const traineePageBody = await page.locator('.content').innerText();
+      check('the trainee’s own page reads the pair as "Led by <mentor>"',
+        traineePageBody.includes(`Led by ${fxPair.mentorName}`) &&
+          !traineePageBody.includes('Mentor') && !traineePageBody.includes('Trainee'));
     } finally {
       await fxPair.remove();
     }
@@ -2116,6 +2175,25 @@ async function main() {
       check('a ministry typed into it becomes a chip when the field is left',
         (await page.locator(`.modal .chip:has-text("${testMinistry}")`).count()) === 1);
     }
+    // Choosing a life group reveals a "Life Group Join Date" field — a fact
+    // separate from 来访日期/joined_at (migration 0023).
+    const groupSel = page.locator('.modal select').nth(1);
+    const groupOpt = await groupSel.locator('option').nth(1).getAttribute('value');
+    if (groupOpt) {
+      await groupSel.selectOption(groupOpt);
+      await w(300);
+      check('choosing a life group reveals a "Life Group Join Date" field',
+        (await page.locator('.modal label.field-label:has-text("Life Group Join Date")').count()) === 1);
+      // Back to ungrouped — this fixture member has no business in a real group.
+      await groupSel.selectOption('');
+      await w(200);
+    }
+    // 备注/Remark — new on the ADD form (it was edit-only before); the members
+    // list itself trades its old "Joined" column for this one.
+    const remarkText = `ZZ_UITEST_备注 ${testName}`;
+    const notesBox = page.locator('.modal textarea');
+    check('the add-member form offers a remark/notes field', (await notesBox.count()) === 1);
+    if (await notesBox.count()) await notesBox.fill(remarkText);
     await page.locator('.modal button:has-text("Save")').first().click();
     await w(1800);
     await page.fill('input[placeholder*="Search"]', testName);
@@ -2126,6 +2204,16 @@ async function main() {
     // the one just saved has to be an option on the page bar.
     check('the members page offers a ministry filter carrying it',
       (await page.locator(`.page-bar-filters select option[value="${testMinistry}"]`).count()) === 1);
+    // The list traded its "Joined" column for "Remark" — checked in the DOM
+    // rather than by visibility, since this suite runs at one phone viewport
+    // where the desktop table is `display:none` but still present.
+    check('the members list has traded its "Joined" column for a "Remark" one',
+      (await page.locator('th:has-text("Joined")').count()) === 0 &&
+        (await page.locator('th:has-text("Remark")').count()) === 1);
+    if (created) {
+      check('the new member’s tile shows the remark (truncated, not the old joined date)',
+        (await page.locator(`.mtile:has-text("${testName}")`).first().locator('.cell-remark').count()) === 1);
+    }
 
     if (created) {
       // capture id for API-fallback cleanup
@@ -2136,6 +2224,8 @@ async function main() {
       // ministry survived a save that never saw an Enter key.
       check('the member’s profile shows the ministry as a badge',
         (await page.locator(`.fact .badge:has-text("${testMinistry}")`).count()) === 1);
+      check('…and the remark under its own "Notes" section',
+        (await page.locator('.content').innerText()).includes(remarkText));
       await page.locator('button:visible:has-text("Delete")').first().click();
       await page.locator('.modal-backdrop').waitFor({ timeout: 8000 });
       await page.locator('.modal-backdrop button:has-text("Delete")').last().click();

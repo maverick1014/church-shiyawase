@@ -7,6 +7,7 @@ import { useSortableRows } from '@/lib/sort';
 import { api } from '@/lib/api';
 import { usePageChrome, useMe } from '@/components/AppShell';
 import { BackButton, Combobox, ErrorBanner, ExportButton, Field, HallSelect, MemberName, MonthPicker, RoleBadge, SheetTick, SheetTickAll, SheetTotals, SkeletonCard, SkeletonScreen, SkeletonTable, SortTh, TagsInput, useConfirm, useToast } from '@/components/ui';
+import { MemberEditModal } from '@/components/MemberEditModal';
 import { can } from '@/lib/perms';
 import { exportMatrix } from '@/lib/export';
 import {
@@ -125,6 +126,9 @@ function GroupPanel({
   const [addSel, setAddSel] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // The roster row currently open in the shared member-edit modal (rule G4) —
+  // one editor for the whole app, not a second copy of the form here.
+  const [editMemberId, setEditMemberId] = useState<string | null>(null);
 
   const groupMembers = group.members;
 
@@ -135,6 +139,13 @@ function GroupPanel({
   const unassigned = useMemo(
     () => allMembers.filter((m) => m.group_id !== group.id),
     [allMembers, group.id],
+  );
+
+  // Full row for whichever roster member is currently being edited — the
+  // roster table itself only carries the narrower `GroupDetail.members` shape.
+  const editingMember = useMemo(
+    () => allMembers.find((m) => m.id === editMemberId) ?? null,
+    [allMembers, editMemberId],
   );
 
   // Highest rank first — matching GROUP_POSITION_OPTIONS' own promotion order
@@ -418,7 +429,10 @@ function GroupPanel({
                     </td>
                     <td style={{ textAlign: 'right' }}>
                       {perms.write && (
-                        <button className="btn danger" onClick={() => removeMember(m.id)}>{t('common.remove')}</button>
+                        <div className="flex gap-6" style={{ justifyContent: 'flex-end' }}>
+                          <button className="btn ghost sm" onClick={() => setEditMemberId(m.id)}>{t('common.edit')}</button>
+                          <button className="btn danger" onClick={() => removeMember(m.id)}>{t('common.remove')}</button>
+                        </div>
                       )}
                     </td>
                   </tr>
@@ -435,6 +449,18 @@ function GroupPanel({
           </div>
         </div>
       </div>
+
+      {editingMember && (
+        <MemberEditModal
+          member={editingMember}
+          onClose={() => setEditMemberId(null)}
+          onSaved={() => {
+            setEditMemberId(null);
+            toast(t('member.toast.saved'));
+            onChanged();
+          }}
+        />
+      )}
     </>
   );
 }

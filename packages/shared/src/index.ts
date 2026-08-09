@@ -437,10 +437,25 @@ export interface Member {
   status: MemberStatus;
   group_id: string | null;
   group_position: GroupPosition | null;
-  household_id: string | null;
   hall_id: string;
+  /** 来访日期 — when this person first came (label only; the column is unchanged). */
   joined_at: string | null;
+  /**
+   * 加入小组日期 — when they joined their CURRENT group (migration 0023). A
+   * separate fact from `joined_at`: a person can join the church years before
+   * joining a group, or the other way round. Nullable and excluded from any
+   * report built on it, the same as `joined_at`.
+   */
+  group_joined_at: string | null;
   notes: string | null;
+  /**
+   * 服侍岗位 — the ministries this person serves in (migration 0019). Free text,
+   * several per person, `groups.tags`'s own shape. Empty = serves nowhere,
+   * which is a fact rather than a missing value; never null (defaults to `{}`).
+   */
+  serving_roles: string[];
+  /** Public URL of the uploaded avatar photo; null = none. */
+  avatar_url: string | null;
   created_at: string;
   updated_at: string;
 }

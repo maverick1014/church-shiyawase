@@ -568,6 +568,22 @@ tbody tr:last-child td {
   font-variant-numeric: tabular-nums;
 }
 
+/* 备注/Remark — free text that can run long, unlike this app's usual
+   short-label columns. Every other column here sizes to its own content
+   (G7a); this one is deliberately bounded and ellipsised instead, so a long
+   remark cannot stretch the table or push other columns off-screen. The full
+   text stays reachable through the cell's own `title` tooltip. Shared between
+   the desktop table cell and the mobile tile's own line. */
+.cell-remark {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mtile-line.cell-remark {
+  display: block;
+}
+
 /* A person is TWO names (migration 0018): the Chinese name the church files
    them under, and the English name half the congregation actually knows them
    by. `<MemberName />` is the only thing that draws them, and this is the whole
