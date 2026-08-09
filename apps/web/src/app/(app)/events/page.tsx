@@ -13,6 +13,7 @@ import {
   Modal,
   MonthPicker,
   PageBar,
+  RoleRestricted,
   SheetTick,
   SheetTickAll,
   SheetTotals,
@@ -35,7 +36,7 @@ import { sheetColumnStates, sheetColumnWrites } from '@/lib/sheet';
 import { sheetTickKey } from '@/lib/labels';
 import { churchParts, fromChurchInput, toChurchInput } from '@/lib/time';
 import { useT } from '@/lib/i18n';
-import { EventType } from '@tog/shared';
+import { AccountRole, EventType } from '@tog/shared';
 
 /**
  * 崇拜与祷告会 — ONE roll-call sheet for the month.
@@ -57,7 +58,8 @@ export default function EventsPage() {
   const t = useT();
   const toast = useToast();
   const confirm = useConfirm();
-  const perms = can(useMe().role);
+  const me = useMe();
+  const perms = can(me.role);
 
   // Which month, defaulting to Malaysia's own calendar — on a UTC Worker the
   // first 8 hours of a new month still read as the old one (rule G6a).
@@ -215,6 +217,11 @@ export default function EventsPage() {
       return false;
     }
   };
+
+  // Outside a group_leader's allowed API prefixes entirely (`events` is not
+  // in `GROUP_LEADER_PREFIXES`) — the nav entry is already gone; this only
+  // catches a bookmark (rule G2, same shape as `ModuleDisabled`).
+  if (me.role === AccountRole.GroupLeader) return <RoleRestricted />;
 
   return (
     <>

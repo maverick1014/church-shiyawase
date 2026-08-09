@@ -276,6 +276,25 @@ export function ModuleDisabled({ name }: { name: string }) {
   );
 }
 
+/**
+ * The role-boundary analogue of `ModuleDisabled`, same shape (a stated
+ * reason, never a crash or a blank list): what a group_leader account lands
+ * on if it reaches a page outside its own scope by URL — the nav entry is
+ * already gone (`AppShell.visibleItems`' `hiddenFor`), so this only catches a
+ * bookmark or a pasted link. The API refuses the same paths regardless (the
+ * group_leader prefix allowlist in `api/[...path]/route.ts`); this is only
+ * the explanation.
+ */
+export function RoleRestricted() {
+  const t = useT();
+  return (
+    <Empty>
+      <div style={{ fontWeight: 600, marginBottom: 6 }}>{t('access.restricted.title')}</div>
+      <div style={{ fontSize: 13 }}>{t('access.restricted.body')}</div>
+    </Empty>
+  );
+}
+
 /* -------------------------------------------------------------------------
  * Avatar, badges
  * ---------------------------------------------------------------------- */

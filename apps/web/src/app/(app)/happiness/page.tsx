@@ -14,6 +14,7 @@ import {
   Modal,
   ModuleDisabled,
   PageBar,
+  RoleRestricted,
   RowChevron,
   SkeletonScreen,
   SkeletonTable,
@@ -27,21 +28,24 @@ import { exportRows } from '@/lib/export';
 import { formatDate } from '@/lib/labels';
 import { HappinessTermRow } from '@/lib/types';
 import { useT } from '@/lib/i18n';
-import { MODULE_HAPPINESS } from '@tog/shared';
+import { AccountRole, MODULE_HAPPINESS } from '@tog/shared';
 
 export default function HappinessTermsPage() {
   const router = useRouter();
   const t = useT();
   const toast = useToast();
   const confirm = useConfirm();
-  const perms = can(useMe().role);
+  const me = useMe();
+  const perms = can(me.role);
+  // `happiness` is not in a group_leader's allowed API prefixes at all.
+  const isGroupLeader = me.role === AccountRole.GroupLeader;
 
   // An add-on module: the nav entry is already gone when it is off, so this
   // only catches a bookmark or a pasted link (rule G2) — nothing below may
   // fetch, or the page would paint the API's own refusal as an error banner
   // instead of the reason.
   const happinessOn = useModuleEnabled(MODULE_HAPPINESS);
-  const terms = useFetch<HappinessTermRow[]>(happinessOn ? '/happiness/terms' : null);
+  const terms = useFetch<HappinessTermRow[]>(happinessOn && !isGroupLeader ? '/happiness/terms' : null);
 
   const [formTerm, setFormTerm] = useState<HappinessTermRow | 'new' | null>(null);
 
@@ -97,6 +101,7 @@ export default function HappinessTermsPage() {
     }
   };
 
+  if (isGroupLeader) return <RoleRestricted />;
   if (!happinessOn) return <ModuleDisabled name={t('module.happiness.name')} />;
 
   return (

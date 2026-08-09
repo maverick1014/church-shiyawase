@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react';
 import { useFetch } from '@/lib/hooks';
 import { api } from '@/lib/api';
-import { GroupDetail, GroupRow, MemberRow } from '@/lib/types';
+import { GroupDetail, GroupRow, LeaderAccountEvent, MemberRow } from '@/lib/types';
 import { ChurchRole, Gender, GroupPosition, LEADERSHIP_POSITIONS, MemberStatus } from '@tog/shared';
 import {
   CHURCH_ROLE_OPTIONS,
@@ -34,7 +34,17 @@ export function MemberEditModal({
 }: {
   member: MemberRow;
   onClose: () => void;
-  onSaved: () => void;
+  /**
+   * Every `leader_account_event` either write below produced, paired with
+   * whose event it is — the member being saved (a promotion/demotion of
+   * THEIR OWN seat) and/or the incumbent this save auto-demoted out of a
+   * leadership slot (which itself demotes them out of 小组长 when that slot
+   * was specifically Leader). The caller renders each through
+   * `useLeaderAccountEvent` — passed up rather than shown here, because
+   * `onSaved` typically unmounts this modal immediately (rule G6: a created
+   * credential has to outlive that).
+   */
+  onSaved: (leaderEvents?: Array<{ event: LeaderAccountEvent; name: string }>) => void;
 }) {
   // 服侍岗位 is a list, so it is its own piece of state rather than a string in
   // the form object — the same shape a group's tags are edited in.
@@ -106,16 +116,21 @@ export function MemberEditModal({
     }
     setSaving(true);
     setErr(null);
+    const leaderEvents: Array<{ event: LeaderAccountEvent; name: string }> = [];
     try {
       if (form.group_id && LEADERSHIP_POSITIONS.includes(form.group_position)) {
         const incumbent = (groupDetail.data?.members ?? []).find(
           (m) => m.id !== member.id && m.group_position === form.group_position,
         );
         if (incumbent) {
-          await api.patch(`/members/${incumbent.id}`, { group_position: GroupPosition.CoreMember });
+          const demoted = await api.patch<MemberRow>(`/members/${incumbent.id}`, {
+            group_position: GroupPosition.CoreMember,
+          });
+          if (demoted.leader_account_event)
+            leaderEvents.push({ event: demoted.leader_account_event, name: incumbent.full_name });
         }
       }
-      await api.patch(`/members/${member.id}`, {
+      const updated = await api.patch<MemberRow>(`/members/${member.id}`, {
         full_name: form.full_name.trim(),
         english_name: form.english_name || null,
         phone: form.phone || null,
@@ -134,7 +149,9 @@ export function MemberEditModal({
         group_position: form.group_id ? form.group_position : null,
         serving_roles: serving,
       });
-      onSaved();
+      if (updated.leader_account_event)
+        leaderEvents.push({ event: updated.leader_account_event, name: form.full_name.trim() });
+      onSaved(leaderEvents);
     } catch (e) {
       setErr((e as Error).message);
       toast((e as Error).message, 'error');

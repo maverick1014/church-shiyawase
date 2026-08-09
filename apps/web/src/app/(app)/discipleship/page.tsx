@@ -5,7 +5,7 @@ import { useFetch } from '@/lib/hooks';
 import { useSortableRows } from '@/lib/sort';
 import { api } from '@/lib/api';
 import { usePageChrome, useMe } from '@/components/AppShell';
-import { Combobox, ErrorBanner, ExportButton, Field, MemberName, Modal, ModuleDisabled, PageBar, Skeleton, SkeletonScreen, SkeletonTable, SkeletonText, SortTh, useConfirm, useToast } from '@/components/ui';
+import { Combobox, ErrorBanner, ExportButton, Field, MemberName, Modal, ModuleDisabled, PageBar, RoleRestricted, Skeleton, SkeletonScreen, SkeletonTable, SkeletonText, SortTh, useConfirm, useToast } from '@/components/ui';
 import { PairProgressModal } from '@/components/PairProgressModal';
 import { can } from '@/lib/perms';
 import { useModuleEnabled } from '@/lib/church';
@@ -20,7 +20,7 @@ import {
   roleTagStyle,
 } from '@/lib/labels';
 import { useT, type Translate } from '@/lib/i18n';
-import { DisplayRole, MODULE_DISCIPLESHIP } from '@tog/shared';
+import { AccountRole, DisplayRole, MODULE_DISCIPLESHIP } from '@tog/shared';
 
 type Filter = 'active' | 'done' | 'pending';
 
@@ -40,7 +40,13 @@ export default function DiscipleshipPage() {
   const t = useT();
   const toast = useToast();
   const confirm = useConfirm();
-  const perms = can(useMe().role);
+  const me = useMe();
+  const perms = can(me.role);
+  // `discipleship` is not in a group_leader's allowed API prefixes at all —
+  // every fetch below is gated off for it too, exactly as it already is for
+  // a switched-off module, so a group_leader session never fires a request
+  // this role is refused anyway.
+  const isGroupLeader = me.role === AccountRole.GroupLeader;
   // 四十天守望 is an ADD-ON module: a church may not run it at all. The nav
   // entry is already gone when it is off, so this only catches a bookmark or a
   // pasted link — and nothing below may fetch, or the page would paint an
@@ -52,13 +58,13 @@ export default function DiscipleshipPage() {
   // nothing visible. This line is the boundary — an API row goes in, module
   // wording comes out. (Not to be confused with the ADD-ON module above: that
   // is the whole 四十天守望 section, this is one 守望模块 inside it.)
-  const modules = useFetch<ProgramRow[]>(discipleshipOn ? '/discipleship/programs' : null);
+  const modules = useFetch<ProgramRow[]>(discipleshipOn && !isGroupLeader ? '/discipleship/programs' : null);
   // Deliberately unfiltered: the page shows ONE module's pairs but needs every
   // module's pair count, for the module list and for the delete confirmation's
   // blast radius — so it is fetched once and grouped here rather than costing
   // a round-trip per module.
-  const pairs = useFetch<PairRow[]>(discipleshipOn ? '/discipleship/pairs' : null);
-  const members = useFetch<MemberRow[]>(discipleshipOn ? '/members' : null);
+  const pairs = useFetch<PairRow[]>(discipleshipOn && !isGroupLeader ? '/discipleship/pairs' : null);
+  const members = useFetch<MemberRow[]>(discipleshipOn && !isGroupLeader ? '/members' : null);
 
   const [filter, setFilter] = useState<Filter>('active');
   const [popup, setPopup] = useState<Node | null>(null);
@@ -284,6 +290,10 @@ export default function DiscipleshipPage() {
   // page's action row does not, so it renders straight away and only the two
   // sections below it are skeletons.
   const booting = pairs.initialLoading || modules.initialLoading;
+
+  // Outside a group_leader's scope entirely — checked before the module
+  // state, so its own reason wins over "module is off" if somehow both apply.
+  if (isGroupLeader) return <RoleRestricted />;
 
   // The module is switched off for this church — say so plainly. The API
   // refuses every /discipleship path regardless (rule G2); this is the reason,

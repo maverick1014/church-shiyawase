@@ -15,6 +15,7 @@ import {
   FactGrid,
   MemberName,
   RoleBadge,
+  RoleRestricted,
   SheetTick,
   SheetTickAll,
   SheetTotals,
@@ -31,6 +32,7 @@ import { HappinessAttendanceResponse, HappinessGroupDetail, MemberRow } from '@/
 import { columnTickState } from '@/lib/sheet';
 import { formatMeetingTime, memberRole, weekdayKey } from '@/lib/labels';
 import { useT } from '@/lib/i18n';
+import { AccountRole } from '@tog/shared';
 
 export default function HappinessGroupDetailPage() {
   const { groupId } = useParams<{ groupId: string }>();
@@ -38,7 +40,8 @@ export default function HappinessGroupDetailPage() {
   const t = useT();
   const toast = useToast();
   const confirm = useConfirm();
-  const perms = can(useMe().role);
+  const me = useMe();
+  const perms = can(me.role);
 
   const detail = useFetch<HappinessGroupDetail>(`/happiness/groups/${groupId}`);
   const attendance = useFetch<HappinessAttendanceResponse>(`/happiness/groups/${groupId}/attendance`);
@@ -177,6 +180,11 @@ export default function HappinessGroupDetailPage() {
     matrix.push([t('sheet.totalPeople'), ...totals.map((x) => x.value)]);
     exportMatrix(t('happy.attendance.exportFile', { group: detail.data.name }), t('happy.attendance.title'), headers, matrix);
   };
+
+  // `happiness` is outside a group_leader's allowed API prefixes — reachable
+  // here only by a bookmark, the catalog it is normally opened from being
+  // itself `RoleRestricted`.
+  if (me.role === AccountRole.GroupLeader) return <RoleRestricted />;
 
   if (detail.initialLoading)
     return (

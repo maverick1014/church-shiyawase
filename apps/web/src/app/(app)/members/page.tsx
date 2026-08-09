@@ -19,6 +19,7 @@ import {
   PageBar,
   PhotoPicker,
   RoleBadge,
+  RoleRestricted,
   RowChevron,
   SkeletonScreen,
   SkeletonTable,
@@ -27,6 +28,7 @@ import {
   useToast,
 } from '@/components/ui';
 import { ImportMembersModal } from '@/components/ImportMembersModal';
+import { useLeaderAccountEvent } from '@/components/LeaderAccountEvent';
 import { can } from '@/lib/perms';
 import { copyText } from '@/lib/clipboard';
 import { exportRows } from '@/lib/export';
@@ -46,7 +48,7 @@ import {
   roleKey,
 } from '@/lib/labels';
 import { useT } from '@/lib/i18n';
-import { ChurchRole, GroupPosition, LEADERSHIP_POSITIONS, MemberStatus } from '@tog/shared';
+import { AccountRole, ChurchRole, GroupPosition, LEADERSHIP_POSITIONS, MemberStatus } from '@tog/shared';
 
 const UNASSIGNED = '__unassigned__';
 
@@ -54,7 +56,8 @@ export default function MembersPage() {
   const router = useRouter();
   const t = useT();
   const toast = useToast();
-  const perms = can(useMe().role);
+  const me = useMe();
+  const perms = can(me.role);
   // Only worth a column when the account can actually see more than one hall.
   const { locked: hallLocked } = useHallScope();
   const { data, initialLoading, error, reload } = useFetch<MemberRow[]>('/members');
@@ -67,6 +70,7 @@ export default function MembersPage() {
   const [servingFilter, setServingFilter] = useState<string>('all');
   const [addOpen, setAddOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const { handleLeaderAccountEvent, leaderAccountModal } = useLeaderAccountEvent();
 
   usePageChrome({ title: t('members.title') }, [t]);
 
@@ -189,6 +193,14 @@ export default function MembersPage() {
     if (await copyText(link)) toast(t('members.toast.linkCopied'));
     else toast(t('common.copyFailed', { link }), 'error');
   };
+
+  // The full directory is outside a group_leader's scope — its own roster
+  // lives on `/groups/:id` instead (the nav entry is already gone; this only
+  // catches a bookmark, same shape `ModuleDisabled` uses for a switched-off
+  // module — rule G2, the server refuses nothing here since `GET /members`
+  // itself stays reachable and merely narrowed, but this whole PAGE is not
+  // the group_leader's to use).
+  if (me.role === AccountRole.GroupLeader) return <RoleRestricted />;
 
   // No early return: the filters and the actions render perfectly well against
   // an empty list, so the real chrome goes up immediately and only the rows
@@ -369,13 +381,15 @@ export default function MembersPage() {
           members={members}
           servingSuggestions={allServing}
           onClose={() => setAddOpen(false)}
-          onSaved={() => {
+          onSaved={(leaderEvent, name) => {
             setAddOpen(false);
             toast(t('members.toast.created'));
+            handleLeaderAccountEvent(leaderEvent, name);
             reload();
           }}
         />
       )}
+      {leaderAccountModal}
 
       {importOpen && (
         <ImportMembersModal onClose={() => setImportOpen(false)} onDone={reload} />
@@ -396,7 +410,10 @@ function AddMemberModal({
    *  thing standing between 敬拜 and 敬拜团 is what somebody typed last time. */
   servingSuggestions: string[];
   onClose: () => void;
-  onSaved: () => void;
+  /** See `MemberEditModal`'s own `onSaved` — this create path can equally
+   *  place a brand-new member straight into 小组长, so it reports the same
+   *  event, for the one member a create can ever produce it for. */
+  onSaved: (leaderEvent?: MemberRow['leader_account_event'], name?: string) => void;
 }) {
   const t = useT();
   const toast = useToast();
@@ -451,16 +468,24 @@ function AddMemberModal({
     }
     setSaving(true);
     setErr(null);
+    // At most one incumbent gets bumped, so a single slot (rather than
+    // MemberEditModal's array) is enough here — the newly created member's
+    // own event, reported right after, is handled separately by `onSaved`.
+    let incumbentEvent: { event: MemberRow['leader_account_event']; name: string } | null = null;
     try {
       if (form.group_id && LEADERSHIP_POSITIONS.includes(form.group_position)) {
         const incumbent = (groupDetail.data?.members ?? []).find(
           (m) => m.group_position === form.group_position,
         );
         if (incumbent) {
-          await api.patch(`/members/${incumbent.id}`, { group_position: GroupPosition.CoreMember });
+          const demoted = await api.patch<MemberRow>(`/members/${incumbent.id}`, {
+            group_position: GroupPosition.CoreMember,
+          });
+          if (demoted.leader_account_event)
+            incumbentEvent = { event: demoted.leader_account_event, name: incumbent.full_name };
         }
       }
-      const created = await api.post<{ id: string }>('/members', {
+      const created = await api.post<MemberRow>('/members', {
         full_name: form.full_name.trim(),
         english_name: form.english_name || undefined,
         phone: form.phone || undefined,
@@ -483,7 +508,13 @@ function AddMemberModal({
         fd.append('file', photo);
         await api.upload(`/members/${created.id}/avatar`, fd);
       }
-      onSaved();
+      // The incumbent's own event (only ever `disabled`, never `created`) is
+      // shown right here as a toast rather than threaded through `onSaved` —
+      // simpler than a second event slot for a case that can only ever be one
+      // of the two non-modal outcomes.
+      if (incumbentEvent?.event?.event === 'disabled')
+        toast(t('leaderAccount.toast.disabled', { name: incumbentEvent.name }));
+      onSaved(created.leader_account_event, form.full_name.trim());
     } catch (e) {
       setErr((e as Error).message);
       toast((e as Error).message, 'error');

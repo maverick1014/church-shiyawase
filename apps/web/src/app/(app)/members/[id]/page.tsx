@@ -11,6 +11,7 @@ import { usePageChrome, useMe } from '@/components/AppShell';
 import { Avatar, BackButton, EntityHeader, ErrorBanner, FactGrid, MemberName, ProgressBar, RoleBadge, SkeletonDetail, SkeletonScreen, SortTh, useConfirm, useToast } from '@/components/ui';
 import { PairProgressModal } from '@/components/PairProgressModal';
 import { MemberEditModal } from '@/components/MemberEditModal';
+import { useLeaderAccountEvent } from '@/components/LeaderAccountEvent';
 import { can } from '@/lib/perms';
 import { useModuleEnabled } from '@/lib/church';
 import { EnrollmentRow, MemberRow, PairRow } from '@/lib/types';
@@ -43,6 +44,7 @@ export default function MemberDetailPage() {
   const fileRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
+  const { handleLeaderAccountEvent, leaderAccountModal } = useLeaderAccountEvent();
   const [popupPair, setPopupPair] = useState<string | null>(null);
 
   // Hooks must run unconditionally on every render (rules of hooks) — this
@@ -317,13 +319,15 @@ export default function MemberDetailPage() {
         <MemberEditModal
           member={m}
           onClose={() => setEditOpen(false)}
-          onSaved={() => {
+          onSaved={(leaderEvents) => {
             setEditOpen(false);
             member.reload();
             toast(tr('member.toast.saved'));
+            leaderEvents?.forEach(({ event, name }) => handleLeaderAccountEvent(event, name));
           }}
         />
       )}
+      {leaderAccountModal}
 
       {popupPair && (
         <PairProgressModal pairId={popupPair} canEdit={perms.write} onClose={() => setPopupPair(null)} />

@@ -18,6 +18,7 @@ import {
   MemberName,
   Modal,
   PageBar,
+  RoleRestricted,
   RowChevron,
   SkeletonCard,
   SkeletonScreen,
@@ -31,7 +32,7 @@ import { exportRows } from '@/lib/export';
 import { formatDate, weekdayKey, WEEKDAY_OPTIONS } from '@/lib/labels';
 import { HappinessGroupRow, HappinessTermRow, MemberRow } from '@/lib/types';
 import { useT } from '@/lib/i18n';
-import { Weekday } from '@tog/shared';
+import { AccountRole, Weekday } from '@tog/shared';
 
 export default function HappinessTermGroupsPage() {
   const { termId } = useParams<{ termId: string }>();
@@ -39,7 +40,8 @@ export default function HappinessTermGroupsPage() {
   const t = useT();
   const toast = useToast();
   const confirm = useConfirm();
-  const perms = can(useMe().role);
+  const me = useMe();
+  const perms = can(me.role);
   const { locked: hallLocked, hallId } = useHallScope();
   const showHall = !hallLocked && !hallId;
 
@@ -103,6 +105,11 @@ export default function HappinessTermGroupsPage() {
       toast((e as Error).message, 'error');
     }
   };
+
+  // `happiness` is outside a group_leader's allowed API prefixes — reachable
+  // here only by a bookmark, the catalog it is normally opened from being
+  // itself `RoleRestricted`.
+  if (me.role === AccountRole.GroupLeader) return <RoleRestricted />;
 
   if (term.initialLoading)
     return (

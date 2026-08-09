@@ -6,7 +6,7 @@ import { useFetch } from '@/lib/hooks';
 import { useSortableRows } from '@/lib/sort';
 import { api } from '@/lib/api';
 import { usePageChrome, useMe } from '@/components/AppShell';
-import { BackButton, Combobox, ErrorBanner, ExportButton, Field, LinkIcon, MemberName, Modal, SheetTotals, SkeletonCard, SkeletonScreen, SortTh, useConfirm, useToast } from '@/components/ui';
+import { BackButton, Combobox, ErrorBanner, ExportButton, Field, LinkIcon, MemberName, Modal, RoleRestricted, SheetTotals, SkeletonCard, SkeletonScreen, SortTh, useConfirm, useToast } from '@/components/ui';
 import { can } from '@/lib/perms';
 import { exportMatrix } from '@/lib/export';
 import { EnrollmentRow, MemberRow, NamelistResponse, SessionRow, TrainingDetail } from '@/lib/types';
@@ -23,7 +23,7 @@ import {
 import { copyText } from '@/lib/clipboard';
 import { fromChurchInput, toChurchInput } from '@/lib/time';
 import { useT } from '@/lib/i18n';
-import { EnrollmentStatus, TrainingKind } from '@tog/shared';
+import { AccountRole, EnrollmentStatus, TrainingKind } from '@tog/shared';
 import { TrainingModal } from '@/components/TrainingModal';
 
 export default function TrainingDetailPage() {
@@ -32,7 +32,8 @@ export default function TrainingDetailPage() {
   const tr = useT();
   const toast = useToast();
   const confirm = useConfirm();
-  const perms = can(useMe().role);
+  const me = useMe();
+  const perms = can(me.role);
 
   const detail = useFetch<TrainingDetail>(`/trainings/${id}`);
   const namelist = useFetch<NamelistResponse>(`/trainings/${id}/namelist`);
@@ -67,6 +68,12 @@ export default function TrainingDetailPage() {
     { title: isActivity ? tr('training.activityTitle') : tr('training.title') },
     [id, tr, isActivity],
   );
+
+  // `trainings` is outside a group_leader's allowed API prefixes — reachable
+  // here only by a bookmark (the catalog it would normally be clicked from is
+  // itself `RoleRestricted`), so this is the same reason repeated at the one
+  // other door in.
+  if (me.role === AccountRole.GroupLeader) return <RoleRestricted />;
 
   // Course header card over the sessions/roster pair — the same three boxes
   // the loaded page draws.

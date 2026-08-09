@@ -8,6 +8,7 @@ import { api } from '@/lib/api';
 import { usePageChrome, useMe } from '@/components/AppShell';
 import { BackButton, Combobox, ErrorBanner, ExportButton, Field, HallSelect, MemberName, MonthPicker, RoleBadge, SheetTick, SheetTickAll, SheetTotals, SkeletonCard, SkeletonScreen, SkeletonTable, SortTh, TagsInput, useConfirm, useToast } from '@/components/ui';
 import { MemberEditModal } from '@/components/MemberEditModal';
+import { useLeaderAccountEvent } from '@/components/LeaderAccountEvent';
 import { can } from '@/lib/perms';
 import { exportMatrix } from '@/lib/export';
 import {
@@ -116,6 +117,7 @@ function GroupPanel({
   const confirm = useConfirm();
   const toast = useToast();
   const perms = can(useMe().role);
+  const { handleLeaderAccountEvent, leaderAccountModal } = useLeaderAccountEvent();
   const [name, setName] = useState(group.name);
   const [desc, setDesc] = useState(group.description ?? '');
   const [meetingDay, setMeetingDay] = useState<Weekday | ''>(group.meeting_day ?? '');
@@ -203,12 +205,13 @@ function GroupPanel({
   const addMember = async () => {
     if (!addSel) return;
     try {
-      await api.patch(`/members/${addSel}`, {
+      const updated = await api.patch<MemberRow>(`/members/${addSel}`, {
         group_id: group.id,
         group_position: GroupPosition.NewMember,
       });
       setAddSel('');
       toast(t('group.toast.joined'));
+      handleLeaderAccountEvent(updated.leader_account_event, updated.full_name);
       onChanged();
     } catch (e) {
       setErr((e as Error).message);
@@ -226,8 +229,12 @@ function GroupPanel({
     });
     if (!ok) return;
     try {
-      await api.patch(`/members/${memberId}`, { group_id: null, group_position: null });
+      const updated = await api.patch<MemberRow>(`/members/${memberId}`, { group_id: null, group_position: null });
       toast(t('group.toast.removed'));
+      // Removing 小组长 from the group entirely is a demotion exactly like
+      // reassigning their seat — the account (if auto-provisioned) is
+      // disabled the same way (`syncGroupLeaderAccount`).
+      handleLeaderAccountEvent(updated.leader_account_event, who);
       onChanged();
     } catch (e) {
       setErr((e as Error).message);
@@ -243,10 +250,17 @@ function GroupPanel({
     try {
       const incumbent = groupMembers.find((m) => m.group_position === pos);
       if (incumbent && incumbent.id !== memberId) {
-        await api.patch(`/members/${incumbent.id}`, { group_position: GroupPosition.CoreMember });
+        const demoted = await api.patch<MemberRow>(`/members/${incumbent.id}`, {
+          group_position: GroupPosition.CoreMember,
+        });
+        // Only meaningful when `pos` is specifically Leader (every other
+        // leadership seat is out of `syncGroupLeaderAccount`'s scope), but
+        // the event is simply absent otherwise — nothing extra to branch on.
+        handleLeaderAccountEvent(demoted.leader_account_event, incumbent.full_name);
       }
       if (memberId) {
-        await api.patch(`/members/${memberId}`, { group_position: pos });
+        const promoted = await api.patch<MemberRow>(`/members/${memberId}`, { group_position: pos });
+        handleLeaderAccountEvent(promoted.leader_account_event, promoted.full_name);
       }
       toast(t('group.toast.leadership'));
       onChanged();
@@ -454,13 +468,15 @@ function GroupPanel({
         <MemberEditModal
           member={editingMember}
           onClose={() => setEditMemberId(null)}
-          onSaved={() => {
+          onSaved={(leaderEvents) => {
             setEditMemberId(null);
             toast(t('member.toast.saved'));
+            leaderEvents?.forEach(({ event, name }) => handleLeaderAccountEvent(event, name));
             onChanged();
           }}
         />
       )}
+      {leaderAccountModal}
     </>
   );
 }

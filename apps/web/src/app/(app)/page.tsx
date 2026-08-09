@@ -2,13 +2,13 @@
 
 import { useMemo, useState } from 'react';
 import { useFetch } from '@/lib/hooks';
-import { usePageChrome } from '@/components/AppShell';
+import { usePageChrome, useMe } from '@/components/AppShell';
 import { Card, ErrorBanner, Skeleton, SkeletonScreen, SkeletonTable } from '@/components/ui';
 import { EventRow, MemberRow } from '@/lib/types';
 import { formatDateTime } from '@/lib/labels';
 import { monthlyVisitAndActiveTrend } from '@/lib/dashboard';
 import { useT } from '@/lib/i18n';
-import { MemberStatus, ChurchRole } from '@tog/shared';
+import { AccountRole, MemberStatus, ChurchRole } from '@tog/shared';
 
 /** Trailing months the trend chart covers. */
 const TREND_MONTHS = 6;
@@ -17,14 +17,20 @@ export default function DashboardPage() {
   const t = useT();
   usePageChrome({ title: t('dash.title') }, [t]);
 
+  // `events` is NOT in a group_leader's allowed API prefixes (`events/services
+  // roll call` is out of its scope entirely) — `GET /members` narrows to its
+  // own group on its own (server-side), so that half of the dashboard needs
+  // no page-specific change, but `/events` would otherwise 403 on every load
+  // and paint a scary error banner where the upcoming-events table goes.
+  const isGroupLeader = useMe().role === AccountRole.GroupLeader;
   const members = useFetch<MemberRow[]>('/members');
-  const events = useFetch<EventRow[]>('/events');
+  const events = useFetch<EventRow[]>(isGroupLeader ? null : '/events');
 
   const [showVisits, setShowVisits] = useState(true);
   const [showActive, setShowActive] = useState(true);
 
-  const loading = members.initialLoading || events.initialLoading;
-  const error = members.error || events.error;
+  const loading = members.initialLoading || (!isGroupLeader && events.initialLoading);
+  const error = members.error || (isGroupLeader ? null : events.error);
 
   const memberList = members.data ?? [];
 

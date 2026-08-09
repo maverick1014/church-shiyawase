@@ -32,6 +32,15 @@ type ImportResult = {
   updated: number;
   skipped: Array<{ row: number; issue: string; field: string | null; detail: string | null; message: string }>;
   failures: Array<{ row: number; message: string }>;
+  /**
+   * A 小组长 login the server auto-provisioned while applying this import —
+   * see `syncGroupLeaderAccount`. Shown ONCE, the same rule a single
+   * promotion's own credential modal follows (rule G6): there is no second
+   * place to find these passwords again. Optional so an older deployed build
+   * (before this field existed) still renders — the results table below only
+   * appears when the array is present and non-empty.
+   */
+  leader_accounts?: Array<{ row: number; email: string; password: string }>;
 };
 
 /**
@@ -274,6 +283,38 @@ export function ImportMembersModal({
                   <li key={`s${s.row}`}>{t('import.col.row')} {s.row} — {s.message}</li>
                 ))}
               </ul>
+            </>
+          )}
+          {/* A generated 小组长 login per row, shown ONCE — see the type's own
+              comment (rule G6). An import can create several in one run, so
+              this is a small results TABLE rather than a modal per row (the
+              single-promotion flow's own shape, `LeaderAccountEvent.tsx`). */}
+          {result.leader_accounts && result.leader_accounts.length > 0 && (
+            <>
+              <div className="section-label" style={{ marginTop: 14, marginBottom: 4 }}>
+                {t('import.leaderAccounts.title')}
+              </div>
+              <div className="hint" style={{ marginBottom: 8 }}>{t('import.leaderAccounts.hint')}</div>
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>{t('import.leaderAccounts.col.row')}</th>
+                      <th>{t('import.leaderAccounts.col.email')}</th>
+                      <th>{t('import.leaderAccounts.col.password')}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {result.leader_accounts.map((a) => (
+                      <tr key={a.row}>
+                        <td className="muted tnum">{a.row}</td>
+                        <td>{a.email}</td>
+                        <td style={{ fontFamily: 'monospace' }}>{a.password}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </>
           )}
           <div className="modal-actions">
