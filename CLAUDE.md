@@ -260,18 +260,46 @@ is created by the API with it and exists only to give the roll call its one
 column to tick — its date, **its time and its meeting point** are the record's
 own `starts_on`/`ends_on` (the same day twice), `start_time` and `location`
 (migration 0016), so there is no second place any of them can be edited. `kind`
-is **convertible**: course → activity keeps only the FIRST session and deletes
-the rest with their attendance (`useConfirm({ danger: true })` names how many
-sessions and how many ticks go); activity → course simply lets the one session
-be session 1. The invariant is the server's — `ensureSingleSession` in
-`route.ts` — not the form's. The public self-sign-up link (`/enroll/[id]`,
-matching a full name) serves both.
+is **fixed at creation** (migration 0024 retired the course↔activity
+conversion this form used to offer, church feedback: "easier, and will not
+confuse"): the segmented shape picker in `TrainingModal.tsx` shows only while
+CREATING a row; editing an existing one shows the shape as plain read-only
+text, with no control that could change it. The server enforces the same thing
+independently (rule G2) — `trainingWrite()`'s `applyKindEffects` option is
+`false` on every PATCH, so even a hand-rolled request carrying `kind` has it
+deleted before the update runs and never mutates `total_sessions`/`ends_on` on
+an edit; `ensureSingleSession` in `route.ts` now runs only once, from the POST
+that creates an activity. The public self-sign-up link (`/enroll/[id]`,
+matching a full name) serves both shapes, unchanged.
 
 There is no 类别 any more, and no `trainer_id`: who runs a thing is **`pic` +
 `pic_contact`**, both plain text, because the person in charge is often an
 outside speaker with no member record and what people need is a number to ring
 before they sign up. Both show on the catalog card, the detail header and the
-public page — one line, built once by `trainingMeta` in `lib/labels.ts`.
+public page — one line, built once by `trainingMeta` in `lib/labels.ts`, which
+also carries the optional **性别限制** below (0024): `trainings.gender`,
+nullable `gender_type` (the same enum `members.gender` uses). The form offers
+only 男 / 女 / 不限 — "other" is deliberately not a selectable restriction here,
+even though the column itself allows any `gender_type` value, because a
+training's restriction is meaningfully binary in this church's actual use
+(兄弟团爬山 / 姐妹团做蛋糕). It is enforced **server-side at enrollment**: the
+public self-enrollment handler (`POST /trainings/enroll/:id`) refuses a
+mismatched member with a 400 after resolving the name, a real business rule
+rather than a UI-only hint. The create/edit form pairs its fields differently
+per shape now: an activity's meeting point sits beside the congregation/hall
+select in one row; a course pairs its session count with the hall select in
+one row and its start/end dates in a separate row underneath — the hall select
+is rendered branch-locally in each case (same `form.hall_id` state) rather than
+once, shared, after both branches. The payment QR can be picked **during
+creation** too, not only after the row exists: the file is compressed
+client-side and held in the form until the training is created, then chained
+onto it with a follow-up `POST /trainings/:id/payment-qr` before the modal
+closes — a failed chained upload does not roll back the successful creation,
+it toasts a distinct warning naming that the QR needs to be added from Edit.
+成员's church-wide role (访客/一般成员/...) no longer shows anywhere on this
+page's three role-bearing spots (the enrollee-picker hint, the enrolled-member
+row, the printable namelist's role column) — a training reads who signed up,
+not what they rank as.
 
 **报名费 (0016).** `trainings.fee` null/0 means free and nothing below it
 appears. A fee that IS set carries `payment_instructions` (free text — a bank

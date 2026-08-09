@@ -325,7 +325,9 @@ export default function MemberDetailPage() {
         />
       )}
 
-      {popupPair && <PairProgressModal pairId={popupPair} onClose={() => setPopupPair(null)} />}
+      {popupPair && (
+        <PairProgressModal pairId={popupPair} canEdit={perms.write} onClose={() => setPopupPair(null)} />
+      )}
     </>
   );
 }

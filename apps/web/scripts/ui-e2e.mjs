@@ -1231,9 +1231,85 @@ async function main() {
         /09:30/.test(activityBody) && /ZZ_UITEST car park/.test(activityBody),
         activityBody.replace(/\s+/g, ' ').slice(0, 200));
       await shot('06b-activity-detail');
+
+      // Editing this activity: `kind` is fixed at creation now (0024) — no
+      // shape picker in the edit form, and the meeting point pairs with the
+      // congregation select in one row (it used to stand alone).
+      await page.locator('button:has-text("Edit activity")').first().click();
+      await page.locator('.modal').first().waitFor({ timeout: 15000 });
+      check('editing an activity offers no shape picker any more',
+        (await page.locator('.modal [role="group"][aria-label="Shape"]').count()) === 0);
+      check('…it shows the shape as plain read-only text instead',
+        (await page.locator('.modal .field:has(.field-label:has-text("Shape")) input[disabled]').count()) === 1);
+      check('the edit form also offers a gender-restriction field',
+        (await page.locator('.modal .field:has(.field-label:has-text("Restricted to")) select').count()) === 1);
+      const actFormRows = page.locator('.modal .form-row');
+      const actRowTexts = await actFormRows.allInnerTexts();
+      check('the meeting point and the congregation select now share one row',
+        actRowTexts.some((t2) => /Meeting point/.test(t2) && /Congregation/.test(t2)),
+        JSON.stringify(actRowTexts));
+      await page.locator('.modal button:has-text("Cancel")').click();
+
+      // Editing the course fixture: same kind-lock, and its own row-pairing —
+      // sessions beside the congregation select, start/end date together.
+      await page.goto(`${BASE}/trainings/${fxTraining.id}`, { waitUntil: 'domcontentloaded' });
+      await page.locator('button:has-text("Edit training")').first().click();
+      await page.locator('.modal').first().waitFor({ timeout: 15000 });
+      check('editing a course offers no shape picker any more',
+        (await page.locator('.modal [role="group"][aria-label="Shape"]').count()) === 0);
+      const courseFormRows = page.locator('.modal .form-row');
+      const courseRowTexts = await courseFormRows.allInnerTexts();
+      check('sessions and the congregation select now share one row',
+        courseRowTexts.some((t2) => /Sessions/.test(t2) && /Congregation/.test(t2)),
+        JSON.stringify(courseRowTexts));
+      check('…and start date / end date share their own separate row',
+        courseRowTexts.some((t2) => /Start date/.test(t2) && /End date/.test(t2)),
+        JSON.stringify(courseRowTexts));
+      await page.locator('.modal button:has-text("Cancel")').click();
     } finally {
       await fxActivity.remove();
       await fxTraining.remove();
+    }
+
+    /* -- trainings: CREATE mode still offers the shape picker, plus a
+       direct QR upload chained onto the row the moment it exists -------- */
+    mod('trainings & activities · create-mode shape picker · QR upload at creation');
+    {
+      await page.goto(`${BASE}/trainings`, { waitUntil: 'domcontentloaded' });
+      await page.locator('button:visible:has-text("Add training")').first().click();
+      await page.locator('.modal').first().waitFor({ timeout: 15000 });
+      check('CREATE still offers the shape picker (only an edit locks it)',
+        (await page.locator('.modal [role="group"][aria-label="Shape"]').count()) === 1);
+
+      const field = (label) =>
+        page.locator('.modal .field', { has: page.locator('.field-label', { hasText: label }) }).locator('input, select, textarea').first();
+      const qrCourseName = fixtureName('QRCOURSE');
+      await field('Training name').fill(qrCourseName);
+      // A fee turns the payment block — and the QR picker — on.
+      await field('Sign-up fee (RM)').fill('20');
+      const qrInput = page.locator('.modal .field', { has: page.locator('.field-label', { hasText: 'Payment QR' }) }).locator('input[type=file]');
+      check('the QR picker appears during CREATE, not only after the row is saved',
+        (await qrInput.count()) === 1);
+      const qrPng = Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+        'base64',
+      );
+      await qrInput.setInputFiles({ name: 'qr.png', mimeType: 'image/png', buffer: qrPng });
+      // compressImage() decodes and re-encodes the picked file client-side —
+      // give it a beat before Save is pressed.
+      await w(400);
+      await page.locator('.modal button:has-text("Save")').click();
+      await page.waitForURL(/\/trainings\/[0-9a-f-]+/, { timeout: 20000 });
+      const qrTrainingId = page.url().match(/trainings\/([0-9a-f-]+)/)?.[1];
+      check('the training was created', !!qrTrainingId, page.url());
+      if (qrTrainingId) {
+        const removeQrTraining = disposable(`training ${qrCourseName}`, `/trainings/${qrTrainingId}`);
+        const created = await apiGet(`/trainings/${qrTrainingId}`);
+        check('…and its payment QR was chained onto it in the same action, one request after the other',
+          typeof created?.payment_qr_url === 'string' && created.payment_qr_url.length > 0,
+          String(created?.payment_qr_url));
+        await removeQrTraining();
+      }
     }
 
     /* -- 报名费: the fee fields, and the receipt behind an approval -------- */
@@ -1359,6 +1435,12 @@ async function main() {
     mod('forty days · progress dialog');
     const fxPair = await makePair();
     try {
+      // A staff remark, set directly (the point of C1's field is that AddPairModal
+      // can also write it at creation — this covers the PATCH half of the same
+      // column, and gives the overview table something real to show).
+      const pairRemark = 'ZZ_UITEST 进度良好';
+      await ctx.request.patch(`${BASE}/api/discipleship/pairs/${fxPair.id}`, { data: { remark: pairRemark } });
+
       await page.goto(`${BASE}/discipleship`, { waitUntil: 'domcontentloaded' });
       await page.locator('.chip', { hasText: 'Active' }).first().waitFor({ timeout: 20000 });
       await page.locator('.chip', { hasText: 'Completed' }).first().click();
@@ -1366,19 +1448,86 @@ async function main() {
       await page.locator('.chip', { hasText: 'Active' }).first().click();
       await w(400);
       check('the relay chart state filter switches', true);
+
+      // The pastor-overview table: mentor and trainee are now their OWN
+      // columns (not one combined "trainee ← mentor" cell), and a Remark
+      // column sits right before the actions column. This table is
+      // `.only-desktop`, hidden at this suite's phone viewport, so the check
+      // reads textContent (DOM-only) rather than innerText (visibility-aware).
+      const theadThs = page.locator('.only-desktop table thead th');
+      const headerTexts = (await theadThs.allTextContents()).map((s) => s.trim());
+      check('the pastor-overview table splits mentor and trainee into separate columns',
+        headerTexts.includes('Trainee') && headerTexts.includes('Mentor'), JSON.stringify(headerTexts));
+      check('…and a Remark column sits immediately before the actions column',
+        headerTexts.length >= 2 && headerTexts[headerTexts.length - 2] === 'Remark', JSON.stringify(headerTexts));
+      const remarkCell = page.locator('.only-desktop table tbody tr', { has: page.locator(`text=${fxPair.traineeName}`) })
+        .locator('.cell-remark');
+      check('…and this pair’s row shows the remark that was set',
+        (await remarkCell.first().textContent())?.trim() === pairRemark,
+        await remarkCell.first().textContent());
+
       const pairTile = page.locator('.mtile', { hasText: fxPair.traineeName });
       await pairTile.first().waitFor({ timeout: 20000 });
       check('a created pair appears in the pastor overview', (await pairTile.count()) === 1);
+      check('…and the mobile tile shows the remark too',
+        (await pairTile.first().innerText()).includes(pairRemark));
       await pairTile.first().click();
       await page.locator('.modal .day-cell').first().waitFor({ timeout: 15000 });
       check('opening a pair shows the 40-day grid', (await page.locator('.modal .day-cell').count()) >= 40);
+
+      // The pair-level remark is editable right here too, pre-filled with
+      // what was just set — not merely displayed.
+      const modalRemark = page.locator('.modal .field', { has: page.locator('.field-label', { hasText: 'Remark' }) }).locator('textarea');
+      check('the remark is editable inside the progress dialog, pre-filled',
+        (await modalRemark.inputValue()) === pairRemark);
+
       await page.locator('.modal .day-cell').first().click();
       await w(400);
       check("clicking a day shows that day's entry", /Day\s*1\b/.test(await page.locator('.modal').innerText()));
+
+      // The day entry is now EDITABLE — a checkbox, notes, and entry
+      // date/time — not a read-only badge. Nothing here auto-saves.
+      check('a day cell offers a completed checkbox and entry date/time fields',
+        (await page.locator('.modal input[type=checkbox]').count()) === 1 &&
+          (await page.locator('.modal input[type=date]').count()) === 1 &&
+          (await page.locator('.modal input[type=time]').count()) === 1);
+      const dayNote = 'ZZ_UITEST day one note';
+      await page.locator('.modal textarea').last().fill(dayNote);
+      await page.locator('.modal input[type=checkbox]').first().check();
       await shot('07-pair-modal');
+
+      // Footer is exactly one row: Delete, Share, Save — no separate "Open
+      // form" any more, since this dialog can now fill in an entry itself.
+      const footerLabels = (await page.locator('.modal .modal-actions button').allInnerTexts()).map((s) => s.trim());
+      check('the footer is one row — Delete, Share, Save',
+        footerLabels.some((l) => /Delete/i.test(l)) &&
+          footerLabels.some((l) => /Copy link/i.test(l)) &&
+          footerLabels.some((l) => /^Save$/i.test(l)),
+        JSON.stringify(footerLabels));
+      check('…and "Open form" is gone — Share is the only way to the public link now',
+        !footerLabels.some((l) => /Open form/i.test(l)), JSON.stringify(footerLabels));
+
+      await page.locator('.modal button:has-text("Save")').click();
+      const saveToasted = await page.locator('.toast').first().waitFor({ timeout: 5000 }).then(() => true, () => false);
+      check('saving the day entry and the remark together answers with a toast', saveToasted);
+      await w(500);
+
+      // Reopen and confirm it actually persisted — Save must not have been a
+      // no-op that only looked like it worked.
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await page.locator('.mtile', { hasText: fxPair.traineeName }).first().waitFor({ timeout: 20000 });
+      await page.locator('.mtile', { hasText: fxPair.traineeName }).first().click();
+      await page.locator('.modal .day-cell').first().waitFor({ timeout: 15000 });
+      check('the day is marked done after reload', (await page.locator('.modal .day-cell.done').count()) >= 1);
+      await page.locator('.modal .day-cell').first().click();
+      await w(400);
+      check('…and the note that was typed actually persisted',
+        (await page.locator('.modal textarea').last().inputValue()) === dayNote);
+
       await page.locator('.modal .icon-btn').first().click();
       await w(300);
       check('✕ closes the dialog', (await page.locator('.modal').count()) === 0);
+
       // The pair reads as one sentence ("Led by X" / "Leading X") on the
       // MEMBER's own detail page now, not a bare "Mentor"/"Trainee" badge.
       await page.goto(`${BASE}/members/${fxPair.traineeId}`, { waitUntil: 'domcontentloaded' });
@@ -1387,6 +1536,21 @@ async function main() {
       check('the trainee’s own page reads the pair as "Led by <mentor>"',
         traineePageBody.includes(`Led by ${fxPair.mentorName}`) &&
           !traineePageBody.includes('Mentor') && !traineePageBody.includes('Trainee'));
+
+      // AddPairModal (C1): mentor and trainee comboboxes sit in ONE row now,
+      // divider "➜" between them, plus an optional remark field — replacing
+      // the old vertical stack with a centred "↓".
+      await page.goto(`${BASE}/discipleship`, { waitUntil: 'domcontentloaded' });
+      await page.locator('button:visible:has-text("Add pair")').first().click();
+      await page.locator('.modal').first().waitFor({ timeout: 15000 });
+      const pickerRow = page.locator('.modal .flex.items-end.gap-10.flex-wrap');
+      check('mentor and trainee sit in one row, not stacked with a ↓ divider',
+        (await pickerRow.count()) === 1 &&
+          (await pickerRow.locator('.combo').count()) === 2 &&
+          /➜/.test(await pickerRow.innerText()));
+      check('the add-pair form also offers a remark field',
+        (await page.locator('.modal .field', { has: page.locator('.field-label', { hasText: 'Remark' }) }).locator('textarea').count()) === 1);
+      await page.locator('.modal button:has-text("Cancel")').click();
     } finally {
       await fxPair.remove();
     }
@@ -2088,6 +2252,27 @@ async function main() {
 
     /* -- interface language ----------------------------------------------- */
     mod('interface language');
+
+    // The DEFAULT language — no session, no account, no cached choice — is
+    // now Chinese (0025: the DB column's own DEFAULT flipped from 'en' to
+    // 'zh', and DEFAULT_LANGUAGE in packages/shared with it). A brand-new
+    // browser context has neither a cookie nor a localStorage entry, so
+    // /login has nothing to fall back on but that default.
+    {
+      const fresh = await browser.newContext({ viewport: { width: 402, height: 874 } });
+      try {
+        const freshPage = await fresh.newPage();
+        await freshPage.goto(`${BASE}/login`, { waitUntil: 'domcontentloaded' });
+        await freshPage.locator('button[type=submit]').first().waitFor({ timeout: 20000 });
+        const freshBody = await freshPage.locator('body').innerText();
+        check('a fresh session with no language chosen renders /login in Chinese by default',
+          /登录/.test(freshBody) && !/Sign in/.test(freshBody),
+          freshBody.replace(/\s+/g, ' ').slice(0, 160));
+      } finally {
+        await fresh.close();
+      }
+    }
+
     // The language is a per-account setting, so switch this account's own and
     // confirm the whole shell re-renders in it (then switch straight back).
     const meRes = await ctx.request.get(`${BASE}/api/auth/me`);

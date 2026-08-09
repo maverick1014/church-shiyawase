@@ -16,8 +16,6 @@ import {
   formatDateTime,
   formatMoney,
   hasFee,
-  memberRole,
-  roleKey,
   trainingKindClass,
   trainingKindKey,
   trainingMeta,
@@ -49,10 +47,14 @@ export default function TrainingDetailPage() {
   // Hooks must run unconditionally on every render (rules of hooks) — this
   // has to sit above the loading/error early-returns below, not after them.
   const nl = namelist.data;
+  // Name is the only sortable column left on this sheet — role no longer
+  // shows here at all (rule G8's data-not-display split: it is still on the
+  // member record, just not something a training page has any business
+  // showing).
   const { sorted: sortedNamelist, sortKey: nlSortKey, sortDir: nlSortDir, toggleSort: toggleNlSort } =
     useSortableRows(
       nl?.rows ?? [],
-      (r, key) => (key === 'role' ? tr(roleKey(memberRole(r.member))) : r.member.full_name),
+      (r) => r.member.full_name,
       { key: 'name', dir: 'asc' },
     );
 
@@ -211,7 +213,6 @@ export default function TrainingDetailPage() {
     if (!nl) return;
     const headers = [
       tr('training.col.enrollee'),
-      tr('export.role'),
       ...nl.sessions.map((s) =>
         isActivity
           ? tr('training.col.attendedActivity')
@@ -222,10 +223,9 @@ export default function TrainingDetailPage() {
     // is the question a namelist is read to answer.
     const matrix: (string | number)[][] = sortedNamelist.map((r) => [
       r.member.full_name,
-      tr(roleKey(memberRole(r.member))),
       ...r.attendance.map((a) => (a.attended ? tr('training.legend.present') : tr('training.legend.absent'))),
     ]);
-    matrix.push([tr('sheet.totalPeople'), '', ...sessionTotals.map((x) => x.value)]);
+    matrix.push([tr('sheet.totalPeople'), ...sessionTotals.map((x) => x.value)]);
     exportMatrix(
       tr('training.exportFile', { name: t.name }),
       tr('trainings.roster'),
@@ -374,7 +374,6 @@ export default function TrainingDetailPage() {
                     value: m.id,
                     label: m.full_name,
                     sub: m.english_name,
-                    hint: tr(roleKey(memberRole(m))),
                   }))}
                 placeholder={tr('training.addEnrollee')}
                 ariaLabel={tr('training.addEnrollee')}
@@ -389,9 +388,6 @@ export default function TrainingDetailPage() {
               <div key={e.id} className="enrol-row flex items-center gap-10" style={{ padding: '9px 0', borderBottom: '1px solid var(--border)' }}>
                 <div className="grow">
                   <MemberName member={e.member} style={{ fontSize: 13 }} />
-                  <div className="muted" style={{ fontSize: 11.5 }}>
-                    {e.member ? tr(roleKey(memberRole(e.member))) : ''}
-                  </div>
                 </div>
                 <div
                   className="flex items-center gap-6"
@@ -473,7 +469,6 @@ export default function TrainingDetailPage() {
             <thead>
               <tr>
                 <SortTh sortKey="name" activeKey={nlSortKey} dir={nlSortDir} onSort={toggleNlSort}>{tr('training.col.enrollee')}</SortTh>
-                <SortTh sortKey="role" activeKey={nlSortKey} dir={nlSortDir} onSort={toggleNlSort}>{tr('members.col.role')}</SortTh>
                 {(nl?.sessions ?? []).map((s) => (
                   <th key={s.id} style={{ textAlign: 'center' }}>
                     {isActivity
@@ -494,7 +489,6 @@ export default function TrainingDetailPage() {
                   <td style={{ whiteSpace: 'nowrap' }}>
                     <MemberName member={r.member} />
                   </td>
-                  <td className="muted" style={{ whiteSpace: 'nowrap' }}>{tr(roleKey(memberRole(r.member)))}</td>
                   {r.attendance.map((a) => (
                     <td key={a.session_id} style={{ textAlign: 'center' }}>
                       <span
@@ -510,7 +504,7 @@ export default function TrainingDetailPage() {
               ))}
               {sortedNamelist.length === 0 && (
                 <tr>
-                  <td colSpan={2 + (nl?.sessions.length ?? 0)} className="empty-inline">
+                  <td colSpan={1 + (nl?.sessions.length ?? 0)} className="empty-inline">
                     {tr('training.namelistEmpty')}
                   </td>
                 </tr>
@@ -518,9 +512,9 @@ export default function TrainingDetailPage() {
             </tbody>
             {/* Only once somebody is on the list: an empty namelist shows its
                 empty row and no footer, the same way the other two sheets draw
-                no table at all when nobody is on them. The label spans the two
-                leading columns (name + role). */}
-            {sortedNamelist.length > 0 && <SheetTotals span={2} counts={sessionTotals} />}
+                no table at all when nobody is on them. The label spans the one
+                leading column (name — role no longer shows on this sheet). */}
+            {sortedNamelist.length > 0 && <SheetTotals span={1} counts={sessionTotals} />}
           </table>
         </div>
         <div className="flex gap-12 flex-wrap muted mt-14" style={{ fontSize: 12 }}>

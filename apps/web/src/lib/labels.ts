@@ -370,12 +370,17 @@ export function trainingMeta(
     ends_on: string | null;
     start_time: string | null;
     location: string | null;
+    gender?: string | null;
   },
   t: (key: MessageKey, vars?: Record<string, string | number>) => string,
 ): string[] {
   const parts: string[] = [];
   parts.push(t('trainings.pic', { name: row.pic || t('common.pending') }));
   if (row.pic_contact) parts.push(t('trainings.picContact', { contact: row.pic_contact }));
+  // A gender restriction is a hard eligibility rule, so it rides along with
+  // who to contact rather than getting a whole line of its own (rule G5: one
+  // "who and when" line, not a second inconsistent way to show it).
+  if (row.gender) parts.push(t('trainings.genderOnly', { gender: t(genderKey(row.gender)) }));
   if (row.kind === TrainingKind.Activity) {
     // Date and time are one fact about one occasion, so they read as one:
     // "2026-09-12 09:00". A bare `time` is a Malaysian wall-clock reading.

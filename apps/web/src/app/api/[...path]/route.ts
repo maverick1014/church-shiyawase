@@ -895,8 +895,8 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
         // member, and that member must not already be on the list.
         if (!training.is_enrollable) return json({ status: 'closed' });
         if (!fullName) return json({ status: 'no_member' });
-        const matches = unwrap<Array<{ id: string; full_name: string }>>(
-          await db.from('members').select('id,full_name').eq('full_name', fullName),
+        const matches = unwrap<Array<{ id: string; full_name: string; gender: string | null }>>(
+          await db.from('members').select('id,full_name,gender').eq('full_name', fullName),
         );
         if (matches.length === 0) return json({ status: 'no_member' });
         if (matches.length > 1) return json({ status: 'ambiguous' });
@@ -909,6 +909,12 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
             .eq('member_id', member.id),
         );
         if (existing.length > 0) return json({ status: 'already', name: member.full_name });
+
+        // 性别限制 (0024) — a real eligibility rule, not a UI hint, so a
+        // mismatch is refused here regardless of what the live "does this
+        // match?" check told the visitor while they were still typing.
+        if (training.gender && member.gender !== training.gender)
+          throw new HttpError(400, `This training is open to ${training.gender} members only`);
 
         // A 报名费 makes the receipt part of the sign-up, not an afterthought:
         // without it there is nothing for the admin to check before approving,
@@ -1046,24 +1052,22 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
         return json({ ...training, sessions, enrollments });
       }
       if (method === 'PATCH') {
-        const dto = trainingWrite(await body());
+        // `kind` is fixed at creation (0024 retires the course↔activity
+        // conversion this endpoint used to perform): trainingWrite() still
+        // 400s a junk value if one is sent, but `applyKindEffects: false`
+        // skips the total_sessions/ends_on mutation that value would
+        // otherwise carry (that only belongs to a CREATE), and the `kind`
+        // key itself is deleted below so it can never reach the update —
+        // there is no client left that sends it (the create path is the
+        // separate POST branch below, still using ensureSingleSession for
+        // its own, still-needed, invariant).
+        const dto = trainingWrite(await body(), { applyKindEffects: false });
+        delete dto.kind;
         assertHallWritable(dto);
         await assertOwnsRow('trainings', r1);
         const row = unwrap<{ id: string; kind: string }>(
           await db.from('trainings').update(dto).eq('id', r1).select().single(),
         );
-        // 形态可以互换 (0016): a course that turns out to be one afternoon
-        // becomes an activity, and an activity that grows becomes a course.
-        // Only one direction has anything to reconcile — an activity is ONE
-        // occasion, so its sessions above the first are removed here, taking
-        // their attendance with them (`training_attendance.session_id` is
-        // `on delete cascade`). The page names exactly what goes and asks
-        // first (rule G3); the invariant itself is the SERVER's, so a stale
-        // client can never leave a four-session activity behind (rule G2).
-        // The other way round needs nothing: the single session simply becomes
-        // session 1 of the course, keeping the roll call already taken.
-        if (dto.kind !== undefined && row.kind === TrainingKind.Activity)
-          await ensureSingleSession(db, row.id);
         return json(row);
       }
       if (method === 'DELETE') {
@@ -1962,6 +1966,7 @@ async function upsertProgress(
           completed: dto.completed ?? false,
           notes: dto.notes ?? null,
           entry_date: dto.entry_date ?? undefined,
+          entry_time: dto.entry_time ?? undefined,
         },
         { onConflict: 'pair_id,day_number' },
       )
@@ -2292,7 +2297,7 @@ async function putHappinessAttendance(
  * where, who to ring, and the 报名费 with the instructions and QR to settle it.
  */
 const PUBLIC_TRAINING_SELECT =
-  'id,name,kind,is_enrollable,total_sessions,starts_on,ends_on,start_time,location,pic,pic_contact,fee,payment_instructions,payment_qr_url';
+  'id,name,kind,is_enrollable,total_sessions,starts_on,ends_on,start_time,location,pic,pic_contact,gender,fee,payment_instructions,payment_qr_url';
 
 type PublicTraining = {
   id: string;
@@ -2306,6 +2311,8 @@ type PublicTraining = {
   location: string | null;
   pic: string | null;
   pic_contact: string | null;
+  /** null = open to everyone; else the sign-up is refused for a mismatch (0024). */
+  gender: string | null;
   fee: string | number | null;
   payment_instructions: string | null;
   payment_qr_url: string | null;
@@ -2332,12 +2339,22 @@ function isPaid(fee: string | number | null | undefined): boolean {
  *  - the free-text fields are trimmed, and an empty one is stored as null, so
  *    "has a PIC" is one question rather than two.
  */
-function trainingWrite(dto: Record<string, unknown>): Record<string, unknown> {
+function trainingWrite(
+  dto: Record<string, unknown>,
+  opts: { applyKindEffects?: boolean } = {},
+): Record<string, unknown> {
+  // A junk `kind` is always refused, on both POST and PATCH — but the
+  // activity-shape side effects below (forcing total_sessions to 1, ends_on
+  // to starts_on) only make sense at CREATION. `kind` is fixed after that
+  // (0024), so an edit still gets the same validation but never the
+  // mutation — the PATCH handler deletes `kind` from the result afterward,
+  // and must not have this quietly truncated total_sessions on its way there.
+  const applyKindEffects = opts.applyKindEffects ?? true;
   const patch = { ...dto };
   if (patch.kind !== undefined) {
     if (!isTrainingKind(patch.kind))
       throw new HttpError(400, `Unknown kind: ${String(patch.kind)} — expected course or activity`);
-    if (patch.kind === TrainingKind.Activity) {
+    if (applyKindEffects && patch.kind === TrainingKind.Activity) {
       patch.total_sessions = 1;
       // One occasion: the same day twice, so "has it finished?" stays one
       // question for both shapes and there is no second date to edit.
@@ -2354,6 +2371,11 @@ function trainingWrite(dto: Record<string, unknown>): Record<string, unknown> {
       patch.fee = amount;
     }
   }
+  // '' (the form's "open to all" option) stores NULL, same as every other
+  // optional select in this app. The column is the same gender_type
+  // members.gender uses, so the database enforces the value shape; the form
+  // just never offers 'other' as a choice (see TrainingModal.tsx).
+  if ('gender' in patch && patch.gender === '') patch.gender = null;
   for (const key of ['pic', 'pic_contact', 'location', 'payment_instructions', 'payment_qr_url', 'start_time'] as const) {
     if (key in patch) {
       const value = String(patch[key] ?? '').trim();
@@ -2367,11 +2389,13 @@ function trainingWrite(dto: Record<string, unknown>): Record<string, unknown> {
  * An ACTIVITY is one occasion, and that occasion IS exactly one
  * `training_sessions` row — the single column its roll call ticks.
  *
- * Called when an activity is created and when a course is converted into one,
- * so the invariant lives in a single place rather than being re-derived at each
- * write. Sessions beyond the first are deleted, which takes their attendance
- * with them (`training_attendance.session_id` is `on delete cascade`); a
- * conversion that would destroy anything is confirmed in the UI first (G3).
+ * Called once, when an activity is created (`kind` is fixed after that, 0024
+ * — there is no longer a conversion path that would need to call this a
+ * second time). Sessions beyond the first are deleted, which takes their
+ * attendance with them (`training_attendance.session_id` is `on delete
+ * cascade`) — relevant only if a row is ever inserted with more than one
+ * session already attached, which nothing in this app does, but the
+ * invariant is enforced here rather than assumed.
  */
 async function ensureSingleSession(db: ReturnType<typeof getDb>, trainingId: string) {
   const sessions = unwrap<Array<{ id: string; session_number: number }>>(

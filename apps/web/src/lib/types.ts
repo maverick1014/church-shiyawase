@@ -212,7 +212,7 @@ export interface TrainingRow {
   id: string;
   name: string;
   description: string | null;
-  /** 课程 or 活动 — which shape this row is (migration 0014, convertible 0016). */
+  /** 课程 or 活动 — which shape this row is (migration 0014), FIXED at creation (0024). */
   kind: TrainingKind;
   /** 负责人 — free text (0016): the person in charge is often not a member. */
   pic: string | null;
@@ -226,6 +226,8 @@ export interface TrainingRow {
   start_time: string | null;
   /** An ACTIVITY's meeting point. A course's places live on its sessions. */
   location: string | null;
+  /** null = open to everyone; else restricted to that gender (migration 0024). */
+  gender: Gender | null;
   /** 报名费. null / 0 = free, and the payment fields below stay hidden. */
   fee: string | number | null;
   /** How to pay: bank account, TnG number, a note. One field, any method. */
@@ -313,6 +315,8 @@ export interface PairRow {
   status: PairStatus;
   start_date: string | null;
   form_token: string;
+  /** Free text, staff's own note about the pair (migration 0024); null = none. */
+  remark: string | null;
   mentor?: MemberBrief;
   trainee?: MemberBrief;
 }
@@ -322,6 +326,8 @@ export interface ProgressRow {
   pair_id: string;
   day_number: number;
   entry_date: string | null;
+  /** "HH:MM:SS" (Postgres `time`), alongside entry_date (migration 0024). */
+  entry_time: string | null;
   completed: boolean;
   notes: string | null;
 }

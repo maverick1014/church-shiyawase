@@ -296,6 +296,9 @@ async function main() {
   // ---- 培训&活动: the ACTIVITY shape --------------------------------------
   await activityShape(admin, members, hallId);
 
+  // ---- 培训&活动: a gender-restricted training (0024) ----------------------
+  await genderRestriction(admin, hallId);
+
   // ---- 培训&活动: a PAID course, from the fee to the receipt ---------------
   await paidTraining(admin, hallId);
 
@@ -338,8 +341,29 @@ async function main() {
     const token = mkPair.json?.form_token;
     if (token) {
       ok('public form GET (no auth) → 200', (await req('GET', `/api/discipleship/form/${token}`)).status === 200);
-      const prog = await req('POST', `/api/discipleship/form/${token}/progress`, { body: { day_number: 1, completed: true } });
-      ok('public form submit progress → 200', prog.status === 200, `status ${prog.status}`);
+      // entry_time (0024) rides beside entry_date exactly the same way, on the
+      // same upsert — a mentor filling in the public form can now say WHEN
+      // that day happened, not just which day.
+      const prog = await req('POST', `/api/discipleship/form/${token}/progress`, {
+        body: { day_number: 1, completed: true, entry_date: '2030-01-05', entry_time: '21:30' },
+      });
+      ok('public form submit progress with entry_time → 200', prog.status === 200, `status ${prog.status}`);
+      ok('…and both entry_date and entry_time were written',
+        String(prog.json?.entry_date).startsWith('2030-01-05') && String(prog.json?.entry_time).startsWith('21:30'),
+        JSON.stringify({ entry_date: prog.json?.entry_date, entry_time: prog.json?.entry_time }));
+    }
+    // remark (0024) is staff's own field on the pair — PATCH-able, and never
+    // touched by the public form above.
+    if (mkPair.json?.id) {
+      const remarked = await req('PATCH', `/api/discipleship/pairs/${mkPair.json.id}`, {
+        ...H,
+        body: { remark: 'E2E备注：进度良好' },
+      });
+      ok('PATCH a pair remark → 200 + stored', remarked.status === 200 && remarked.json?.remark === 'E2E备注：进度良好',
+        `status ${remarked.status} remark=${remarked.json?.remark}`);
+      const reread = await req('GET', `/api/discipleship/pairs/${mkPair.json.id}`, H);
+      ok('…and it reads back on the detail fetch',
+        reread.json?.remark === 'E2E备注：进度良好', String(reread.json?.remark));
     }
     if (mkPair.json?.id) ok('delete pair → 200', (await req('DELETE', `/api/discipleship/pairs/${mkPair.json.id}`, H)).status === 200);
 
@@ -387,9 +411,11 @@ async function main() {
     if (accId) {
       ok('update account role → 200', (await req('PATCH', `/api/accounts/${accId}`, { ...H, body: { account_role: 'admin' } })).status === 200);
       ok('reset account password → 200', (await req('POST', `/api/accounts/${accId}/password`, { ...H, body: { password: 'newPass2026' } })).status === 200);
-      // Interface language: new accounts default to English, only the three
-      // shipped languages are storable, and anything else is a 400.
-      ok('new account defaults to English', mkAcc.json?.language === 'en', String(mkAcc.json?.language));
+      // Interface language: new accounts default to Chinese (0025 — the
+      // DB column's own DEFAULT changed from 'en' to 'zh', matching
+      // DEFAULT_LANGUAGE in packages/shared), only the three shipped
+      // languages are storable, and anything else is a 400.
+      ok('new account defaults to Chinese', mkAcc.json?.language === 'zh', String(mkAcc.json?.language));
       const setZh = await req('PATCH', `/api/accounts/${accId}`, { ...H, body: { language: 'zh' } });
       ok('set account language → 200 + persisted', setZh.status === 200 && setZh.json?.language === 'zh', `status ${setZh.status} ${setZh.json?.language}`);
       const badLang = await req('PATCH', `/api/accounts/${accId}`, { ...H, body: { language: 'fr' } });
@@ -804,6 +830,65 @@ async function activityShape(adminCookie, members, hallId) {
   }
 }
 
+/**
+ * 性别限制 (0024): a training's `gender` is a real eligibility rule enforced
+ * at enrolment, not a UI-only hint — a mismatched sign-up is REFUSED, not
+ * silently accepted.
+ */
+async function genderRestriction(adminCookie, hallId) {
+  const H = { cookie: adminCookie };
+  const mk = await req('POST', '/api/trainings', {
+    ...H,
+    body: {
+      name: `E2E男生专属-${Date.now()}`,
+      kind: 'activity',
+      is_enrollable: true,
+      starts_on: '2030-04-11',
+      ends_on: '2030-04-11',
+      gender: 'male',
+      hall_id: hallId,
+    },
+  });
+  ok('create a gender-restricted activity → 200 + gender stored',
+    mk.status === 200 && mk.json?.gender === 'male', `status ${mk.status} gender=${mk.json?.gender}`);
+  const id = mk.json?.id;
+  if (!id) return;
+
+  const mkMale = await req('POST', '/api/members', {
+    ...H,
+    body: { full_name: `E2E性别-男-${Date.now()}`, church_role: 'member', status: 'active', gender: 'male', hall_id: hallId },
+  });
+  const mkFemale = await req('POST', '/api/members', {
+    ...H,
+    body: { full_name: `E2E性别-女-${Date.now()}`, church_role: 'member', status: 'active', gender: 'female', hall_id: hallId },
+  });
+  const maleId = mkMale.json?.id;
+  const femaleId = mkFemale.json?.id;
+  ok('gender-restriction fixture members created', !!maleId && !!femaleId,
+    `male=${mkMale.status} female=${mkFemale.status}`);
+
+  try {
+    if (maleId && femaleId) {
+      const mismatched = await req('POST', `/api/trainings/enroll/${id}`, { body: { full_name: mkFemale.json.full_name } });
+      ok('a mismatched-gender sign-up → 400, refused rather than enrolled',
+        mismatched.status === 400, `status ${mismatched.status} ${JSON.stringify(mismatched.json)}`);
+      const stillEmpty = await req('GET', `/api/trainings/${id}`, H);
+      ok('…and nothing was actually enrolled',
+        (stillEmpty.json?.enrollments || []).length === 0,
+        `${(stillEmpty.json?.enrollments || []).length} enrolment(s)`);
+
+      const matched = await req('POST', `/api/trainings/enroll/${id}`, { body: { full_name: mkMale.json.full_name } });
+      ok('a matching-gender sign-up → ok', matched.json?.status === 'ok', JSON.stringify(matched.json));
+    }
+  } finally {
+    if (maleId) await req('DELETE', `/api/members/${maleId}`, H);
+    if (femaleId) await req('DELETE', `/api/members/${femaleId}`, H);
+    ok('gender-restriction fixture members cleaned up', true);
+    const del = await req('DELETE', `/api/trainings/${id}`, H);
+    ok('the gender-restricted activity fixture was deleted', del.status === 200, `status ${del.status}`);
+  }
+}
+
 /** The smallest real PNG there is — a 1×1 pixel, for the upload paths. */
 const PNG_1PX = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
@@ -966,20 +1051,18 @@ async function paidTraining(adminCookie, hallId) {
     }
   }
 
-  await convertShape(adminCookie, hallId);
+  await kindFixedAtCreation(adminCookie, hallId);
 }
 
 /**
- * 形态互换 (0016): a course becomes an activity and back.
- *
- * The trap is the activity's single session — it is API-created plumbing, and
- * a course may have several. Converting one way must therefore reduce to
- * exactly one session (the FIRST, so the roll call already taken on it
- * survives) and converting back must not manufacture a second. The UI asks
- * before that destroys anything; the INVARIANT is the server's, which is what
- * this asserts.
+ * `kind` is FIXED at creation (0024 retires the course↔activity conversion
+ * this endpoint used to perform on PATCH). A PATCH that sends a different
+ * `kind` must not change the stored shape or touch its sessions — the whole
+ * point of retiring it is that nothing can convert a row after it exists,
+ * whether that PATCH comes from the (now gone) UI control or straight from
+ * the API.
  */
-async function convertShape(adminCookie, hallId) {
+async function kindFixedAtCreation(adminCookie, hallId) {
   const H = { cookie: adminCookie };
   const mk = await req('POST', '/api/trainings', {
     ...H,
@@ -994,29 +1077,21 @@ async function convertShape(adminCookie, hallId) {
     const before = await req('GET', `/api/trainings/${id}`, H);
     ok('…with all three sessions on it', (before.json?.sessions || []).length === 3,
       `${(before.json?.sessions || []).length} sessions`);
-    const firstId = before.json?.sessions?.[0]?.id;
 
-    const toActivity = await req('PATCH', `/api/trainings/${id}`, { ...H, body: { kind: 'activity', starts_on: '2030-05-04' } });
-    ok('turning it into an activity → 200 + one occasion',
-      toActivity.status === 200 && toActivity.json?.kind === 'activity' && toActivity.json?.total_sessions === 1,
-      `status ${toActivity.status} ${JSON.stringify(toActivity.json).slice(0, 140)}`);
-    ok('…and an activity ends on the day it starts',
-      String(toActivity.json?.ends_on).startsWith('2030-05-04'), String(toActivity.json?.ends_on));
-    const converted = await req('GET', `/api/trainings/${id}`, H);
-    ok('the sessions above the first are gone, and the FIRST is the one kept',
-      (converted.json?.sessions || []).length === 1 && converted.json?.sessions?.[0]?.id === firstId,
-      JSON.stringify((converted.json?.sessions || []).map((s) => s.session_number)));
+    const patched = await req('PATCH', `/api/trainings/${id}`, {
+      ...H,
+      body: { kind: 'activity', name: `E2E形态-改名-${Date.now()}` },
+    });
+    ok('a PATCH carrying kind still succeeds (the rest of the body applies)',
+      patched.status === 200 && /改名/.test(patched.json?.name || ''), `status ${patched.status}`);
+    ok('…but the shape itself never changes', patched.json?.kind === 'course', String(patched.json?.kind));
 
-    const backToCourse = await req('PATCH', `/api/trainings/${id}`, { ...H, body: { kind: 'course', total_sessions: 4 } });
-    ok('turning it back into a course → 200', backToCourse.status === 200 && backToCourse.json?.kind === 'course',
-      `status ${backToCourse.status}`);
-    const back = await req('GET', `/api/trainings/${id}`, H);
-    ok('…and its one session simply becomes session 1 again — nothing manufactured',
-      (back.json?.sessions || []).length === 1 && back.json?.sessions?.[0]?.id === firstId,
-      JSON.stringify((back.json?.sessions || []).map((s) => s.session_number)));
+    const after = await req('GET', `/api/trainings/${id}`, H);
+    ok('its three sessions are untouched — no conversion ran',
+      (after.json?.sessions || []).length === 3, `${(after.json?.sessions || []).length} sessions`);
   } finally {
     const del = await req('DELETE', `/api/trainings/${id}`, H);
-    ok('the shape-conversion fixture was deleted', del.status === 200, `status ${del.status}`);
+    ok('the kind-immutability fixture was deleted', del.status === 200, `status ${del.status}`);
   }
 }
 

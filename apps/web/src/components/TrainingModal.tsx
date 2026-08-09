@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '@/lib/api';
 import { compressImage } from '@/lib/imageCompress';
 import {
@@ -13,10 +13,10 @@ import {
   useToast,
 } from '@/components/ui';
 import { useHallScope } from '@/lib/hall';
-import { NamelistResponse, TrainingDetail, TrainingRow } from '@/lib/types';
-import { hasFee } from '@/lib/labels';
+import { TrainingRow } from '@/lib/types';
+import { hasFee, trainingKindKey } from '@/lib/labels';
 import { useT } from '@/lib/i18n';
-import { TrainingKind } from '@tog/shared';
+import { Gender, TrainingKind } from '@tog/shared';
 
 /**
  * Add / edit one row of 培训&活动 — a course or a one-off activity.
@@ -33,11 +33,11 @@ import { TrainingKind } from '@tog/shared';
  *              plumbing the API creates for the roll call, and putting the
  *              time on it would give one occasion two places to be edited.
  *
- * `kind` is CONVERTIBLE (0016): a course that turned out to be one afternoon
- * becomes an activity, and an activity that grew becomes a course. Only one
- * direction destroys anything — an activity is one occasion, so a course's
- * sessions above the first go — and that direction asks first, naming exactly
- * what it deletes (rule G3). The server owns the invariant either way.
+ * `kind` is FIXED at creation (0024 retires the course↔activity conversion
+ * this form used to offer): the segmented shape picker only shows up while
+ * CREATING a row, and an existing row shows its shape as plain read-only
+ * text — there is no path left in this form that can change it, which is
+ * the point ("easier, and will not confuse").
  */
 export function TrainingModal({
   initial,
@@ -57,9 +57,11 @@ export function TrainingModal({
   const t = useT();
   const confirm = useConfirm();
   const { hallId } = useHallScope();
-  const [kind, setKind] = useState<TrainingKind>(
-    initial?.kind ?? newKind ?? TrainingKind.Course,
-  );
+  // Fixed once the row exists (0024): editing reads it straight off the row
+  // and nothing in this form can change it; only a CREATE picks it, with its
+  // own bit of state for the segmented control below.
+  const [createKind, setCreateKind] = useState<TrainingKind>(newKind ?? TrainingKind.Course);
+  const kind = initial ? initial.kind : createKind;
   const activity = kind === TrainingKind.Activity;
   const [form, setForm] = useState({
     name: initial?.name ?? '',
@@ -71,6 +73,11 @@ export function TrainingModal({
     // Postgres `time` reads back as "HH:MM:SS"; the input wants "HH:MM".
     start_time: initial?.start_time?.slice(0, 5) ?? '',
     location: initial?.location ?? '',
+    // '' = open to all (stores NULL); a training's gender restriction is
+    // meaningfully binary in this church's actual use (兄弟团爬山 / 姐妹团做蛋糕),
+    // so "other" is deliberately not an option here even though the column
+    // itself is the same gender_type members.gender uses.
+    gender: initial?.gender ?? '',
     fee: initial?.fee === null || initial?.fee === undefined ? '' : String(initial.fee),
     payment_instructions: initial?.payment_instructions ?? '',
     is_enrollable: initial?.is_enrollable ?? true,
@@ -79,9 +86,12 @@ export function TrainingModal({
     hall_id: initial ? initial.hall_id : hallId || null,
   });
   // The QR lives on the row, not in the form: it is uploaded straight away
-  // like every other image in this app (rule G4), so this only tracks what the
-  // saved row currently carries.
+  // like every other image in this app (rule G4) once the row exists. While
+  // CREATING there is no row yet, so a picked file waits here — compressed,
+  // ready to go — and is chained onto the training the moment it is created.
   const [qrUrl, setQrUrl] = useState(initial?.payment_qr_url ?? null);
+  const [qrFile, setQrFile] = useState<File | null>(null);
+  const [qrPreview, setQrPreview] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -91,48 +101,22 @@ export function TrainingModal({
   // the field hides it again immediately (rule G5).
   const paid = hasFee(form.fee);
 
-  /**
-   * Turning a course into an activity keeps ONLY its first session. Ask before
-   * that costs anybody a roll call, and say exactly how much goes — read from
-   * the server at the moment of the decision rather than kept in state.
-   */
-  const confirmConversion = async (): Promise<boolean> => {
-    if (!initial || initial.kind !== TrainingKind.Course || !activity) return true;
-    const [detail, namelist] = await Promise.all([
-      api.get<TrainingDetail>(`/trainings/${initial.id}`),
-      api.get<NamelistResponse>(`/trainings/${initial.id}/namelist`),
-    ]);
-    const sessions = detail.sessions ?? [];
-    if (sessions.length <= 1) return true; // nothing is lost
-    const doomed = new Set(sessions.slice(1).map((s) => s.id));
-    const ticks = (namelist.rows ?? []).reduce(
-      (n, row) =>
-        n + (row.attendance ?? []).filter((a) => a.attended && doomed.has(a.session_id)).length,
-      0,
-    );
-    return confirm({
-      title: t('trainings.convert.title'),
-      message: t('trainings.convert.message', {
-        name: initial.name,
-        sessions: doomed.size,
-        ticks,
-      }),
-      confirmText: t('trainings.convert.confirm'),
-      danger: true,
-    });
-  };
+  // The create-mode preview is a local object URL — release it on unmount or
+  // whenever a new file replaces it, so a run of picks doesn't leak blobs.
+  useEffect(() => () => { if (qrPreview) URL.revokeObjectURL(qrPreview); }, [qrPreview]);
 
   const save = async () => {
     if (!form.name.trim()) {
       setErr(t('trainings.err.name'));
       return;
     }
-    if (!(await confirmConversion())) return;
     setSaving(true);
     setErr(null);
     const body = {
       name: form.name.trim(),
-      kind,
+      // Only a CREATE sends `kind` — an edit never can any more (0024), and
+      // the server no longer honours it on PATCH.
+      ...(!initial ? { kind } : {}),
       // An activity is one occasion — the server forces this too (rule G2), so
       // a stale client can never leave a two-session activity behind.
       total_sessions: activity ? 1 : Number(form.total_sessions) || 1,
@@ -145,6 +129,7 @@ export function TrainingModal({
       // than keeping values nothing on its page can show.
       start_time: activity ? form.start_time : '',
       location: activity ? form.location.trim() : '',
+      gender: form.gender || null,
       fee: form.fee.trim(),
       payment_instructions: paid ? form.payment_instructions.trim() : '',
       is_enrollable: form.is_enrollable,
@@ -154,6 +139,18 @@ export function TrainingModal({
       const saved = initial
         ? await api.patch<TrainingRow>(`/trainings/${initial.id}`, body)
         : await api.post<TrainingRow>('/trainings', body);
+      // The QR picked before the row existed — chain it on now. A failure
+      // here must not undo the training that was just created; it just needs
+      // to be said plainly, so the church knows to add it from Edit.
+      if (!initial && qrFile) {
+        try {
+          const fd = new FormData();
+          fd.append('file', qrFile);
+          await api.upload<TrainingRow>(`/trainings/${saved.id}/payment-qr`, fd);
+        } catch {
+          toast(t('trainings.toast.qrFailedAfterCreate', { name: saved.name }), 'error');
+        }
+      }
       onSaved(saved);
     } catch (e) {
       setErr((e as Error).message);
@@ -164,19 +161,30 @@ export function TrainingModal({
   };
 
   // The same upload path a member's photo and the church logo take: straight
-  // to the row, so the QR is never half-saved with the form (rule G4).
+  // to the row, so the QR is never half-saved with the form (rule G4) — for
+  // an EXISTING row. While creating, there is no row yet: compress and hold
+  // the file locally, and `save()` above chains the actual upload once the
+  // id exists.
   const onPickQr = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const picked = e.target.files?.[0];
-    if (!picked || !initial) return;
+    if (!picked) return;
     setUploading(true);
     setErr(null);
     try {
       const file = await compressImage(picked);
-      const fd = new FormData();
-      fd.append('file', file);
-      const row = await api.upload<TrainingRow>(`/trainings/${initial.id}/payment-qr`, fd);
-      setQrUrl(row.payment_qr_url);
-      toast(t('trainings.toast.qr'));
+      if (initial) {
+        const fd = new FormData();
+        fd.append('file', file);
+        const row = await api.upload<TrainingRow>(`/trainings/${initial.id}/payment-qr`, fd);
+        setQrUrl(row.payment_qr_url);
+        toast(t('trainings.toast.qr'));
+      } else {
+        setQrFile(file);
+        setQrPreview((prev) => {
+          if (prev) URL.revokeObjectURL(prev);
+          return URL.createObjectURL(file);
+        });
+      }
     } catch (e2) {
       setErr((e2 as Error).message);
       toast((e2 as Error).message, 'error');
@@ -184,6 +192,14 @@ export function TrainingModal({
       setUploading(false);
       if (qrRef.current) qrRef.current.value = '';
     }
+  };
+
+  // Discarding a QR picked before the row exists — nothing has left the
+  // browser yet, so this is a plain removal rather than a confirmed delete.
+  const removePickedQr = () => {
+    if (qrPreview) URL.revokeObjectURL(qrPreview);
+    setQrFile(null);
+    setQrPreview(null);
   };
 
   // Discarding the uploaded image is irreversible from here, so it asks first
@@ -220,19 +236,26 @@ export function TrainingModal({
           placeholder={activity ? t('trainings.activityNamePlaceholder') : t('trainings.namePlaceholder')}
         />
       </Field>
-      {/* Which shape this row is — the one segmented control (rule G4), keyed
-          by the stored code so a language switch cannot change it (G8). */}
+      {/* Which shape this row is — a CREATE picks it with the one segmented
+          control (rule G4), keyed by the stored code so a language switch
+          cannot change it (G8). An EDIT can only ever show it: `kind` is
+          fixed the moment the row exists (0024), so there is no control here
+          that could change it. */}
       <Field label={t('trainings.field.kind')}>
-        <Segmented
-          value={kind}
-          onChange={setKind}
-          label={t('trainings.field.kind')}
-          block
-          options={[
-            { value: TrainingKind.Course, label: t('trainingKind.course') },
-            { value: TrainingKind.Activity, label: t('trainingKind.activity') },
-          ]}
-        />
+        {initial ? (
+          <input value={t(trainingKindKey(kind))} disabled readOnly />
+        ) : (
+          <Segmented
+            value={createKind}
+            onChange={setCreateKind}
+            label={t('trainings.field.kind')}
+            block
+            options={[
+              { value: TrainingKind.Course, label: t('trainingKind.course') },
+              { value: TrainingKind.Activity, label: t('trainingKind.activity') },
+            ]}
+          />
+        )}
       </Field>
       <div className="form-row">
         <Field label={t('trainings.field.pic')}>
@@ -275,36 +298,63 @@ export function TrainingModal({
               />
             </Field>
           </div>
-          <Field label={t('trainings.field.location')}>
-            <input
-              value={form.location}
-              onChange={(e) => setForm({ ...form, location: e.target.value })}
-              placeholder={t('trainings.locationPlaceholder')}
-            />
-          </Field>
+          {/* Where it happens, beside who may come to it — a meeting point
+              pairs more naturally with the hall it belongs to than it did
+              standing alone. */}
+          <div className="form-row">
+            <Field label={t('trainings.field.location')}>
+              <input
+                value={form.location}
+                onChange={(e) => setForm({ ...form, location: e.target.value })}
+                placeholder={t('trainings.locationPlaceholder')}
+              />
+            </Field>
+            <Field label={t('hall.label')}>
+              <HallSelect
+                value={form.hall_id}
+                onChange={(id) => setForm({ ...form, hall_id: id })}
+                allowAll
+                allLabel={t('hall.allOpen')}
+              />
+            </Field>
+          </div>
         </>
       ) : (
         <>
+          {/* How many sessions it runs, beside who may come — the two shorter
+              fields share a row; the date range gets its own. */}
           <div className="form-row">
             <Field label={t('trainings.field.sessions')}>
               <input type="number" min={1} value={form.total_sessions} onChange={(e) => setForm({ ...form, total_sessions: Number(e.target.value) })} />
             </Field>
+            <Field label={t('hall.label')}>
+              <HallSelect
+                value={form.hall_id}
+                onChange={(id) => setForm({ ...form, hall_id: id })}
+                allowAll
+                allLabel={t('hall.allOpen')}
+              />
+            </Field>
+          </div>
+          <div className="form-row">
             <Field label={t('trainings.field.startsOn')}>
               <input type="date" className={form.starts_on ? undefined : 'date-empty'} value={form.starts_on} onChange={(e) => setForm({ ...form, starts_on: e.target.value })} />
             </Field>
+            <Field label={t('trainings.field.endsOn')}>
+              <input type="date" className={form.ends_on ? undefined : 'date-empty'} value={form.ends_on} onChange={(e) => setForm({ ...form, ends_on: e.target.value })} />
+            </Field>
           </div>
-          <Field label={t('trainings.field.endsOn')}>
-            <input type="date" className={form.ends_on ? undefined : 'date-empty'} value={form.ends_on} onChange={(e) => setForm({ ...form, ends_on: e.target.value })} />
-          </Field>
         </>
       )}
-      <Field label={t('hall.label')}>
-        <HallSelect
-          value={form.hall_id}
-          onChange={(id) => setForm({ ...form, hall_id: id })}
-          allowAll
-          allLabel={t('hall.allOpen')}
-        />
+
+      {/* Who may come — deliberately binary (see the form-state comment
+          above); NULL/'' means open to everyone. */}
+      <Field label={t('trainings.field.gender')}>
+        <select value={form.gender} onChange={(e) => setForm({ ...form, gender: e.target.value })}>
+          <option value="">{t('trainings.gender.any')}</option>
+          <option value={Gender.Male}>{t('gender.male')}</option>
+          <option value={Gender.Female}>{t('gender.female')}</option>
+        </select>
       </Field>
 
       {/* 报名费 — an empty fee means free, and everything below it stays out of
@@ -333,29 +383,32 @@ export function TrainingModal({
             />
           </Field>
           <Field label={t('trainings.field.paymentQr')}>
-            {initial ? (
-              <div className="flex items-center gap-12 flex-wrap">
-                {qrUrl && (
-                  /* eslint-disable-next-line @next/next/no-img-element */
-                  <img
-                    src={qrUrl}
-                    alt={t('training.qrAlt')}
-                    style={{ width: 72, height: 72, objectFit: 'contain', borderRadius: 8, border: '1px solid var(--border)', background: '#fff' }}
-                  />
-                )}
-                <button className="btn ghost" onClick={() => qrRef.current?.click()} disabled={uploading}>
-                  {uploading ? t('trainings.qr.uploading') : qrUrl ? t('trainings.qr.change') : t('trainings.qr.upload')}
-                </button>
-                {qrUrl && (
-                  <button className="btn ghost" onClick={removeQr}>{t('trainings.qr.remove')}</button>
-                )}
-                <input ref={qrRef} type="file" accept="image/*" onChange={onPickQr} style={{ display: 'none' }} />
-              </div>
-            ) : (
-              // No row yet, so nothing to hang an upload on — the create flow
-              // opens the detail page, where Edit offers it.
-              <div className="hint">{t('trainings.qr.saveFirst')}</div>
-            )}
+            {/* Editing an existing row uploads straight away (rule G4);
+                creating one has nowhere to upload TO yet, so the picked (and
+                already-compressed) file waits here and `save()` chains the
+                actual upload onto the row the moment it exists — one action
+                from the church's side either way. */}
+            <div className="flex items-center gap-12 flex-wrap">
+              {(initial ? qrUrl : qrPreview) && (
+                /* eslint-disable-next-line @next/next/no-img-element */
+                <img
+                  src={initial ? qrUrl! : qrPreview!}
+                  alt={t('training.qrAlt')}
+                  style={{ width: 72, height: 72, objectFit: 'contain', borderRadius: 8, border: '1px solid var(--border)', background: '#fff' }}
+                />
+              )}
+              <button className="btn ghost" onClick={() => qrRef.current?.click()} disabled={uploading}>
+                {uploading
+                  ? t('trainings.qr.uploading')
+                  : (initial ? qrUrl : qrPreview)
+                    ? t('trainings.qr.change')
+                    : t('trainings.qr.upload')}
+              </button>
+              {initial
+                ? qrUrl && <button className="btn ghost" onClick={removeQr}>{t('trainings.qr.remove')}</button>
+                : qrPreview && <button className="btn ghost" onClick={removePickedQr}>{t('trainings.qr.remove')}</button>}
+              <input ref={qrRef} type="file" accept="image/*" onChange={onPickQr} style={{ display: 'none' }} />
+            </div>
           </Field>
         </>
       )}
