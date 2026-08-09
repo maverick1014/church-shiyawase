@@ -440,18 +440,31 @@ export function planImport(rows: readonly ImportRow[], ctx: ImportContext): Impo
   const groupByName = new Map(ctx.groups.map((g) => [matchKey(g.name), g]));
   const byPair = new Map(ctx.existing.map((m) => [pairKey(m.full_name, m.english_name), m]));
   /**
-   * Every name a 推荐人 cell might write → whoever answers to it. A list, not a
-   * member: two people can share a Chinese name (that is exactly what the
-   * English half is for), and a referral written ambiguously is refused rather
-   * than filed against whichever of them happened to sort first.
+   * Who answers to a name a 推荐人 cell might write — in two passes, for the
+   * same reason a row's own name is matched as a PAIR.
+   *
+   * `exact` is the whole written pair (「张伟 David」, or just 「张伟」 for
+   * somebody who has no English name — "no English name" is a value, not a
+   * gap). `loose` is the Chinese name alone, which is what a church actually
+   * types. Exact wins, so a cell saying 「张伟」 names the 张伟 with no English
+   * name even while a 张伟 David is on the roll — exactly as that same cell
+   * would in the 中文名 column. Both hold LISTS: when two people genuinely
+   * answer to what was written, the row is refused rather than filed against
+   * whichever of them happened to sort first.
    */
-  const byReferrerName = new Map<string, typeof ctx.existing[number][]>();
-  for (const m of ctx.existing)
-    for (const key of referrerKeys(m.full_name, m.english_name)) {
-      const found = byReferrerName.get(key);
+  const exactReferrer = new Map<string, typeof ctx.existing[number][]>();
+  const looseReferrer = new Map<string, typeof ctx.existing[number][]>();
+  for (const m of ctx.existing) {
+    const keys = referrerKeys(m.full_name, m.english_name);
+    for (const [map, key] of [
+      [looseReferrer, keys[0]],
+      [exactReferrer, keys[keys.length - 1]],
+    ] as const) {
+      const found = map.get(key);
       if (found) found.push(m);
-      else byReferrerName.set(key, [m]);
+      else map.set(key, [m]);
     }
+  }
   /** Pair → the row that already claimed it, for rule 2 above. */
   const seen = new Map<string, number>();
 
@@ -547,7 +560,9 @@ export function planImport(rows: readonly ImportRow[], ctx: ImportContext): Impo
     // owner has to spell out.
     const referrer = tidy(row.referred_by);
     if (referrer) {
-      const candidates = byReferrerName.get(nameKey(referrer)) ?? [];
+      const written = nameKey(referrer);
+      const exact = exactReferrer.get(written) ?? [];
+      const candidates = exact.length > 0 ? exact : looseReferrer.get(written) ?? [];
       if (candidates.length === 0) return skip('unknown_referrer', 'referred_by', referrer);
       if (candidates.length > 1) return skip('ambiguous_referrer', 'referred_by', referrer);
       // The database refuses this outright (`members_referred_by_not_self`),

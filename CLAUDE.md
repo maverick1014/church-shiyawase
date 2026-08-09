@@ -174,9 +174,11 @@ edited and uploaded straight back. `IMPORT_COLUMNS` is that definition: 中文�
 英文名、电话、邮箱、**地址**、**推荐人**、性别、生日、加入日期、教会身份、状态、堂会、
 小组、**服侍岗位**. 推荐人 is the one column holding a REFERENCE: a spreadsheet
 has no ids in it, so it is resolved by name — one cell may write 「张伟」 or
-「张伟 David」, folded exactly the way `pairKey` folds a pair (`referrerKeys`) —
-and a name that answers to nobody, to two people, or to the row's own person is
-a REFUSED row naming the spreadsheet row and the value, never a guess. A refused row names its own SPREADSHEET row and the value it choked on,
+「张伟 David」, folded exactly the way `pairKey` folds a pair (`referrerKeys`),
+with the whole written pair beating a bare Chinese name so that 「张伟」 names
+the 张伟 who has no English name, exactly as it would in the 中文名 column — and
+a name that answers to nobody, to two people, or to the row's own person is a
+REFUSED row naming the spreadsheet row and the value, never a guess. A refused row names its own SPREADSHEET row and the value it choked on,
 and never stops the rows around it. Dates are year-first only: `03/04/2026` is
 two different days depending on who reads it. 服侍岗位 is the one column holding
 a LIST in one cell, so it accepts every separator a church might reach for

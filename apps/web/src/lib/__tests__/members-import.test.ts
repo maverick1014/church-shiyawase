@@ -342,6 +342,19 @@ describe('planImport · address & 推荐人', () => {
     expect(plan.rows[0].values.referred_by).toBe('m-david');
   });
 
+  it('reads a bare Chinese name as the person who has no English name', () => {
+    // The same cell in the 中文名 column would match that person and not the
+    // other, because "no English name" is a value of its own (0018) — so the
+    // referral column has to read it the same way rather than calling it
+    // ambiguous and refusing a row a church wrote correctly.
+    const WEI = member({ id: 'm-wei', full_name: '张伟', english_name: null });
+    const plan = planImport(
+      [{ row: 2, full_name: '甲', referred_by: '张伟' }],
+      ctx({ existing: [WEI, DAVID] }),
+    );
+    expect(plan.rows[0].values.referred_by).toBe('m-wei');
+  });
+
   it('refuses a referrer nobody on the roll answers to', () => {
     const plan = planImport([{ row: 2, full_name: '甲', referred_by: '王五' }], ctx({ existing: [ALONE] }));
     expect(plan.rows[0]).toMatchObject({
