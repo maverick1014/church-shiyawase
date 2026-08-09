@@ -9,12 +9,15 @@ name: UI E2E (browser interaction test)
 # clean.
 #
 # THE SCRIPT MUST COME FROM THE COMMIT THAT WAS DEPLOYED. A workflow_run job
-# checks out the default branch by default, but deploy.yml only ever runs on
-# feature branches — so main's script would be pointed at a branch's build and
-# fail on every UI change that hadn't landed yet. That is what turned this
-# workflow into a permanent red-email generator: every automatic run failed
-# while every manual dispatch passed. Pin the checkout to the deployed SHA and
-# make the script confirm that SHA is actually live before it asserts anything.
+# checks out the default branch by default, which was wrong while deploy.yml
+# fired on feature branches: main's script was pointed at a branch's build and
+# failed on every UI change that had not landed yet — a permanent red-email
+# generator, every automatic run failing while every manual dispatch passed.
+# deploy.yml runs on main now, so the two usually agree, but the pin stays:
+# a manual branch deploy still happens, and a merge landing while this runs
+# would otherwise leave it asserting against a newer build than it was written
+# for. Pin the checkout to the deployed SHA and make the script confirm that
+# SHA is actually live before it asserts anything.
 on:
   workflow_dispatch:
     inputs:

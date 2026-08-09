@@ -158,9 +158,24 @@ tog/
 ## 5. Modules & features
 
 ### 5.1 Members directory (成员目录)
-- Fields: 姓名(中/英)、邮箱、电话、性别、出生日期、**church_role**(牧师/一般成员)、状态(在册/慕道/停止聚会)、所属小组、加入日期、备注.
+- Fields: 姓名(中/英)、邮箱、电话、性别、出生日期、**church_role**(牧师/一般成员)、状态(在册/慕道/停止聚会)、所属小组、加入日期、备注、照片.
+- **A member IS the pair of names** (migration 0018): the Chinese `full_name` and the
+  nullable `english_name`, unique together (trimmed, case-insensitive, "no English name"
+  counting as a value). Everything that puts a person on the roll — the form, an import, the
+  public registration — matches on that pair, which is what lets a re-import say "this is the
+  same person" instead of growing a twin.
 - List with **filter by 身份 (derived)** and **by 小组**, search by name.
-- Create / edit / delete.
+- Create / edit / delete, plus two bulk ways in:
+  - **Import a spreadsheet** (`.xlsx` / `.csv`, super_admin / admin): parsed in the browser,
+    **previewed row by row** (add / update / skipped-and-why) and only then applied;
+    an existing name pair is an update of **only the columns the file filled in**, so a sparse
+    re-import never blanks what the church already had. Headers and enum values are read in all
+    three interface languages, a template is offered, and the server re-plans the same file
+    itself — the preview is a courtesy (G2). Refusals name the spreadsheet row.
+  - **A public self-registration link** (`/join`, copied from this page): people fill in their
+    own contact details and photo. See §5.7.
+- Photos use the shared `<PhotoPicker />` — `accept="image/*"` and deliberately **no `capture`**,
+  so a phone offers both the camera and the gallery.
 - **Member detail** = profile + **personal training record** (5.5) + discipleship pairs they're in.
 - The 身份 shown is **derived** (see §3); it is not edited here.
 
@@ -234,6 +249,23 @@ followed, in date order, by every meeting someone added for it.
   - Form shows: pair info (带领者 ➜ 被带领者), progress bar, 40-day mini grid, and today's entry: **第几天 / 是否完成 / 反馈备注 / 提交**; then a thank-you state.
   - One `(pair, day_number)` is unique; re-submitting updates (idempotent).
 
+### 5.7 Public member self-registration (`/join`)
+- One link the church hands out; **no login**, mobile-first, same shell-less shape as `/d/<token>`
+  and `/enroll/<id>` (the church's own logo, name and theme, the app's default language).
+  Copied from the member list with the shared `copyText`, which reports success either way.
+- Fields: **Chinese name (required)**, English name, phone, email, gender, date of birth,
+  congregation (asked only when the church has more than one) and a photo.
+- The photo travels **with** the registration in one multipart POST — the same rule the paid
+  sign-up's receipt follows: nothing reaches storage until the row has been accepted, so the
+  unauthenticated upload paths cannot be used as file storage.
+- **What it cannot do**, by construction: set a church role (every self-registration is an
+  ordinary member), a status, a life group, a group position or notes; touch anybody but the
+  one name pair typed in; or read anything back. The answer is one word (`created` / `updated`),
+  the same shape either way and carrying no member data.
+- An existing name pair is an **update of that person's contact details**, so the page can say
+  "we've updated your details" instead of welcoming somebody the church has known for years —
+  and the roll never grows a second copy of them.
+
 ---
 
 ## 6. Data model (PostgreSQL — source of truth)
@@ -303,6 +335,7 @@ Tables:
 | `/discipleship/pairs/[id]` | 对子进度 | 40-day grid + cascade lineage (pastor view) |
 | `/d/[token]` | 每日填写页（独立） | **standalone, mobile-first, no login** mentor daily form |
 | `/enroll/[id]` | 报名页（独立） | **standalone, mobile-first, no login** self-enrollment for a course or an activity — matches full Chinese name to a member |
+| `/join` | 成员注册页（独立） | **standalone, mobile-first, no login** member self-registration — name pair, contact details, congregation, photo |
 | `/settings` | 用户管理 | login accounts (super_admin only) |
 | `/church` | 教会设置 | the church record (name / short name / description / logo), its **theme colours** (a preset or a custom pair) + the **add-on module catalog** — super_admin only |
 
@@ -312,7 +345,9 @@ Tables:
 
 | Area | Endpoints |
 | --- | --- |
-| Members | `GET/POST /members`, `GET/PATCH/DELETE /members/:id`, `GET /members/:id/trainings` (filters: `church_role`, `group_position`, `group_id`, `q`) |
+| Members | `GET/POST /members`, `GET/PATCH/DELETE /members/:id`, `GET /members/:id/trainings`, `POST /members/:id/avatar` (image upload) (filters: `church_role`, `group_position`, `group_id`, `q`) |
+| Member import | `POST /members/import` `{hall_id, rows[{row, full_name, english_name, phone, email, gender, date_of_birth, joined_at, church_role, status, hall, group}]}` → `{created, updated, skipped[{row, issue, field, detail, message}], failures[{row, message}]}`. **super_admin / admin only**, 300 rows at most. Rows are matched on the name pair and planned by the same `lib/members-import.ts` the browser previewed with; a refused row never stops the others |
+| **Public registration** | `GET /members/register` → `{halls[{id,name}]}` (the form's own bootstrap) and `POST /members/register` (JSON, or multipart when a photo rides along) → `{status:'created'\|'updated'}`. No session; the ONLY public path under `/members`, and only those two methods. It reads an allow-list of fields — a body carrying `church_role` / `group_id` / `status` / `notes` has them ignored — and answers with no member data at all |
 | Halls | `GET /halls` — 堂会 list (read-only; a hall-scoped account only sees its own) |
 | Groups | `GET/POST /groups`, `GET/PATCH/DELETE /groups/:id` (member positions live on `members`), `GET /groups/:id/attendance`, `POST /groups/:id/meetings`, `DELETE /groups/meetings/:meetingId`, `POST /groups/meetings/:meetingId/attendance` `{records[{member_id,status}]}` — one tick or a whole column in the same call; a group meeting's hall is its **group's** hall, checked server-side |
 | Households | `GET/POST /households`, `GET/PATCH/DELETE /households/:id` |

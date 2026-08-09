@@ -12,9 +12,11 @@ import {
   ExportButton,
   Field,
   HallSelect,
+  LinkIcon,
   MemberName,
   Modal,
   PageBar,
+  PhotoPicker,
   RoleBadge,
   RowChevron,
   SkeletonScreen,
@@ -22,7 +24,9 @@ import {
   SortTh,
   useToast,
 } from '@/components/ui';
+import { ImportMembersModal } from '@/components/ImportMembersModal';
 import { can } from '@/lib/perms';
+import { copyText } from '@/lib/clipboard';
 import { exportRows } from '@/lib/export';
 import { GroupDetail, GroupRow, MemberRow } from '@/lib/types';
 import {
@@ -55,6 +59,7 @@ export default function MembersPage() {
   const [roleFilter, setRoleFilter] = useState<string>('all');
   const [groupFilter, setGroupFilter] = useState<string>('all');
   const [addOpen, setAddOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
 
   usePageChrome({ title: t('members.title') }, [t]);
 
@@ -151,6 +156,15 @@ export default function MembersPage() {
     );
   };
 
+  // Copy, and SAY so either way — through `navigator.clipboard` alone an in-app
+  // browser does nothing at all and the button reads as broken
+  // (`lib/clipboard.ts` explains the fallback).
+  const copyRegisterLink = async () => {
+    const link = `${window.location.origin}/join`;
+    if (await copyText(link)) toast(t('members.toast.linkCopied'));
+    else toast(t('common.copyFailed', { link }), 'error');
+  };
+
   // No early return: the filters and the actions render perfectly well against
   // an empty list, so the real chrome goes up immediately and only the rows
   // below it are skeletons — nothing moves when the fetch lands.
@@ -180,6 +194,23 @@ export default function MembersPage() {
         actions={
           <>
             <ExportButton onClick={exportMembers} disabled={sorted.length === 0} />
+            {/* The public self-registration link lives HERE rather than on
+                教会设置: it is a link that produces MEMBERS, so the person who
+                hands it out is the one watching this list fill up — and
+                教会设置 is super_admin-only, while an admin who manages the
+                roll may never open it at all. */}
+            {perms.write && (
+              <button className="btn ghost" onClick={copyRegisterLink} title={t('members.registerLinkTitle')}>
+                <LinkIcon />
+                {t('members.registerLink')}
+              </button>
+            )}
+            {/* Bulk create-and-overwrite, so it is held to the same bar as a
+                delete — super_admin / admin. The server refuses the path for
+                every other role regardless (rule G2). */}
+            {perms.delete && (
+              <button className="btn ghost" onClick={() => setImportOpen(true)}>{t('members.import')}</button>
+            )}
             {perms.write && (
               <button className="btn" onClick={() => setAddOpen(true)}>{t('members.add')}</button>
             )}
@@ -299,6 +330,10 @@ export default function MembersPage() {
           }}
         />
       )}
+
+      {importOpen && (
+        <ImportMembersModal onClose={() => setImportOpen(false)} onDone={reload} />
+      )}
     </>
   );
 }
@@ -326,6 +361,7 @@ function AddMemberModal({
     church_role: ChurchRole.Member as ChurchRole,
     group_position: GroupPosition.NewMember as GroupPosition,
   });
+  const [photo, setPhoto] = useState<File | null>(null);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -358,7 +394,7 @@ function AddMemberModal({
           await api.patch(`/members/${incumbent.id}`, { group_position: GroupPosition.CoreMember });
         }
       }
-      await api.post('/members', {
+      const created = await api.post<{ id: string }>('/members', {
         full_name: form.full_name.trim(),
         english_name: form.english_name || undefined,
         phone: form.phone || undefined,
@@ -368,6 +404,14 @@ function AddMemberModal({
         group_id: form.group_id || undefined,
         group_position: form.group_id ? form.group_position : undefined,
       });
+      // The photo goes through the SAME endpoint the member's own profile page
+      // uses (rule G4), once the row exists to hang it on — so nothing reaches
+      // storage for a member the database refused (a duplicate name pair, say).
+      if (photo) {
+        const fd = new FormData();
+        fd.append('file', photo);
+        await api.upload(`/members/${created.id}/avatar`, fd);
+      }
       onSaved();
     } catch (e) {
       setErr((e as Error).message);
@@ -441,6 +485,10 @@ function AddMemberModal({
           </Field>
         )}
       </div>
+      <Field label={t('members.field.photo')}>
+        <PhotoPicker file={photo} onChange={setPhoto} name={form.full_name} />
+      </Field>
+      <div className="hint" style={{ marginBottom: 6 }}>{t('photo.hint')}</div>
       <div className="modal-actions">
         <button className="btn ghost" onClick={onClose}>{t('common.cancel')}</button>
         <button className="btn" onClick={save} disabled={saving}>

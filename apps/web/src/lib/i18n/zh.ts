@@ -148,6 +148,87 @@ export const zh: Messages = {
   'members.err.name': '请填写姓名',
   'members.err.hall': '请选择堂会',
   'members.toast.created': '成员已新增',
+  'members.field.photo': '照片',
+  // 公开自助注册链接（/join）——由成员管理页发出，因为发链接的人正是看着名册
+  // 一天天填满的人。
+  'members.registerLink': '注册链接',
+  'members.registerLinkTitle': '复制公开链接，让会众自行填表注册',
+  'members.toast.linkCopied': '注册链接已复制',
+
+  /* ---- 批量导入成员 -----------------------------------------------------
+   * 这是一份会被拿回去修改再上传的表格，所以每一次拒绝都要指明行号和出错的
+   * 那一格。下列字段名同时就是模板的表头——lib/members-import.ts 会用三种
+   * 语言的这些字符串去比对上传文件的表头，中文模板填好再传回来照样读得懂。
+   * -------------------------------------------------------------------- */
+  'members.import': '导入',
+  'import.title': '导入成员',
+  'import.intro': '上传 .xlsx 或 .csv 文件。系统以「中文名 + 英文名」这一对姓名来辨认一个人：名册上已有的人只会被更新，不会重复新增；而且只更新文件里真正填了的那几栏。',
+  'import.pick': '选择文件',
+  'import.picked': '文件：{name}',
+  'import.template': '下载模板',
+  'import.templateFile': '成员导入模板',
+  'import.reading': '正在读取文件…',
+  'import.err.read': '无法读取该文件，请另存为 .xlsx 或 .csv 后重试。',
+  'import.err.empty': '该文件表头之下没有任何数据行。',
+  'import.err.missingColumn': '文件缺少「{column}」这一栏——每一行都必须有。',
+  'import.err.tooManyRows': '一份文件最多 {max} 行，这份有 {n} 行。请拆分后分批导入。',
+  'import.preview': '导入后会发生什么',
+  'import.summary': '新增 {created} · 更新 {updated} · 跳过 {skipped}',
+  'import.col.row': '行号',
+  'import.col.member': '成员',
+  'import.col.action': '处理方式',
+  'import.col.detail': '说明',
+  'import.action.create': '新增',
+  'import.action.update': '更新',
+  'import.action.skip': '跳过',
+  'import.updating': '更新：{fields}',
+  'import.apply': '导入这 {n} 行',
+  'import.applying': '导入中…',
+  'import.another': '重新选择文件',
+  'import.nothing': '这份文件没有任何一行可以导入——请按下方提示修改后重新上传。',
+  'import.confirm.title': '确定覆盖已有成员？',
+  'import.confirm.message': '名册上已有的 {updated} 位成员，其资料将被这份文件覆盖，另新增 {created} 位。覆盖后无法恢复。',
+  'import.confirm.ok': '导入',
+  'import.done': '导入完成',
+  'import.done.summary': '新增 {created} · 更新 {updated} · 跳过 {skipped}',
+  'import.done.failures': '以下行被服务器拒绝：',
+  'import.hint': '💡 留空表示「这一栏没有要说的」，绝不会清掉教会已有的资料。日期请填 YYYY-MM-DD。',
+  /* 栏目名称——同时是模板的表头。 */
+  'import.field.fullName': '中文名',
+  'import.field.englishName': '英文名',
+  'import.field.phone': '电话',
+  'import.field.email': '邮箱',
+  'import.field.gender': '性别',
+  'import.field.birthday': '生日',
+  'import.field.joined': '加入日期',
+  'import.field.churchRole': '教会身份',
+  'import.field.status': '状态',
+  'import.field.hall': '堂会',
+  'import.field.group': '小组',
+  /* 该行为何不能导入。{value} 是出错的那一格。 */
+  'import.issue.name_missing': '没有中文名——成员必须有中文名。',
+  'import.issue.too_long': '{field}太长：「{value}」',
+  'import.issue.duplicate_in_file': '同一对姓名已经出现在本文件第 {value} 行。',
+  'import.issue.unknown_hall': '没有叫「{value}」的堂会。',
+  'import.issue.unknown_group': '没有叫「{value}」的小组。',
+  'import.issue.unknown_role': '「{value}」不是教会身份。',
+  'import.issue.unknown_gender': '「{value}」不是性别。',
+  'import.issue.unknown_status': '「{value}」不是成员状态。',
+  'import.issue.bad_date': '「{value}」不是日期——请写成 YYYY-MM-DD。',
+  'import.issue.bad_email': '「{value}」不是邮箱地址。',
+  'import.issue.bad_phone': '「{value}」不是电话号码。',
+  'import.issue.no_hall': '本教会不止一个堂会，因此每一行都要填堂会。',
+  'import.issue.other_hall': '此人属于其他堂会，本账号无权更改。',
+  'import.issue.group_other_hall': '「{value}」是其他堂会的小组。',
+
+  /* ---- 共用的照片选择器 -------------------------------------------------- */
+  'photo.choose': '添加照片',
+  'photo.change': '更换照片',
+  'photo.remove': '移除照片',
+  'photo.selected': '已选照片',
+  // 之所以不加 capture 属性：系统弹窗会同时给出「拍照」和「相册」两个选择，
+  // 这句话正是这么写的，免得有人以为只能二选一。
+  'photo.hint': '可以现场拍照，也可以从相册里选 · 最大 5MB',
 
   /* ---- member detail --------------------------------------------------- */
   'member.title': '成员详情',
@@ -663,6 +744,37 @@ export const zh: Messages = {
   'enroll.slipChosen': '已附上：{name}',
   'enroll.slipRequired': '请附上你的付款凭证。',
   'enroll.slipTypes': 'JPG、PNG、WEBP、HEIC 或 PDF · 最大 5MB',
+
+  /* ---- /join —— 公开的成员自助注册 --------------------------------------
+   * 无需登录，因此与另外两个公开页面一样以默认语言显示。陌生人能填的东西
+   * 有意保持很少：自己的联系方式和一张照片。至于在教会里的身份、小组、状态，
+   * 都是教会日后自己定的。
+   * -------------------------------------------------------------------- */
+  'join.header': '成员注册',
+  'join.title': '注册成为会友',
+  'join.intro': '填好这份表格，教会办公室就会收到您的资料，一分钟就好。',
+  'join.field.name': '中文名',
+  'join.field.englishName': '英文名',
+  'join.namePlaceholder': '例如：陈约翰',
+  'join.englishPlaceholder': '例如：John Tan',
+  'join.field.phone': '电话',
+  'join.field.email': '邮箱',
+  'join.field.gender': '性别',
+  'join.field.birthday': '生日',
+  'join.field.hall': '您参加哪一个堂会？',
+  'join.field.photo': '照片（选填）',
+  'join.submit': '提交',
+  'join.submitting': '提交中…',
+  'join.err.name': '请填写您的中文名',
+  'join.err.hall': '请选择您参加的堂会',
+  'join.createdTitle': '欢迎您 🙏',
+  'join.created': '谢谢您，{name}——资料已送到教会办公室，稍后会有同工与您联系。',
+  'join.updatedTitle': '资料已更新',
+  'join.updated': '谢谢您，{name}——名册上已经有您，所以我们更新了您的资料，没有重复登记。',
+  'join.again': '再帮别人注册',
+  'join.hint': '💡 若名册上已有您的名字，这里只会更新资料，不会新建第二份记录。',
+  // {church} 是教会自己的名称，取自教会记录，不是翻译。
+  'join.privacy': '🔒 您的资料仅由教会办公室保管 · {church}',
 
   /* ---- enum labels ----------------------------------------------------- */
   'role.pastor': '牧师',

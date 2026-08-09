@@ -1207,6 +1207,55 @@ async function main() {
       await fxTrainingFree.remove();
     }
 
+    /* -- members · import + the public registration link ------------------- */
+    // Two doorways onto the same roll: a spreadsheet the office uploads, and a
+    // link a stranger fills in. Neither may create a second copy of somebody
+    // who is already on the roll — that rule lives in `lib/members-import.ts`
+    // and is unit-tested there, so what this asserts is that both doorways
+    // EXIST and open, which no unit test can see.
+    mod('members · import · public registration link');
+    try {
+      await page.goto(`${BASE}/members`, { waitUntil: 'domcontentloaded' });
+      await page.locator('.page-bar').first().waitFor({ state: 'attached', timeout: 20000 });
+      check('the members page offers an import',
+        (await page.locator('button:visible:has-text("Import")').count()) === 1);
+      check('…and a registration link to hand out',
+        (await page.locator('button:visible:has-text("Registration link")').count()) === 1);
+      await page.locator('button:visible:has-text("Import")').first().click();
+      await page.locator('.modal-backdrop').last().waitFor({ timeout: 8000 });
+      const importCopy = await page.locator('.modal-backdrop').last().innerText();
+      check('the import asks for a file and offers the template that names the columns',
+        /template/i.test(importCopy) &&
+          (await page.locator('.modal-backdrop').last().locator('input[type=file]').count()) === 1,
+        importCopy.replace(/\s+/g, ' ').slice(0, 140));
+      check('…and writes nothing on the way in — no apply button before a file',
+        (await page.locator('.modal-backdrop').last().locator('button:has-text("Import"):not(:disabled)').count()) === 0);
+      await page.keyboard.press('Escape');
+      await w(400);
+
+      // The public form itself: no session, no shell, and it must render for
+      // somebody who has never signed in — which is the whole point of it.
+      const anon = await browser.newContext({ viewport: { width: 402, height: 874 } });
+      try {
+        const anonPage = await anon.newPage();
+        await anonPage.goto(`${BASE}/join`, { waitUntil: 'domcontentloaded' });
+        await anonPage.locator('input').first().waitFor({ timeout: 20000 });
+        const joinBody = await anonPage.locator('body').innerText();
+        check('the registration link opens with no session at all',
+          /Register as a member/i.test(joinBody) && (await anonPage.locator('.sidebar').count()) === 0,
+          joinBody.replace(/\s+/g, ' ').slice(0, 140));
+        check('…and takes a photo from the camera OR the gallery, never forcing one',
+          (await anonPage.locator('input[type=file][accept*="image"]').count()) === 1 &&
+            (await anonPage.locator('input[type=file][capture]').count()) === 0);
+        check('…and says it will update rather than duplicate somebody already on the roll',
+          /updates your details/i.test(joinBody));
+      } finally {
+        await anon.close();
+      }
+    } catch (e) {
+      check('the run aborted', false, e.message.split('\n')[0]);
+    }
+
     /* -- forty days ------------------------------------------------------- */
     // Every 守望 pair was wiped, so the relay chart and the progress dialog have
     // nothing to show unless this module pairs two throwaway members itself.

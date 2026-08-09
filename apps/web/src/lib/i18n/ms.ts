@@ -150,6 +150,89 @@ export const ms: Messages = {
   'members.err.name': 'Sila masukkan nama',
   'members.err.hall': 'Sila pilih kongregasi',
   'members.toast.created': 'Ahli ditambah',
+  'members.field.photo': 'Gambar',
+  // Pautan pendaftaran diri awam (/join) — diberikan dari senarai ahli, kerana
+  // orang yang mengedarkannya ialah orang yang menonton senarai itu bertambah.
+  'members.registerLink': 'Pautan pendaftaran',
+  'members.registerLinkTitle': 'Salin pautan awam untuk orang mendaftarkan diri sendiri',
+  'members.toast.linkCopied': 'Pautan pendaftaran disalin',
+
+  /* ---- import senarai ahli ----------------------------------------------
+   * Fail ini akan dibetulkan dan dimuat naik semula oleh seseorang, jadi
+   * setiap penolakan menyebut nombor baris dan nilai yang bermasalah. Label
+   * medan di bawah juga menjadi baris tajuk templat — lib/members-import.ts
+   * memadankan tajuk fail yang dimuat naik dengan teks ini dalam ketiga-tiga
+   * bahasa.
+   * -------------------------------------------------------------------- */
+  'members.import': 'Import',
+  'import.title': 'Import ahli',
+  'import.intro': 'Muat naik fail .xlsx atau .csv. Ahli dipadankan melalui pasangan nama — nama Cina bersama nama Inggeris — jadi orang yang sudah ada dalam senarai dikemas kini, bukan ditambah dua kali, dan hanya lajur yang diisi dalam fail anda disentuh.',
+  'import.pick': 'Pilih fail',
+  'import.picked': 'Fail: {name}',
+  'import.template': 'Muat turun templat',
+  'import.templateFile': 'templat_import_ahli',
+  'import.reading': 'Membaca fail…',
+  'import.err.read': 'Fail itu tidak dapat dibaca. Simpan sebagai .xlsx atau .csv dan cuba lagi.',
+  'import.err.empty': 'Fail itu tiada baris di bawah tajuk.',
+  'import.err.missingColumn': 'Fail ini tiada lajur “{column}” — setiap baris memerlukannya.',
+  'import.err.tooManyRows': 'Satu fail boleh membawa {max} baris sahaja; fail ini ada {n}. Pecahkan dan import bahagiannya.',
+  'import.preview': 'Apa yang akan berlaku',
+  'import.summary': '{created} untuk ditambah · {updated} untuk dikemas kini · {skipped} dilangkau',
+  'import.col.row': 'Baris',
+  'import.col.member': 'Ahli',
+  'import.col.action': 'Tindakan',
+  'import.col.detail': 'Butiran',
+  'import.action.create': 'Tambah',
+  'import.action.update': 'Kemas kini',
+  'import.action.skip': 'Dilangkau',
+  'import.updating': 'Mengemas kini: {fields}',
+  'import.apply': 'Import {n} baris',
+  'import.applying': 'Mengimport…',
+  'import.another': 'Pilih fail lain',
+  'import.nothing': 'Tiada satu baris pun dalam fail ini boleh diimport — betulkan baris di bawah dan muat naik semula.',
+  'import.confirm.title': 'Tulis ganti ahli sedia ada?',
+  'import.confirm.message': '{updated} ahli yang sudah ada dalam senarai akan ditulis ganti dengan butiran dalam fail ini, dan {created} akan ditambah. Tulis ganti tidak boleh dibatalkan.',
+  'import.confirm.ok': 'Import',
+  'import.done': 'Import selesai',
+  'import.done.summary': 'Ditambah {created} · dikemas kini {updated} · dilangkau {skipped}',
+  'import.done.failures': 'Baris berikut ditolak oleh pelayan:',
+  'import.hint': '💡 Sel kosong bermaksud “tiada apa-apa untuk dikatakan” dan tidak sekali-kali memadam apa yang gereja sudah ada. Tarikh ditulis sebagai YYYY-MM-DD.',
+  /* Tajuk lajur — juga baris tajuk templat. */
+  'import.field.fullName': 'Nama Cina',
+  'import.field.englishName': 'Nama Inggeris',
+  'import.field.phone': 'Telefon',
+  'import.field.email': 'E-mel',
+  'import.field.gender': 'Jantina',
+  'import.field.birthday': 'Tarikh lahir',
+  'import.field.joined': 'Tarikh sertai',
+  'import.field.churchRole': 'Jawatan gereja',
+  'import.field.status': 'Status',
+  'import.field.hall': 'Kongregasi',
+  'import.field.group': 'Kumpulan sel',
+  /* Sebab baris tidak boleh diimport. {value} ialah sel yang bermasalah. */
+  'import.issue.name_missing': 'Tiada nama Cina — setiap ahli mesti ada satu.',
+  'import.issue.too_long': '{field} terlalu panjang: “{value}”',
+  'import.issue.duplicate_in_file': 'Pasangan nama yang sama sudah ada pada baris {value} fail ini.',
+  'import.issue.unknown_hall': 'Tiada kongregasi bernama “{value}”.',
+  'import.issue.unknown_group': 'Tiada kumpulan sel bernama “{value}”.',
+  'import.issue.unknown_role': '“{value}” bukan jawatan gereja.',
+  'import.issue.unknown_gender': '“{value}” bukan jantina.',
+  'import.issue.unknown_status': '“{value}” bukan status ahli.',
+  'import.issue.bad_date': '“{value}” bukan tarikh — tulis sebagai YYYY-MM-DD.',
+  'import.issue.bad_email': '“{value}” bukan alamat e-mel.',
+  'import.issue.bad_phone': '“{value}” bukan nombor telefon.',
+  'import.issue.no_hall': 'Gereja ini mempunyai lebih daripada satu kongregasi, jadi setiap baris memerlukan satu.',
+  'import.issue.other_hall': 'Orang ini milik kongregasi lain, yang tidak boleh diubah oleh akaun ini.',
+  'import.issue.group_other_hall': '“{value}” ialah kumpulan sel kongregasi lain.',
+
+  /* ---- pemilih gambar yang dikongsi ------------------------------------- */
+  'photo.choose': 'Tambah gambar',
+  'photo.change': 'Tukar gambar',
+  'photo.remove': 'Buang gambar',
+  'photo.selected': 'Gambar yang dipilih',
+  // Sebab tiada atribut `capture`: helaian sistem menawarkan kamera DAN galeri,
+  // dan ayat ini menyatakannya supaya tiada siapa menyangka hanya satu.
+  'photo.hint': 'Ambil gambar atau pilih dari galeri anda · maksimum 5MB',
 
   /* ---- member detail --------------------------------------------------- */
   'member.title': 'Butiran ahli',
@@ -668,6 +751,38 @@ export const ms: Messages = {
   'enroll.slipChosen': 'Dilampirkan: {name}',
   'enroll.slipRequired': 'Sila lampirkan resit pembayaran anda.',
   'enroll.slipTypes': 'JPG, PNG, WEBP, HEIC atau PDF · maksimum 5MB',
+
+  /* ---- /join — pendaftaran diri ahli (awam) -----------------------------
+   * Tiada sesi, jadi halaman ini dipaparkan dalam bahasa lalai seperti dua
+   * halaman awam yang lain. Apa yang boleh diisi oleh orang luar sengaja
+   * sedikit: butiran hubungan mereka sendiri dan satu gambar. Kedudukan mereka
+   * dalam gereja — jawatan, kumpulan sel, status — ditentukan oleh gereja.
+   * -------------------------------------------------------------------- */
+  'join.header': 'Pendaftaran ahli',
+  'join.title': 'Daftar sebagai ahli',
+  'join.intro': 'Isikan borang ini dan pejabat gereja akan menerima butiran anda. Ia mengambil masa seminit sahaja.',
+  'join.field.name': 'Nama Cina',
+  'join.field.englishName': 'Nama Inggeris',
+  'join.namePlaceholder': 'cth. 陈约翰',
+  'join.englishPlaceholder': 'cth. John Tan',
+  'join.field.phone': 'Telefon',
+  'join.field.email': 'E-mel',
+  'join.field.gender': 'Jantina',
+  'join.field.birthday': 'Tarikh lahir',
+  'join.field.hall': 'Kongregasi mana yang anda hadiri?',
+  'join.field.photo': 'Gambar (pilihan)',
+  'join.submit': 'Hantar',
+  'join.submitting': 'Menghantar…',
+  'join.err.name': 'Sila masukkan nama Cina anda',
+  'join.err.hall': 'Sila pilih kongregasi yang anda hadiri',
+  'join.createdTitle': 'Selamat datang 🙏',
+  'join.created': 'Terima kasih, {name} — butiran anda sudah sampai ke pejabat gereja dan seseorang akan menghubungi anda.',
+  'join.updatedTitle': 'Butiran anda dikemas kini',
+  'join.updated': 'Terima kasih, {name} — nama anda sudah ada dalam senarai, jadi kami mengemas kini butiran anda dan bukan menambah rekod kedua.',
+  'join.again': 'Daftarkan orang lain',
+  'join.hint': '💡 Jika nama anda sudah ada dalam senarai gereja, borang ini mengemas kini butiran anda dan tidak mencipta rekod kedua.',
+  // {church} ialah nama gereja itu sendiri, daripada rekodnya — bukan terjemahan.
+  'join.privacy': '🔒 Butiran anda disimpan oleh pejabat gereja sahaja · {church}',
 
   /* ---- enum labels ----------------------------------------------------- */
   'role.pastor': 'Pastor',

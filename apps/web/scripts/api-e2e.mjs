@@ -133,6 +133,8 @@ async function main() {
   }
 
   await namePairIdentity(admin, hallId);
+  await memberImport(admin, hallId);
+  await selfRegistration(admin, hallId);
 
   // ---- Events CRUD --------------------------------------------------------
   const mkEv = await req('POST', '/api/events', { ...H, body: { title: `E2E聚会-${Date.now()}`, event_type: 'service', starts_at: new Date('2026-08-01T10:00:00Z').toISOString() } });
@@ -313,6 +315,10 @@ async function main() {
   // ---- Access control: provision role accounts, assert the matrix ---------
   await roleMatrix(freeMembers, hallId);
 
+  // ---- The church is left as it was found --------------------------------
+  const stuck = await purgeResidue(H).catch((e) => [`purge itself failed: ${e.message}`]);
+  ok('the run leaves no test data behind', stuck.length === 0, stuck.join('; '));
+
   finish();
 }
 
@@ -388,6 +394,204 @@ async function namePairIdentity(adminCookie, hallId) {
 
   for (const id of made) await req('DELETE', `/api/members/${id}`, H);
   ok('name-pair fixtures cleaned up', true, `${made.length} removed`);
+}
+
+/**
+ * 成员导入 — a spreadsheet of members, decided server-side.
+ *
+ * The browser previews what an import will do, but the decision is this
+ * endpoint's (rule G2), so what is asserted here is the decision itself: an
+ * existing name pair is an UPDATE rather than a second row, a sparse file does
+ * not blank the columns it left empty, and every refused row comes back naming
+ * its own spreadsheet row and what was wrong with it — one bad cell must never
+ * take the rest of the file with it.
+ *
+ * Everything it creates is deleted again, including on the failing paths.
+ */
+async function memberImport(adminCookie, hallId) {
+  const H = { cookie: adminCookie };
+  const stamp = Date.now();
+  const chinese = `E2E导入-${stamp}`;
+  const made = [];
+
+  const first = await req('POST', '/api/members/import', {
+    ...H,
+    body: {
+      hall_id: hallId,
+      rows: [
+        { row: 2, full_name: chinese, english_name: 'Import One', phone: '012-111 1111', email: `e2e-import-${stamp}@grace.org` },
+        // The same Chinese name with another English name is a different
+        // person — that is what the pair index is for.
+        { row: 3, full_name: chinese, english_name: 'Import Two' },
+        // …and the SAME pair typed again is one person, not two.
+        { row: 4, full_name: ` ${chinese} `, english_name: 'IMPORT ONE' },
+        { row: 5, full_name: '   ' },
+        { row: 6, full_name: `${chinese}-日期`, date_of_birth: '4 May 1990' },
+        { row: 7, full_name: `${chinese}-堂会`, hall: '德文堂' },
+      ],
+    },
+  });
+  ok('import → 200', first.status === 200, `status ${first.status} ${JSON.stringify(first.json).slice(0, 160)}`);
+  ok('…creates the two real people', first.json?.created === 2, String(first.json?.created));
+  ok('…and nothing was refused by the database',
+    (first.json?.failures || []).length === 0, JSON.stringify(first.json?.failures || []));
+  const skipped = new Map((first.json?.skipped || []).map((s) => [s.row, s.issue]));
+  ok('…the repeated pair is skipped naming the row it repeats', skipped.get(4) === 'duplicate_in_file', String(skipped.get(4)));
+  ok('…a row with no Chinese name is skipped', skipped.get(5) === 'name_missing', String(skipped.get(5)));
+  ok('…an unreadable date is skipped', skipped.get(6) === 'bad_date', String(skipped.get(6)));
+  ok('…an unknown congregation is skipped', skipped.get(7) === 'unknown_hall', String(skipped.get(7)));
+
+  const found = (await req('GET', `/api/members?q=${encodeURIComponent(chinese)}`, H)).json || [];
+  for (const m of found) made.push(m.id);
+  ok('…and exactly two members carry that Chinese name', found.length === 2, String(found.length));
+  const one = found.find((m) => m.english_name === 'Import One');
+  ok('…the imported email landed', one?.email === `e2e-import-${stamp}@grace.org`, one?.email);
+
+  // The re-import: the same pair, a new phone, and NO email column at all. An
+  // update must take the phone and leave the email the church already had.
+  const again = await req('POST', '/api/members/import', {
+    ...H,
+    body: { hall_id: hallId, rows: [{ row: 2, full_name: chinese, english_name: 'Import One', phone: '012-999 9999' }] },
+  });
+  ok('re-importing an existing pair updates rather than duplicates',
+    again.status === 200 && again.json?.updated === 1 && again.json?.created === 0,
+    `status ${again.status} ${JSON.stringify(again.json).slice(0, 140)}`);
+  const after = ((await req('GET', `/api/members?q=${encodeURIComponent(chinese)}`, H)).json || [])
+    .find((m) => m.english_name === 'Import One');
+  ok('…the phone the file supplied was written', after?.phone === '012-999 9999', after?.phone);
+  ok('…and the email the file left out was NOT blanked',
+    after?.email === `e2e-import-${stamp}@grace.org`, String(after?.email));
+  ok('…and there is still only one of them',
+    ((await req('GET', `/api/members?q=${encodeURIComponent(chinese)}`, H)).json || []).length === 2);
+
+  // Refusals that are about the REQUEST rather than about a row.
+  ok('an import with no rows → 400',
+    (await req('POST', '/api/members/import', { ...H, body: { rows: [] } })).status === 400);
+  const flood = Array.from({ length: 301 }, (_, i) => ({ row: i + 2, full_name: `E2E洪水-${stamp}-${i}` }));
+  const tooMany = await req('POST', '/api/members/import', { ...H, body: { hall_id: hallId, rows: flood } });
+  ok('an import past the row cap → 400, before anything is written',
+    tooMany.status === 400, `status ${tooMany.status}`);
+  ok('…and nothing from it exists',
+    ((await req('GET', `/api/members?q=${encodeURIComponent(`E2E洪水-${stamp}`)}`, H)).json || []).length === 0);
+  ok('an unknown congregation id → 400',
+    (await req('POST', '/api/members/import', {
+      ...H,
+      body: { hall_id: '00000000-0000-0000-0000-000000000000', rows: [{ row: 2, full_name: 'x' }] },
+    })).status === 400);
+  ok('GET /members/import → 404 (it is a write path, and not a member id)',
+    (await req('GET', '/api/members/import', H)).status === 404);
+
+  for (const id of made) await req('DELETE', `/api/members/${id}`, H);
+  ok('import fixtures cleaned up', true, `${made.length} removed`);
+}
+
+/**
+ * `/members/register` — the PUBLIC self-registration form (/join).
+ *
+ * The only unauthenticated write that touches the member roll, so what is
+ * asserted is mostly what it REFUSES: a stranger may leave their contact
+ * details, and may not make themselves a pastor, park a note on their own
+ * record, or reach any other method on the path. And the same pair rule as
+ * everywhere else — registering twice updates the one row rather than growing
+ * a twin.
+ */
+async function selfRegistration(adminCookie, hallId) {
+  const H = { cookie: adminCookie };
+  const stamp = Date.now();
+  const chinese = `E2E注册-${stamp}`;
+  const made = [];
+
+  const options = await req('GET', '/api/members/register');
+  ok('public GET /members/register → 200 + halls', options.status === 200 && Array.isArray(options.json?.halls),
+    `status ${options.status}`);
+  ok('…and hands out nothing but each hall’s id and name',
+    (options.json?.halls || []).every((h) => Object.keys(h).sort().join(',') === 'id,name'),
+    JSON.stringify(options.json?.halls || []).slice(0, 120));
+
+  // Deliberately carrying fields a stranger must not be able to set.
+  const join = await req('POST', '/api/members/register', {
+    body: {
+      full_name: chinese,
+      english_name: 'Join One',
+      phone: '012-222 2222',
+      gender: 'male',
+      date_of_birth: '1990-05-04',
+      hall_id: hallId,
+      church_role: 'pastor',
+      status: 'inactive',
+      notes: 'promote me',
+      group_id: '00000000-0000-0000-0000-000000000000',
+    },
+  });
+  ok('public registration (no session) → created', join.status === 200 && join.json?.status === 'created',
+    `status ${join.status} ${JSON.stringify(join.json)}`);
+  ok('…and the answer carries no member data at all',
+    join.json && Object.keys(join.json).join(',') === 'status', JSON.stringify(join.json));
+
+  const found = ((await req('GET', `/api/members?q=${encodeURIComponent(chinese)}`, H)).json || []);
+  for (const m of found) made.push(m.id);
+  ok('…one member was created', found.length === 1, String(found.length));
+  const person = found[0];
+  ok('…as an ordinary member, whatever the body claimed', person?.church_role === 'member', person?.church_role);
+  ok('…on the roll, not with the status it asked for', person?.status === 'active', person?.status);
+  ok('…with no notes and no life group', !person?.notes && !person?.group_id,
+    `${person?.notes} / ${person?.group_id}`);
+  ok('…and the details it WAS allowed to set',
+    person?.phone === '012-222 2222' && person?.gender === 'male' && person?.date_of_birth === '1990-05-04',
+    `${person?.phone} / ${person?.gender} / ${person?.date_of_birth}`);
+
+  // Registering again is the same person: an update, not a twin — and the page
+  // is told which, in the same one-word shape.
+  const twice = await req('POST', '/api/members/register', {
+    body: { full_name: ` ${chinese} `, english_name: 'JOIN ONE', phone: '012-333 3333', hall_id: hallId },
+  });
+  ok('registering the same pair again → updated', twice.status === 200 && twice.json?.status === 'updated',
+    `status ${twice.status} ${JSON.stringify(twice.json)}`);
+  const reread = ((await req('GET', `/api/members?q=${encodeURIComponent(chinese)}`, H)).json || []);
+  ok('…still exactly one row', reread.length === 1, String(reread.length));
+  ok('…with the new phone', reread[0]?.phone === '012-333 3333', reread[0]?.phone);
+  ok('…and the name the church filed them under, not the visitor’s re-spelling',
+    reread[0]?.english_name === 'Join One', reread[0]?.english_name);
+
+  // The photo rides along with the registration, and an SVG is a script that
+  // renders — this is the one unauthenticated upload of an image into a public
+  // bucket, so it takes an explicit list of photo types rather than `image/*`.
+  const svg = await req('POST', '/api/members/register', {
+    form: fileForm(
+      'photo',
+      new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg"><script>1</script></svg>'),
+      'photo.svg',
+      'image/svg+xml',
+      { full_name: `${chinese}-svg`, hall_id: hallId },
+    ),
+  });
+  ok('registration with an SVG “photo” → 400', svg.status === 400, `status ${svg.status}`);
+  ok('…and no member was created by it',
+    ((await req('GET', `/api/members?q=${encodeURIComponent(`${chinese}-svg`)}`, H)).json || []).length === 0);
+
+  // What it refuses.
+  ok('registration with no name → 400',
+    (await req('POST', '/api/members/register', { body: { hall_id: hallId } })).status === 400);
+  ok('registration with an absurd name → 400',
+    (await req('POST', '/api/members/register', { body: { full_name: '甲'.repeat(500), hall_id: hallId } })).status === 400);
+  ok('registration with an unreadable birthday → 400',
+    (await req('POST', '/api/members/register', {
+      body: { full_name: `${chinese}-x`, hall_id: hallId, date_of_birth: '4 May 1990' },
+    })).status === 400);
+  ok('registration into a congregation that does not exist → 400',
+    (await req('POST', '/api/members/register', {
+      body: { full_name: `${chinese}-y`, hall_id: '00000000-0000-0000-0000-000000000000' },
+    })).status === 400);
+  // Only GET and POST are public on this exact path; nothing else under
+  // /members is opened by it.
+  ok('unauthenticated PATCH /members/register → 401',
+    (await req('PATCH', '/api/members/register', { body: { full_name: 'x' } })).status === 401);
+  ok('unauthenticated GET /members → still 401', (await req('GET', '/api/members')).status === 401);
+  ok('DELETE /members/register (signed in) → 404, never a delete by id',
+    (await req('DELETE', '/api/members/register', H)).status === 404);
+
+  for (const id of made) await req('DELETE', `/api/members/${id}`, H);
+  ok('registration fixtures cleaned up', true, `${made.length} removed`);
 }
 
 async function activityShape(adminCookie, members, hallId) {
@@ -1131,6 +1335,9 @@ async function roleMatrix(freeMembers, hallId) {
   const bail = async (why, err) => {
     if (err) console.error(`API E2E ${why}:`, err);
     await restoreRoleMatrix(H, made, originalEmails, originalPhones).catch(() => {});
+    // And the same total purge the normal path ends with — a crash is exactly
+    // when a fixture goes missing from every list that knows about it.
+    await purgeResidue(H).catch(() => {});
     process.exit(1);
   };
   process.on('uncaughtException', (e) => void bail('uncaught exception', e));
@@ -1161,6 +1368,13 @@ async function roleMatrix(freeMembers, hallId) {
       ok('readonly GET members → 200', (await req('GET', '/api/members', RH)).status === 200);
       ok('readonly POST members → 403', (await req('POST', '/api/members', { ...RH, body: { full_name: 'x', church_role: 'member', status: 'active' } })).status === 403);
       ok('readonly GET accounts → 403', (await req('GET', '/api/accounts', RH)).status === 403);
+      // Importing is a bulk create-and-overwrite, so it is admin-only — and a
+      // read-only account is refused by the write gate before that even.
+      ok('readonly POST members/import → 403',
+        (await req('POST', '/api/members/import', {
+          ...RH,
+          body: { hall_id: hallId, rows: [{ row: 2, full_name: `E2E禁止-${Date.now()}` }] },
+        })).status === 403);
       // The roll-call sheet writes with PUT — a verb the gate had never seen
       // before 0013, so prove it is refused for a read-only account too, and
       // that the refusal happens before anything is written.
@@ -1202,6 +1416,16 @@ async function roleMatrix(freeMembers, hallId) {
         await req('DELETE', `/api/members/${mk.json.id}`, H); // cleanup as super_admin
       }
       ok('coworker GET accounts → 403', (await req('GET', '/api/accounts', CH)).status === 403);
+      // A coworker may add members one at a time (asserted above) but not
+      // rewrite the roll in one request — the same bar as a delete.
+      const coImport = `E2E同工导入-${Date.now()}`;
+      ok('coworker POST members/import → 403',
+        (await req('POST', '/api/members/import', {
+          ...CH,
+          body: { hall_id: hallId, rows: [{ row: 2, full_name: coImport }] },
+        })).status === 403);
+      ok('…and the refused import wrote nothing',
+        ((await req('GET', `/api/members?q=${encodeURIComponent(coImport)}`, H)).json || []).length === 0);
       await churchRoleMatrix('coworker', CH);
       await selfProfileMatrix('coworker', CH, co, ro.id);
     }
@@ -1298,6 +1522,72 @@ async function selfProfileMatrix(role, RH, account, otherAccountId) {
     ok(`${role} PATCH another account → 403`, (await req('PATCH', `/api/accounts/${otherAccountId}`, { ...RH, body: { account_role: 'admin' } })).status === 403);
     ok(`${role} GET another account → 403`, (await req('GET', `/api/accounts/${otherAccountId}`, RH)).status === 403);
   }
+}
+
+/**
+ * The last word on test data: delete every row this suite's naming convention
+ * owns, whoever created it.
+ *
+ * Each block already deletes its own fixtures in a `finally`, and the crash
+ * handler restores the two real members it borrows. What none of that covers is
+ * a row from an EARLIER run that died between creating something and reaching
+ * its `finally` — invisible to this process, and simply accumulating in the
+ * church's live database. That is not hypothetical: a crashed deploy run left
+ * two login accounts behind, and the two real members whose email addresses
+ * they had overwritten.
+ *
+ * So ask the API what is actually there and remove anything carrying a fixture
+ * name, in the reverse of the order fixtures are built. Residue that survives
+ * is a FAILED CHECK, not a log line — a run that leaves data in the live
+ * database has not passed.
+ */
+const FIXTURE_NAME = /^(E2E|ZZ_UITEST|查无此人)/;
+const FIXTURE_EMAIL = /^e2e-[a-z_]+-\d+-\d+@grace\.org$/i;
+async function purgeResidue(H) {
+  const stuck = [];
+  const list = async (path) => {
+    const r = await req('GET', path, H);
+    return Array.isArray(r.json) ? r.json : [];
+  };
+  const kill = async (label, path) => {
+    const r = await req('DELETE', path, H);
+    if (r.status === 200 || r.status === 404) console.log(`  ↳ purge: removed stray ${label}`);
+    else stuck.push(`${label} → ${r.status}`);
+  };
+
+  // Accounts first: one holds a member, and a member cannot go while it does.
+  for (const a of await list('/api/accounts')) {
+    if (FIXTURE_EMAIL.test(String(a?.email ?? ''))) await kill(`account ${a.email}`, `/api/accounts/${a.id}`);
+  }
+  for (const p2 of await list('/api/discipleship/pairs')) {
+    if (FIXTURE_NAME.test(String(p2?.mentor?.full_name ?? '')) ||
+        FIXTURE_NAME.test(String(p2?.trainee?.full_name ?? '')))
+      await kill('pair', `/api/discipleship/pairs/${p2.id}`);
+  }
+  for (const t of await list('/api/trainings')) {
+    if (FIXTURE_NAME.test(String(t?.name ?? ''))) await kill(`training ${t.name}`, `/api/trainings/${t.id}`);
+  }
+  for (const e of await list('/api/events')) {
+    if (FIXTURE_NAME.test(String(e?.title ?? ''))) await kill(`meeting ${e.title}`, `/api/events/${e.id}`);
+  }
+  for (const m of await list('/api/members')) {
+    if (FIXTURE_NAME.test(String(m?.full_name ?? ''))) await kill(`member ${m.full_name}`, `/api/members/${m.id}`);
+  }
+  for (const g of await list('/api/groups')) {
+    if (FIXTURE_NAME.test(String(g?.name ?? ''))) await kill(`group ${g.name}`, `/api/groups/${g.id}`);
+  }
+  // A member the suite borrowed rather than created: its email was overwritten
+  // with a generated one and the restore never ran. Clearing it is right — a
+  // fabricated address on a real person is worse than none, and it is the
+  // address their login is derived from.
+  for (const m of await list('/api/members')) {
+    if (FIXTURE_EMAIL.test(String(m?.email ?? ''))) {
+      const r = await req('PATCH', `/api/members/${m.id}`, { ...H, body: { email: null } });
+      if (r.status === 200) console.log(`  ↳ purge: cleared a fabricated email off ${m.full_name}`);
+      else stuck.push(`fabricated email on ${m.full_name} → ${r.status}`);
+    }
+  }
+  return stuck;
 }
 
 function finish() {

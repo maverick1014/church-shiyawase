@@ -15,6 +15,7 @@ import {
   displayRole,
 } from '@tog/shared';
 import type { MessageKey } from './i18n/en';
+import type { ImportIssue } from './members-import';
 import type { SheetTickName } from './types';
 import { churchParts } from './time';
 
@@ -221,6 +222,26 @@ export const GENDER_OPTIONS: Gender[] = [Gender.Male, Gender.Female, Gender.Othe
 
 export function genderKey(gender: string): MessageKey {
   return `gender.${gender}` as MessageKey;
+}
+
+/**
+ * Why an imported row will not be applied. The code is decided in
+ * `lib/members-import.ts` (which the server runs too); the wording is a
+ * dictionary key, like every other enum label (rule G8).
+ */
+export function importIssueKey(issue: ImportIssue): MessageKey {
+  return `import.issue.${issue}` as MessageKey;
+}
+
+/** What an imported row will do — the badge on every preview line. */
+export function importActionKey(action: 'create' | 'update' | 'skip'): MessageKey {
+  return `import.action.${action}` as MessageKey;
+}
+
+export function importActionClass(action: 'create' | 'update' | 'skip'): string {
+  if (action === 'create') return 'b-good';
+  if (action === 'update') return 'b-warn';
+  return 'b-gray';
 }
 
 /* -------------------------------------------------------------------------

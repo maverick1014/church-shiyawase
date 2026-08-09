@@ -153,6 +153,90 @@ export const en = {
   'members.err.name': 'Please enter a name',
   'members.err.hall': 'Please select a congregation',
   'members.toast.created': 'Member added',
+  'members.field.photo': 'Photo',
+  // The public self-registration link (/join) — handed out from the member
+  // list, because the person who gives it away is the one watching the roll
+  // fill up.
+  'members.registerLink': 'Registration link',
+  'members.registerLinkTitle': 'Copy the public link people fill in to register themselves',
+  'members.toast.linkCopied': 'Registration link copied',
+
+  /* ---- importing a spreadsheet of members -------------------------------
+   * A file a person will fix and upload again, so every refusal names the row
+   * and the value it choked on. The field labels double as the template's
+   * header row — `lib/members-import.ts` matches an uploaded header against
+   * these same strings in all three languages, so a Chinese template filled in
+   * and sent back is read correctly.
+   * -------------------------------------------------------------------- */
+  'members.import': 'Import',
+  'import.title': 'Import members',
+  'import.intro': 'Upload an .xlsx or .csv file. Members are matched on their pair of names — the Chinese name plus the English one — so a person already on the roll is updated rather than added twice, and only the columns your file fills in are touched.',
+  'import.pick': 'Choose a file',
+  'import.picked': 'File: {name}',
+  'import.template': 'Download template',
+  'import.templateFile': 'member_import_template',
+  'import.reading': 'Reading the file…',
+  'import.err.read': 'That file could not be read. Save it as .xlsx or .csv and try again.',
+  'import.err.empty': 'That file has no rows under the header.',
+  'import.err.missingColumn': 'The file has no “{column}” column — every row needs one.',
+  'import.err.tooManyRows': 'A file may carry at most {max} rows; this one has {n}. Split it and import the parts.',
+  'import.preview': 'What this will do',
+  'import.summary': '{created} to add · {updated} to update · {skipped} skipped',
+  'import.col.row': 'Row',
+  'import.col.member': 'Member',
+  'import.col.action': 'Action',
+  'import.col.detail': 'Detail',
+  'import.action.create': 'Add',
+  'import.action.update': 'Update',
+  'import.action.skip': 'Skipped',
+  'import.updating': 'Updating: {fields}',
+  'import.apply': 'Import {n} rows',
+  'import.applying': 'Importing…',
+  'import.another': 'Choose another file',
+  'import.nothing': 'Nothing in this file can be imported — fix the rows below and upload it again.',
+  'import.confirm.title': 'Overwrite existing members?',
+  'import.confirm.message': '{updated} member(s) already on the roll will have the details in this file written over theirs, and {created} will be added. Overwriting cannot be undone.',
+  'import.confirm.ok': 'Import',
+  'import.done': 'Import finished',
+  'import.done.summary': 'Added {created} · updated {updated} · skipped {skipped}',
+  'import.done.failures': 'These rows were refused by the server:',
+  'import.hint': '💡 A blank cell means “nothing to say” and never clears what the church already has. Dates go in as YYYY-MM-DD.',
+  /* Column headers — also the template's header row. */
+  'import.field.fullName': 'Chinese name',
+  'import.field.englishName': 'English name',
+  'import.field.phone': 'Phone',
+  'import.field.email': 'Email',
+  'import.field.gender': 'Gender',
+  'import.field.birthday': 'Date of birth',
+  'import.field.joined': 'Joined date',
+  'import.field.churchRole': 'Church role',
+  'import.field.status': 'Status',
+  'import.field.hall': 'Congregation',
+  'import.field.group': 'Life group',
+  /* Why a row will not be imported. {value} is the offending cell. */
+  'import.issue.name_missing': 'No Chinese name — a member must have one.',
+  'import.issue.too_long': 'The {field} is too long: “{value}”',
+  'import.issue.duplicate_in_file': 'The same pair of names is already on row {value} of this file.',
+  'import.issue.unknown_hall': 'No congregation is called “{value}”.',
+  'import.issue.unknown_group': 'No life group is called “{value}”.',
+  'import.issue.unknown_role': '“{value}” is not a church role.',
+  'import.issue.unknown_gender': '“{value}” is not a gender.',
+  'import.issue.unknown_status': '“{value}” is not a member status.',
+  'import.issue.bad_date': '“{value}” is not a date — write it as YYYY-MM-DD.',
+  'import.issue.bad_email': '“{value}” is not an email address.',
+  'import.issue.bad_phone': '“{value}” is not a phone number.',
+  'import.issue.no_hall': 'This church has more than one congregation, so every row needs one.',
+  'import.issue.other_hall': 'This person belongs to another congregation, which this account may not change.',
+  'import.issue.group_other_hall': '“{value}” is another congregation’s life group.',
+
+  /* ---- the shared photo picker ------------------------------------------ */
+  'photo.choose': 'Add a photo',
+  'photo.change': 'Change the photo',
+  'photo.remove': 'Remove the photo',
+  'photo.selected': 'Selected photo',
+  // Why there is no `capture` attribute: the OS sheet offers the camera AND
+  // the gallery, and this line says so, so nobody expects one or the other.
+  'photo.hint': 'Take a photo or pick one from your gallery · 5MB at most',
 
   /* ---- member detail --------------------------------------------------- */
   'member.title': 'Member detail',
@@ -683,6 +767,38 @@ export const en = {
   'enroll.slipChosen': 'Attached: {name}',
   'enroll.slipRequired': 'Please attach your payment receipt.',
   'enroll.slipTypes': 'JPG, PNG, WEBP, HEIC or PDF · 5MB at most',
+
+  /* ---- /join — public member self-registration --------------------------
+   * No session, so this renders in the default language, like the other two
+   * public pages. What a stranger may set is deliberately small: their own
+   * contact details and a photo. Everything about their standing in the church
+   * — role, life group, status — is the church's to decide later.
+   * -------------------------------------------------------------------- */
+  'join.header': 'Member registration',
+  'join.title': 'Register as a member',
+  'join.intro': 'Fill this in and the church office will have your details. It takes a minute.',
+  'join.field.name': 'Chinese name',
+  'join.field.englishName': 'English name',
+  'join.namePlaceholder': 'e.g. 陈约翰',
+  'join.englishPlaceholder': 'e.g. John Tan',
+  'join.field.phone': 'Phone',
+  'join.field.email': 'Email',
+  'join.field.gender': 'Gender',
+  'join.field.birthday': 'Date of birth',
+  'join.field.hall': 'Which congregation do you attend?',
+  'join.field.photo': 'Photo (optional)',
+  'join.submit': 'Submit',
+  'join.submitting': 'Submitting…',
+  'join.err.name': 'Please enter your Chinese name',
+  'join.err.hall': 'Please choose the congregation you attend',
+  'join.createdTitle': 'Welcome 🙏',
+  'join.created': 'Thank you, {name} — your details are with the church office and someone will be in touch.',
+  'join.updatedTitle': 'Your details are updated',
+  'join.updated': 'Thank you, {name} — we already had you on the roll, so we have updated your details instead of adding you twice.',
+  'join.again': 'Register someone else',
+  'join.hint': '💡 If your name is already on the church roll, this updates your details rather than creating a second record.',
+  // {church} is the church's own name, from its record — never a translation.
+  'join.privacy': '🔒 Your details are kept by the church office only · {church}',
 
   /* ---- enum labels ------------------------------------------------------
    * Keyed by the stored code, never by a translated string, so the palette

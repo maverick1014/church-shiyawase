@@ -16,6 +16,16 @@ import {
 } from '@/lib/sheet';
 import type { SheetCell, SheetMeeting } from '@/lib/types';
 import {
+  IMPORT_COLUMNS,
+  MAX_IMPORT_ROWS,
+  planImport,
+  type ImportContext,
+  type ImportIssue,
+  type ImportRow,
+  type PlannedRow,
+} from '@/lib/members-import';
+import {
+  ChurchRole,
   isOptionalModule,
   isTrainingKind,
   isUsableBrand,
@@ -104,15 +114,19 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
   }
 
   // Public-by-design, no session: the mentor daily form (/d/<token>), the
-  // training self-enrollment form (/enroll/<id>), and the church's own
-  // name/description/logo — which the login card and both of those forms have
-  // to render before anyone has signed in, and none of which is sensitive.
-  // Each is a narrow, specific handler below; nothing else under these
-  // prefixes is reachable unauthed, and /church is public for GET ONLY —
-  // changing the record stays super_admin (see the role gate below).
+  // training self-enrollment form (/enroll/<id>), the member self-registration
+  // form (/join), and the church's own name/description/logo — which the login
+  // card and all of those forms have to render before anyone has signed in,
+  // and none of which is sensitive. Each is a narrow, specific handler below;
+  // nothing else under these prefixes is reachable unauthed, and /church is
+  // public for GET ONLY — changing the record stays super_admin (see the role
+  // gate below). `/members/register` is likewise the ONLY public member path:
+  // it is two methods on one exact path, never a prefix, so nothing else under
+  // /members is opened by it.
   const isPublicForm =
     (r0 === 'discipleship' && r1 === 'form') ||
     (r0 === 'trainings' && r1 === 'enroll') ||
+    (r0 === 'members' && r1 === 'register' && !r2 && (method === 'GET' || method === 'POST')) ||
     (r0 === 'church' && !r1 && method === 'GET');
 
   // Hall scope for this request. `null` = 全堂权限 (sees and may write every
@@ -120,10 +134,15 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
   // to it and writes are forced onto it, server-side — the client never gets
   // to choose (rule G2: the server is authoritative).
   let hallScope: string | null = null;
+  // The account's permission role, for the handful of paths whose rule is more
+  // than "may this role write at all" — a bulk import is one (see /members/
+  // import). Null on the public forms, which have no account behind them.
+  let sessionRole: string | null = null;
   if (!isPublicForm) {
     const session = await getSession(req);
     if (!session) throw new HttpError(401, 'Not signed in');
     hallScope = session.hall ?? null;
+    sessionRole = session.role;
     // Login accounts (emails, roles, sign-in history) are super_admin-only —
     // for reads as well as writes (rule G2), so the account list never leaks.
     if (r0 === 'accounts' && session.role !== 'super_admin')
@@ -336,6 +355,64 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
 
   // ---- Members --------------------------------------------------------------
   if (r0 === 'members') {
+    // The two NAMED sub-paths come first, and each ends in a return or a 404,
+    // so neither word can ever reach the id-addressed branches below: a
+    // `DELETE /members/import` must be "no such route", not a delete addressed
+    // by the word "import".
+    //
+    // /members/register — PUBLIC self-registration (no session; see the
+    // isPublicForm gate above). The church hands out one link and people fill
+    // in their own details instead of somebody typing them off a paper slip.
+    //
+    // What this path CAN do, deliberately and exhaustively: add one member
+    // carrying a name pair, a phone, an email, a gender, a birthday, a
+    // congregation and one photo — or, when that pair is already on the roll,
+    // update those same contact details on that one row. What it CANNOT do:
+    // set a church role (every registration is an ordinary member), a status,
+    // a life group, a group position or notes — the fields are read by name
+    // from an allow-list, so a body carrying `church_role: 'pastor'` has it
+    // ignored rather than obeyed; touch anyone but the single person whose
+    // name pair was typed; or read anything back — the answer is one word,
+    // the same shape either way, and never a member's stored data.
+    if (r1 === 'register' && !r2) {
+      if (method === 'GET') {
+        // The form's own bootstrap. A public page cannot call /halls (that
+        // needs a session), and it must offer the real congregations rather
+        // than a free-text box nobody can match later. Id + name only.
+        return json({
+          halls: unwrap(await db.from('halls').select('id,name').order('sort_order')),
+        });
+      }
+      if (method === 'POST') return json(await registerMember(db, req));
+      throw new HttpError(404, `No route for ${method} /api/${p.join('/')}`);
+    }
+    // /members/import — a spreadsheet of members, matched on the name pair.
+    if (r1 === 'import' && !r2) {
+      if (method !== 'POST') throw new HttpError(404, `No route for ${method} /api/${p.join('/')}`);
+      // One request that creates and overwrites people in bulk is a bigger
+      // thing than editing one member, so it is held to the same bar as a
+      // delete: super_admin / admin only. `readonly` is already refused by the
+      // gate above; this is what keeps a coworker's mistyped file from
+      // rewriting the whole roll (rule G2 — the button is hidden for the same
+      // roles, but the server is what decides).
+      if (!['super_admin', 'admin'].includes(sessionRole ?? ''))
+        throw new HttpError(403, 'Only an administrator may import members');
+      const dto = await body();
+      const rows = Array.isArray(dto.rows) ? dto.rows : null;
+      if (!rows || rows.length === 0)
+        throw new HttpError(400, 'rows must be a non-empty list of member rows');
+      if (rows.length > MAX_IMPORT_ROWS)
+        throw new HttpError(
+          400,
+          `An import may carry at most ${MAX_IMPORT_ROWS} rows — split the file and import it in parts`,
+        );
+      const ctx = await importContext(db, hallScope, dto.hall_id);
+      // The client previewed this same plan in the browser; it is computed
+      // again HERE, against the database as it is right now, because that
+      // preview is a courtesy and this is the decision (rule G2).
+      const plan = planImport(rows.map(incomingImportRow), ctx);
+      return json(await applyImport(db, plan));
+    }
     if (!r1) {
       if (method === 'GET') {
         let query = db
@@ -1231,6 +1308,317 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
   throw new HttpError(404, `No route for ${method} /api/${p.join('/')}`);
 }
 
+/* -------------------------------------------------------------------------
+ * Members: self-registration and import
+ *
+ * Two ways a member row arrives other than somebody typing it into the form —
+ * a stranger filling in the public link, and a spreadsheet — and BOTH decide
+ * what a row means with the same `planImport` (lib/members-import.ts). That is
+ * on purpose: the rule "a member is a pair of names, and an existing pair is an
+ * update rather than a second row" is the whole point of migration 0018, and it
+ * would be worth nothing if each entry point re-implemented it slightly
+ * differently. What differs between them is only which columns they are allowed
+ * to carry, which is exactly what each caller passes in.
+ * ---------------------------------------------------------------------- */
+
+/** Every issue the plan can report, as the sentence a person is told. */
+const IMPORT_ISSUE_MESSAGE: Record<ImportIssue, string> = {
+  name_missing: 'The Chinese name is required',
+  too_long: 'One of the values is too long',
+  duplicate_in_file: 'The same pair of names appears twice in this file',
+  unknown_hall: 'No congregation goes by that name',
+  unknown_group: 'No life group goes by that name',
+  unknown_role: 'That is not a church role this app knows',
+  unknown_gender: 'That is not a gender this app knows',
+  unknown_status: 'That is not a member status this app knows',
+  bad_date: 'That is not a date — write it as YYYY-MM-DD',
+  bad_email: 'That is not an email address',
+  bad_phone: 'That is not a phone number',
+  no_hall: 'A congregation is required',
+  other_hall: 'That record belongs to another congregation',
+  group_other_hall: 'That life group belongs to another congregation',
+};
+
+/** The message a refused row is reported with — a value, never a stack. */
+function rowFailure(e: unknown): string {
+  return e instanceof HttpError ? e.message : ((e as Error)?.message ?? 'Could not be saved');
+}
+
+/**
+ * The snapshot `planImport` decides against.
+ *
+ * `existing` is EVERY member, church-wide and never narrowed by hall: the name
+ * pair is unique across congregations, so a hall-scoped account importing
+ * somebody who is already filed in another hall has to be told that (and
+ * refused), rather than inserting a row the database would reject anyway.
+ * The list never leaves the server.
+ *
+ * If a deployment ever grew past whatever row ceiling PostgREST is configured
+ * with, a member beyond it would read as "not on the roll" and the import would
+ * try to add them again — at which point the pair INDEX refuses the insert and
+ * the row comes back as a named failure. So the worst case is a row a person
+ * has to look at, never a duplicate that quietly splits somebody's attendance.
+ */
+async function importContext(
+  db: ReturnType<typeof getDb>,
+  hallScope: string | null,
+  wantedHallId: unknown,
+): Promise<ImportContext> {
+  // Three independent reads (rule G6).
+  const [hallRes, groupRes, memberRes] = await Promise.all([
+    db.from('halls').select('id,name').order('sort_order'),
+    db.from('groups').select('id,name,hall_id'),
+    db.from('members').select('id,full_name,english_name,hall_id,group_position'),
+  ]);
+  const halls = unwrap<Array<{ id: string; name: string }>>(hallRes);
+  const groups = unwrap<Array<{ id: string; name: string; hall_id: string }>>(groupRes);
+  const existing = unwrap<ImportContext['existing']>(memberRes);
+
+  // Where a row that names no congregation lands. A hall-scoped account's own
+  // hall always wins (the same precedence as `hallFilter`); a full-access one
+  // may name the congregation it is looking at, and a church with a single
+  // hall needs neither.
+  const asked = wantedHallId == null ? '' : String(wantedHallId);
+  if (asked && !halls.some((h) => h.id === asked))
+    throw new HttpError(400, 'No congregation with that id');
+  const defaultHallId = hallScope ?? (asked || (halls.length === 1 ? halls[0].id : null));
+  return { halls, groups, existing, hallScope, defaultHallId };
+}
+
+/**
+ * One row of the request body, reduced to the columns an import may carry.
+ *
+ * An allow-list, so a body that also carries `id`, `avatar_url` or anything
+ * else the client invented is simply not read — the plan can only ever write
+ * what `IMPORT_COLUMNS` names.
+ */
+function incomingImportRow(raw: unknown, index: number): ImportRow {
+  const source = (raw ?? {}) as Record<string, unknown>;
+  // Fall back to the position in the list: every refusal is reported by row
+  // number, so a row without one would be unfixable.
+  const row: ImportRow = { row: Math.trunc(Number(source.row)) || index + 1 };
+  for (const column of IMPORT_COLUMNS) {
+    const value = source[column.field];
+    if (value === undefined || value === null) continue;
+    row[column.field] = String(value);
+  }
+  return row;
+}
+
+/**
+ * Write a plan. Nothing here decides anything — the plan already did.
+ *
+ * Creates go in as ONE statement per chunk, which is both far fewer round trips
+ * and atomic per chunk: a chunk that trips the name-pair index writes nothing,
+ * and is then retried row by row so the refusal can be reported against the
+ * spreadsheet row that caused it rather than against fifty innocent ones.
+ * Updates are one statement each by nature (each targets its own id), run a few
+ * at a time so a re-import of a whole congregation is seconds rather than
+ * minutes.
+ */
+async function applyImport(db: ReturnType<typeof getDb>, plan: ReturnType<typeof planImport>) {
+  const failures: Array<{ row: number; message: string }> = [];
+  let created = 0;
+  let updated = 0;
+
+  const chunks = <T,>(list: T[], size: number): T[][] =>
+    Array.from({ length: Math.ceil(list.length / size) }, (_, i) =>
+      list.slice(i * size, i * size + size),
+    );
+  const creates = plan.rows.filter((r) => r.action === 'create');
+  const updates = plan.rows.filter(
+    (r): r is PlannedRow & { member_id: string } => r.action === 'update' && !!r.member_id,
+  );
+
+  for (const chunk of chunks(creates, 50)) {
+    // PostgREST refuses a bulk insert whose objects do not all carry the same
+    // keys, and a spreadsheet's rows rarely do — one person has an email, the
+    // next does not. So every row in a chunk is widened to the chunk's union of
+    // columns, with the missing ones explicitly null. That is only sound
+    // because these are NEW rows: an unmentioned column on an insert is null
+    // anyway. The update path below must never do this — there a null would
+    // erase what the church already had.
+    const columns = [...new Set(chunk.flatMap((r) => Object.keys(r.values)))];
+    const widened = chunk.map((r) =>
+      Object.fromEntries(columns.map((c) => [c, r.values[c] ?? null])),
+    );
+    const res = await db.from('members').insert(widened).select('id');
+    if (!res.error) {
+      created += chunk.length;
+      continue;
+    }
+    for (const row of chunk) {
+      try {
+        unwrap(await db.from('members').insert(row.values).select('id').single());
+        created++;
+      } catch (e) {
+        failures.push({ row: row.row, message: rowFailure(e) });
+      }
+    }
+  }
+
+  for (const chunk of chunks(updates, 10)) {
+    const results = await Promise.all(
+      chunk.map(async (row) => {
+        try {
+          unwrap(
+            await db.from('members').update(row.values).eq('id', row.member_id).select('id').single(),
+          );
+          return null;
+        } catch (e) {
+          return { row: row.row, message: rowFailure(e) };
+        }
+      }),
+    );
+    for (const result of results) {
+      if (result) failures.push(result);
+      else updated++;
+    }
+  }
+
+  return {
+    created,
+    updated,
+    // The rows the plan itself refused, with the machine-readable reason the
+    // page renders through the dictionary (rule G8) — plus the same sentence in
+    // English, so a script (or api-e2e) reading this endpoint is told why too.
+    skipped: plan.rows
+      .filter((r) => r.action === 'skip')
+      .map((r) => ({
+        row: r.row,
+        issue: r.issue,
+        field: r.field ?? null,
+        detail: r.detail ?? null,
+        message: r.issue ? IMPORT_ISSUE_MESSAGE[r.issue] : 'Skipped',
+      })),
+    failures,
+  };
+}
+
+/** What the public form may send. Anything else in the body is not read. */
+const REGISTER_FIELDS = [
+  'full_name',
+  'english_name',
+  'phone',
+  'email',
+  'gender',
+  'date_of_birth',
+] as const;
+
+/**
+ * `POST /api/members/register` — the public self-registration form (`/join`).
+ *
+ * The shape follows the public sign-up path exactly (`/trainings/enroll/:id`):
+ * JSON when there is no photo, multipart when there is, and the photo travels
+ * WITH the registration rather than through an upload endpoint of its own. That
+ * is what keeps the app's unauthenticated upload paths from being usable as
+ * anonymous file storage: every check below runs first, and nothing reaches the
+ * bucket until this row is going to be written.
+ *
+ * The answer is one word — `created` or `updated` — and the same shape either
+ * way. It carries no member data at all: not an id, not a phone number, not
+ * even the name that was typed. The one thing it does reveal is whether that
+ * exact pair of names was already on the roll, which is unavoidable given the
+ * church asked to be told "we have updated your details" rather than "welcome",
+ * and is a fact about the visitor's own name.
+ */
+async function registerMember(
+  db: ReturnType<typeof getDb>,
+  req: Request,
+): Promise<{ status: 'created' | 'updated' }> {
+  const contentType = req.headers.get('content-type') ?? '';
+  const sent: Record<string, string> = {};
+  let hallId = '';
+  let photo: File | null = null;
+  if (contentType.includes('multipart/form-data')) {
+    const form = await req.formData();
+    for (const field of REGISTER_FIELDS) sent[field] = String(form.get(field) ?? '');
+    hallId = String(form.get('hall_id') ?? '');
+    const file = form.get('photo');
+    photo = file instanceof File && file.size > 0 ? file : null;
+  } else {
+    const dto = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+    for (const field of REGISTER_FIELDS) sent[field] = String(dto[field] ?? '');
+    hallId = String(dto.hall_id ?? '');
+  }
+
+  const halls = unwrap<Array<{ id: string; name: string }>>(
+    await db.from('halls').select('id,name').order('sort_order'),
+  );
+  // A church with one congregation should not make a stranger pick it; one
+  // with three must be told which, or the person lands in the wrong roll call.
+  const hall = hallId ? halls.find((h) => h.id === hallId) : halls.length === 1 ? halls[0] : null;
+  if (!hall) throw new HttpError(400, 'Please choose your congregation');
+
+  const existing = unwrap<ImportContext['existing']>(
+    await db.from('members').select('id,full_name,english_name,hall_id,group_position'),
+  );
+
+  // The same decision an imported row goes through, with only the columns this
+  // form is allowed to carry — so "an existing pair is an update, not a second
+  // row" is one rule with one implementation. `hallScope: null` because there
+  // is no account here to scope anything to; the congregation is the one the
+  // visitor picked, and it is only used when the person is NEW (an existing
+  // member keeps the congregation the church filed them under).
+  const row: ImportRow = { row: 1 };
+  for (const field of REGISTER_FIELDS) if (sent[field]) row[field] = sent[field];
+  const [planned] = planImport([row], {
+    halls,
+    groups: [],
+    existing,
+    hallScope: null,
+    defaultHallId: hall.id,
+  }).rows;
+  if (planned.action === 'skip')
+    throw new HttpError(400, IMPORT_ISSUE_MESSAGE[planned.issue ?? 'name_missing']);
+
+  const values = { ...planned.values };
+  if (planned.action === 'update') {
+    // A visitor may correct their own phone number; they may not re-spell the
+    // church's record of their name. The pair already matched, so these two
+    // differ from what is stored only in capitalisation or spacing anyway.
+    delete values.full_name;
+    delete values.english_name;
+  }
+
+  // Only now — the name has been resolved and the row is going to be written.
+  if (photo) {
+    const file = checkedFile(photo, PHOTO_UPLOAD);
+    values.avatar_url = await storeFile(
+      db,
+      'avatars',
+      // A random name, not the person's: the bucket is public, so an object's
+      // URL must not be derivable from anything a stranger already knows.
+      `self/${crypto.randomUUID()}.${fileExt(file, 'jpg')}`,
+      file,
+    );
+  }
+
+  if (planned.action === 'update' && planned.member_id) {
+    // Somebody who filled in nothing but their name has told us nothing new —
+    // and PostgREST refuses an empty patch anyway. They are still on the roll,
+    // which is what the answer says.
+    if (Object.keys(values).length === 0) return { status: 'updated' };
+    unwrap(await db.from('members').update(values).eq('id', planned.member_id).select('id').single());
+    return { status: 'updated' };
+  }
+  unwrap(
+    await db
+      .from('members')
+      .insert({
+        ...values,
+        // Everyone who registers themselves is an ordinary member. A church
+        // role is something the church confers, never something a form
+        // visitor claims — the same reason `church_role` is not in
+        // REGISTER_FIELDS at all.
+        church_role: ChurchRole.Member,
+      })
+      .select('id')
+      .single(),
+  );
+  return { status: 'created' };
+}
+
 // --- Church record & modules ------------------------------------------------
 
 const CHURCH_SELECT =
@@ -1712,6 +2100,22 @@ const SLIP_UPLOAD: UploadRule = {
   typeError:
     'The receipt must be a photo (JPG, PNG, WEBP, GIF or HEIC) or a PDF',
   sizeError: 'The receipt must be 5MB or smaller',
+};
+
+/**
+ * A photo of a person sent by a STRANGER — the public /join form.
+ *
+ * Deliberately NOT `IMAGE_UPLOAD`: that one accepts any `image/*`, which
+ * includes `image/svg+xml`, and an SVG is a script that renders. The other
+ * three upload surfaces are behind a session; this one is not, and its objects
+ * are served from a public bucket. So it takes the same explicit list a receipt
+ * does, minus the PDF — a PDF is not a photograph of a face.
+ */
+const PHOTO_UPLOAD: UploadRule = {
+  maxBytes: 5 * 1024 * 1024,
+  accepts: (type) => SLIP_TYPES.includes(type) && type !== 'application/pdf',
+  typeError: 'The photo must be a JPG, PNG, WEBP, GIF or HEIC image',
+  sizeError: 'The photo must be 5MB or smaller',
 };
 
 /**

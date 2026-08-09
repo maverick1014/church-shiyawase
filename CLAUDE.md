@@ -79,6 +79,48 @@ members list, the sheet's find-a-person box, `comboboxFilter`, and
 node, the lineage badges and a 铁三角 seat, each a fixed box whose geometry the
 second line would break; each says so in a comment.
 
+**A member row arrives three ways, and all three decide what a row MEANS in one
+place** — `planImport` in `lib/members-import.ts`, which the browser and the
+Worker both run. Typing one into the form is the first; the other two are new:
+
+*成员导入* (`POST /members/import`, super_admin/admin, 300 rows at most) takes a
+`.xlsx`/`.csv`. The file is read in the BROWSER (SheetJS lazily, like
+`lib/export.ts` — never at module top level), previewed **row by row** —
+add / update / skipped-and-why — and only a deliberate press writes anything;
+overwriting people the church already has goes through `useConfirm({ danger:
+true })` naming how many. The server then plans the SAME file again against the
+live database, because a preview is a courtesy and the server is the authority
+(G2). Matching is the pair index's own comparison (`pairKey` = `tidy` + lower,
+missing English name = empty string), so an existing pair is an **update of only
+the columns the file actually supplied** — a blank cell means "nothing to say",
+never "clear this", and a sparse re-import cannot blank a phone number the
+church already had. Headers and enum values are matched against **all three
+dictionaries** (read from them, never copied, with a unit test guarding the
+drift), so a Chinese template filled in and sent back reads correctly; the
+template itself is `exportRows` over the same column list. A refused row names
+its own SPREADSHEET row and the value it choked on, and never stops the rows
+around it. Dates are year-first only: `03/04/2026` is two different days
+depending on who reads it.
+
+*自助注册* (`/join` + `GET`/`POST /members/register`) is the public link the
+church hands out — the fourth shell-less page, and the only public path under
+`/members`. It reads an allow-list of fields (names, phone, email, gender,
+birthday, congregation, photo), so a body carrying `church_role` is ignored
+rather than obeyed: every self-registration is an ordinary member. An existing
+pair is an update of that person's contact details — not their name, which is
+the church's spelling to keep — and the answer is one word (`created` /
+`updated`), the same shape either way, carrying no member data at all. The photo
+travels WITH the registration in one multipart POST, exactly like a paid
+sign-up's receipt: nothing reaches storage until the row is accepted, which is
+what keeps the unauthenticated upload paths from being file storage.
+
+Both member forms take a photo through the shared `<PhotoPicker />`:
+`accept="image/*"` and deliberately **no `capture`** attribute — the OS sheet
+then offers the camera AND the gallery, which is the point; `capture` would
+force the camera and remove the choice. It previews the pick and lets it be
+removed, and never uploads anything itself (the add-member modal posts to
+`/members/:id/avatar` once the row exists; `/join` sends the file with the form).
+
 **培训 became 培训&活动 (Trainings & Activities).** Everything that is neither a
 Sunday nor a hand-added meeting lives on `/trainings` now — a brothers' hike, a
 sisters' baking afternoon — because an activity is exactly what sign-ups plus a
@@ -162,12 +204,20 @@ Sunday is one fact, taken once, on the services sheet.
 Run before every push: `npm run --workspace @tog/web -s build` (or in
 `apps/web`: `npx tsc --noEmit && npm test && npm run build`). Deploys are gated
 on unit tests + a post-deploy smoke test (`.github/workflows/deploy.yml`).
+**`deploy.yml` fires on a push to `main` — i.e. on a merge — and on manual
+dispatch, nothing else.** Iterating on a branch is not a release, and it used to
+deploy (and run the browser suite) on every commit of a branch in flight. The
+trade is that the shared URL tracks `main`, so a change cannot be looked at
+live before it merges; deploy a branch on purpose with `workflow_dispatch` when
+that is what you want.
 
 Testing layers (in `apps/web`):
 - `npm test` — Vitest unit tests (labels, rules, perms, i18n dictionaries, the
-  theme catalogue + its colour validation).
+  theme catalogue + its colour validation, and the import planner — its name-pair
+  key, its three-language header/enum matching and every row it refuses).
 - `npm run test:api-e2e` — API end-to-end against the live Worker (auth, role
-  matrix, full CRUD, public form).
+  matrix, full CRUD, the public forms — the training sign-up and the member
+  self-registration — and a member import with its refusals, all self-cleaning).
 - `npm run test:ui-e2e` — **browser UI end-to-end**: drives the real site in
   Chromium and asserts each interaction's expected outcome (login, search,
   filters, modals, weekly attendance, a 主日 tick→untick round-trip on the
@@ -182,12 +232,20 @@ Testing layers (in `apps/web`):
   absence of the 守望模块 manager in the UI *and* on the server, an add-on
   module off→on cycle on 教会设置, a theme preset picked there and the sidebar
   repainting under it, a create→delete member write-cycle, a member row showing BOTH of a
-  person's names).
+  person's names, the members page's import modal opening on a file field and a
+  template with nothing written yet, and `/join` rendering with no session at
+  all, its photo field taking camera OR gallery).
   The check-all round trip is driven **only on a meeting column this run
   created** — never on a Sunday, whose ticks are the congregation's real
   attendance and would be genuinely deleted.
   It restores anything it changes — including the module states and the
-  church's theme, which it reads first and puts back in a `finally`. It runs a tiny in-process reverse proxy so the browser
+  church's theme, which it reads first and puts back in a `finally`.
+  **Both e2e scripts end by deleting every fixture-named row in the church**
+  (`ZZ_UITEST_…` / `E2E…`), whichever run created it — the registered-fixture
+  sweep can only see this process's own rows, so residue from a run that died
+  used to accumulate on the live database. It runs on the crash path too, and
+  residue that survives it is a FAILED CHECK: a run that leaves data behind has
+  not passed, whatever its assertions said. It runs a tiny in-process reverse proxy so the browser
   works even behind an egress proxy. `UI_E2E_PASSWORD` is required (never
   hardcode a real password); `UI_E2E_URL` / `UI_E2E_EMAIL` are optional. In this
   sandbox run it as:
@@ -195,9 +253,8 @@ Testing layers (in `apps/web`):
   When you add/rename a page or a key interaction, add a matching check to
   `scripts/ui-e2e.mjs`.
   **This script is only valid against the build it was checked out from.** The
-  site has one shared URL, and `deploy.yml` only ever runs on feature branches,
-  so an old script pointed at a newer deploy reports moved selectors as
-  "failures". CI therefore pins the checkout to the deployed SHA
+  site has one shared URL, and a deploy can be dispatched from a branch, so an
+  old script pointed at a newer deploy reports moved selectors as "failures". CI therefore pins the checkout to the deployed SHA
   (`ref: github.event.workflow_run.head_sha`) and passes
   `UI_E2E_EXPECT_BUILD`; the script waits for `/api/version` to report that
   build and **skips with exit 0** if a newer deploy overtook it. Never "fix" a
@@ -224,7 +281,10 @@ operation, the UI must expose it (or the omission must be a deliberate,
 documented decision). A page that can only create + list is incomplete.
 The documented exception: 教会设置 (`/church`) is read + update only — the
 church row is a seeded singleton (one deployment, one church) and the module
-catalog is code, so neither can be created or deleted from the UI.
+catalog is code, so neither can be created or deleted from the UI. 成员 has two
+extra CREATE paths beside its form — a spreadsheet import and the public
+self-registration link — and both are create-or-update on the name pair rather
+than a second way to make duplicates.
 
 ### G2 — Access control is enforced server-side AND reflected in the UI
 Three independent dimensions, all of them enforced in `route.ts` first and
@@ -267,17 +327,21 @@ whether the **module** owning the path is enabled for this church.
   (`/accounts*`, both **read and write**) is `super_admin` only; church
   settings (`/church*`) are readable by any signed-in account but **writable
   only by `super_admin`** — changing the church's name or switching a module
-  off affects everyone; `DELETE` is `super_admin`/`admin` only. Sensitive reads
-  (account emails/roles) must be role-gated too — never rely on "GET is
-  harmless".
+  off affects everyone; `DELETE` is `super_admin`/`admin` only, and so is
+  **`POST /members/import`** — one request that creates and overwrites people in
+  bulk is held to a delete's bar, not a write's. Sensitive reads (account
+  emails/roles) must be role-gated too — never rely on "GET is harmless".
 - **Client (UX):** never render an action a user's role cannot perform. Fetch the
   session role (`/api/auth/me`) and hide/disable nav items, buttons, and whole
   pages the role isn't allowed to use. A button that only ever returns 403 is a
   bug. The public exceptions (no session) are the mentor daily form under
   `/api/discipleship/form/*`, the training self-enrollment form under
-  `/api/trainings/enroll/*`, **`GET /api/church`** (the login card and both
-  public forms render the church's name before anyone signs in; writes stay
-  super_admin) (+ `/api/auth/*`) — each a narrow, specific handler.
+  `/api/trainings/enroll/*`, **`GET`/`POST /api/members/register`** (the member
+  self-registration form — that exact path and those two methods only, never a
+  prefix, so nothing else under `/members` is opened by it), **`GET
+  /api/church`** (the login card and the public forms render the church's name
+  before anyone signs in; writes stay super_admin) (+ `/api/auth/*`) — each a
+  narrow, specific handler reading an allow-list of fields.
 
 ### G3 — Every destructive action shows a confirmation
 Any delete/remove/detach/irreversible action (`api.delete(...)`, or a mutation
@@ -304,6 +368,11 @@ silently does nothing at all, so the helper falls back and always returns
 whether it worked, and the caller always says so),
 `ThemeSwatch` (**every** rendering of a theme — the preset list and the custom
 preview are the same split circle),
+`PhotoPicker` (**every** "choose a photo of a person" — the add-member modal and
+the public /join form; `accept="image/*"` and no `capture`, so the phone offers
+the camera and the gallery both),
+`planImport`/`pairKey` (`lib/members-import.ts` — the ONE place that decides what
+an incoming member row means, run by the browser's preview and by the server),
 `api` (`lib/api.ts`), and the label/style helpers in `lib/labels.ts`
 (`roleTagStyle`, `roleDot`, `memberRoleZh`, `positionZh`, status/category
 classes). New code that duplicates one of these is a finding — name the helper

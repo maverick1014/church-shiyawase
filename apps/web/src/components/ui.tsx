@@ -333,6 +333,87 @@ export function MemberName({
   );
 }
 
+/**
+ * Pick a photo of a person — the ONE control that does it (rule G4).
+ *
+ * Two forms take one: the add-member modal on /members and the public /join
+ * page. They differ in what happens NEXT (the first uploads to
+ * `/members/:id/avatar` once the row exists, the second sends the file with the
+ * registration itself), which is why this component only ever holds the chosen
+ * `File` and hands it back — it never uploads anything.
+ *
+ * On a phone `accept="image/*"` alone opens the OS sheet with BOTH "Take
+ * Photo" and "Photo Library", which is exactly what was asked for. There is
+ * DELIBERATELY no `capture` attribute: adding it forces the camera and removes
+ * the gallery choice entirely — the opposite of the requirement. Do not "fix"
+ * this by adding it.
+ *
+ * The preview is a blob URL, revoked when the choice changes or the form
+ * closes, so a person who picked the wrong photo sees that before they save
+ * rather than on the member's profile afterwards.
+ */
+export function PhotoPicker({
+  file,
+  onChange,
+  name,
+  currentUrl,
+}: {
+  file: File | null;
+  onChange: (file: File | null) => void;
+  /** Whose photo this is, for the avatar placeholder's initial. */
+  name?: string | null;
+  /** A photo already on the record; the preview falls back to it. */
+  currentUrl?: string | null;
+}) {
+  const t = useT();
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [preview, setPreview] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!file) {
+      setPreview(null);
+      return;
+    }
+    const url = URL.createObjectURL(file);
+    setPreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [file]);
+
+  const shown = preview ?? currentUrl ?? null;
+  return (
+    <div className="flex items-center gap-12 flex-wrap">
+      <Avatar name={name} url={shown} size="lg" />
+      <div className="flex items-center gap-8 flex-wrap">
+        <button type="button" className="btn ghost sm" onClick={() => inputRef.current?.click()}>
+          {shown ? t('photo.change') : t('photo.choose')}
+        </button>
+        {file && (
+          <button
+            type="button"
+            className="btn ghost sm"
+            onClick={() => {
+              onChange(null);
+              // Clear the input too, or picking the SAME file again fires no
+              // change event and the photo silently stays removed.
+              if (inputRef.current) inputRef.current.value = '';
+            }}
+          >
+            {t('photo.remove')}
+          </button>
+        )}
+        <input
+          ref={inputRef}
+          type="file"
+          accept="image/*"
+          aria-label={t('photo.choose')}
+          onChange={(e) => onChange(e.target.files?.[0] ?? null)}
+          style={{ display: 'none' }}
+        />
+      </div>
+    </div>
+  );
+}
+
 export function Badge({
   tone,
   dot,
