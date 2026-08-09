@@ -4,6 +4,259 @@
  */
 
 // ---------------------------------------------------------------------------
+// The church record & its add-on modules
+// ---------------------------------------------------------------------------
+
+/**
+ * The one church this deployment serves (`church` table, 0012). Its name is
+ * DATA, not a translation — a church is called the same thing in every
+ * interface language — so nothing user-facing hardcodes it any more.
+ */
+export interface Church {
+  id: string;
+  name: string;
+  /** Short form for tight chrome; null = use `name`. */
+  short_name: string | null;
+  description: string | null;
+  /** Public URL of the uploaded logo; null = the bundled default mark. */
+  logo_url: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * An OPTIONAL module: a whole section of the product a church may or may not
+ * run. The catalog lives here in code; only the on/off state lives in the
+ * database (`church_modules`), so a row can never enable a feature that does
+ * not exist, and a module can never be half-registered.
+ *
+ * Core surfaces — dashboard, members, groups, events, trainings, accounts,
+ * profile — are deliberately NOT in here: they are not switchable.
+ */
+export interface OptionalModule {
+  /** Stored in `church_modules.module`; also the i18n key suffix. */
+  readonly key: string;
+  /** The single nav entry this module owns, hidden while it is off. */
+  readonly nav: string;
+  /**
+   * The API path prefixes it owns, WITHOUT the `/api` prefix. Every request
+   * whose path starts with one of these is refused while the module is off
+   * (the server-side half of rule G2 — hiding the nav entry is not enough).
+   */
+  readonly api: readonly string[];
+}
+
+/**
+ * The catalog of switchable modules.
+ *
+ * ADDING ONE is a single entry here — the nav hides it, the API gate refuses
+ * its paths and the module catalog page grows a row automatically. The only
+ * other things a second entry needs are its dictionary strings
+ * (`module.<key>.name`, `.desc`, `.dataKept` in en/zh/ms) and a seed row in a
+ * migration, exactly like `discipleship` in 0012.
+ */
+/** The 四十天守望 add-on. Named so call sites don't retype a magic string. */
+export const MODULE_DISCIPLESHIP = 'discipleship';
+
+export const OPTIONAL_MODULES: readonly OptionalModule[] = [
+  // 四十天守望 — the forty-day one-to-one discipleship section. Only some
+  // churches run it, which is why it is the first module to become optional.
+  { key: MODULE_DISCIPLESHIP, nav: '/discipleship', api: ['discipleship'] },
+];
+
+/** Every registered module key, in catalog order. */
+export const OPTIONAL_MODULE_KEYS: readonly string[] = OPTIONAL_MODULES.map((m) => m.key);
+
+/** Is this a module the app actually ships? Guards writes against junk keys. */
+export function isOptionalModule(key: string | null | undefined): boolean {
+  return OPTIONAL_MODULE_KEYS.includes(String(key));
+}
+
+/** Path segments, from either `['a','b']` or `'/a/b'` / `'a/b'`. */
+function segmentsOf(path: string[] | string): string[] {
+  return (Array.isArray(path) ? path : path.split('/')).filter((s) => s !== '');
+}
+
+/**
+ * Which module owns an API path (`['discipleship','pairs']` → `'discipleship'`),
+ * or null when the path belongs to a core surface and can never be gated.
+ * The API gate and the tests both read this, so "which paths a module owns" is
+ * answered in exactly one place.
+ */
+export function moduleForApiPath(path: string[] | string): string | null {
+  const segments = segmentsOf(path);
+  for (const mod of OPTIONAL_MODULES) {
+    for (const prefix of mod.api) {
+      const want = segmentsOf(prefix);
+      if (want.length && want.every((s, i) => segments[i] === s)) return mod.key;
+    }
+  }
+  return null;
+}
+
+/**
+ * Which module owns a nav href, or null for a core page. `/discipleship` and
+ * anything under it belong to the same module, so a deep link is gated too.
+ */
+export function moduleForNavHref(href: string): string | null {
+  const segments = segmentsOf(href);
+  for (const mod of OPTIONAL_MODULES) {
+    const want = segmentsOf(mod.nav);
+    if (want.length && want.every((s, i) => segments[i] === s)) return mod.key;
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// The church's theme — two colours, and the presets to choose them from
+// ---------------------------------------------------------------------------
+
+/**
+ * A theme is exactly TWO colours:
+ *
+ *   rail  — the dark sidebar (`--rail`)
+ *   brand — the accent everything active is painted in (`--brand`)
+ *
+ * Every other colour the design system needs is DERIVED from these in
+ * `globals.css` with `color-mix()` (`--brand-2` a shade down, `--brand-soft` a
+ * tint, `--accent` / `--accent-soft` and the sidebar's own foregrounds off the
+ * rail), so there is one source per colour and the shades cannot drift apart
+ * from it. The independent families — `--good` / `--warn` / `--crit` and the
+ * warm neutrals — are NOT part of a theme: "absent" must not turn into the
+ * brand colour because a church picked a red one.
+ *
+ * It belongs to the CHURCH, not to an account: it is branding, so one set does
+ * the whole congregation (stored on the `church` row, migration 0017).
+ */
+export interface ChurchTheme {
+  /** The preset this came from, or null when the two colours were picked by hand. */
+  preset: string | null;
+  /** The sidebar colour, `#rrggbb`. */
+  rail: string;
+  /** The brand colour, `#rrggbb`. */
+  brand: string;
+}
+
+/** One entry in the shipped catalogue. The colours are code, not data. */
+export interface ThemePresetDef {
+  /** Stored in `church.theme_preset`; also the i18n key suffix. */
+  readonly key: string;
+  readonly rail: string;
+  readonly brand: string;
+}
+
+/**
+ * The shipped presets.
+ *
+ * The FIRST is exactly today's palette, so applying migration 0017 and this
+ * build changes nothing visible. The rest are a considered set rather than a
+ * rainbow: every one is a near-black rail tinted towards its own brand's hue
+ * (so the sidebar and the accent read as one pair rather than two decisions),
+ * and every brand is dark enough to carry white text — which is what `.btn`,
+ * `.chip.on`, `.nav-link.active` and `.day-cell.done` all do with it.
+ *
+ * The colours are stored on the church row as well as the key, so editing a
+ * preset here can never silently restyle a church that picked it — they keep
+ * the pair they chose until they choose another.
+ *
+ * ADDING ONE is a single entry here plus its dictionary name
+ * (`theme.preset.<key>` in en/zh/ms) — `lib/__tests__/theme.test.ts` fails the
+ * build if the name is missing or the pair is unreadable.
+ */
+export const THEME_PRESETS: readonly ThemePresetDef[] = [
+  // Crimson on charcoal — the church logo's own pair, and the app's default.
+  { key: 'charcoal', rail: '#201d1b', brand: '#a51f24' },
+  // Harbour blue on slate ink.
+  { key: 'ink', rail: '#1a2130', brand: '#2f6690' },
+  // Pine on forest.
+  { key: 'forest', rail: '#182320', brand: '#276b48' },
+  // Mulberry on aubergine.
+  { key: 'plum', rail: '#221a26', brand: '#8a3f6d' },
+  // Burnt amber on coffee.
+  { key: 'amber', rail: '#231e18', brand: '#a35d1b' },
+];
+
+/** Every preset key, in catalogue order. */
+export const THEME_PRESET_KEYS: readonly string[] = THEME_PRESETS.map((p) => p.key);
+
+/**
+ * The palette a church has until it chooses otherwise — and the fallback for
+ * every place that must render before the record arrives (the CSS defaults in
+ * `globals.css`, the pre-paint script in `app/layout.tsx`).
+ */
+export const DEFAULT_THEME: ChurchTheme = {
+  preset: THEME_PRESETS[0].key,
+  rail: THEME_PRESETS[0].rail,
+  brand: THEME_PRESETS[0].brand,
+};
+
+/** One preset by key, or null if this build does not ship it. */
+export function themePreset(key: string | null | undefined): ThemePresetDef | null {
+  return THEME_PRESETS.find((p) => p.key === key) ?? null;
+}
+
+/**
+ * A STRICT six-digit hex colour, `#rrggbb`.
+ *
+ * Deliberately narrow: this string is interpolated into a CSS custom property,
+ * so `red`, `var(--x)`, `#abc`, `rgb(…)` and anything carrying a `;` or a `}`
+ * are all refused rather than normalised. Three-digit shorthand is valid CSS
+ * but is refused too — one shape in the database beats two, and every colour
+ * this app writes comes from a preset or an `<input type="color">`, both of
+ * which produce the long form.
+ */
+const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
+
+export function isHexColor(value: unknown): value is string {
+  return typeof value === 'string' && HEX_COLOR.test(value);
+}
+
+/** The colour in one canonical shape (lowercase), or null if it is not one. */
+export function normalizeHexColor(value: unknown): string | null {
+  return isHexColor(value) ? value.toLowerCase() : null;
+}
+
+/** WCAG relative luminance of a `#rrggbb` colour. */
+function relativeLuminance(hex: string): number {
+  const channel = (i: number) => {
+    const v = parseInt(hex.slice(1 + i * 2, 3 + i * 2), 16) / 255;
+    return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * channel(0) + 0.7152 * channel(1) + 0.0722 * channel(2);
+}
+
+/** WCAG contrast ratio of a colour against white — 1 (white) … 21 (black). */
+export function contrastWithWhite(hex: string): number {
+  if (!isHexColor(hex)) return 0;
+  return 1.05 / (relativeLuminance(hex) + 0.05);
+}
+
+/**
+ * How dark the two colours have to be, and why there is a floor at all.
+ *
+ * The sidebar is light-on-dark by construction: its text, its section labels
+ * and its active row are white or a mix of white towards the rail. A pale rail
+ * does not make it "a light theme", it makes it unreadable — so a pale rail is
+ * refused rather than half-supported. 8:1 lets anything down to roughly #4d4d4d
+ * through, which still carries the faintest label (a 50% white mix) legibly.
+ *
+ * The brand carries white text wherever it is a background (every `.btn`, the
+ * active nav row, a ticked day cell), so it needs the normal AA ratio of 4.5.
+ */
+export const MIN_RAIL_CONTRAST = 8;
+export const MIN_BRAND_CONTRAST = 4.5;
+
+/** Is this dark enough to be a sidebar? */
+export function isUsableRail(hex: unknown): boolean {
+  return isHexColor(hex) && contrastWithWhite(hex) >= MIN_RAIL_CONTRAST;
+}
+
+/** Is this dark enough to carry the white text every button puts on it? */
+export function isUsableBrand(hex: unknown): boolean {
+  return isHexColor(hex) && contrastWithWhite(hex) >= MIN_BRAND_CONTRAST;
+}
+
+// ---------------------------------------------------------------------------
 // Members & roles
 // ---------------------------------------------------------------------------
 
@@ -130,8 +383,15 @@ export enum Gender {
 
 export interface Member {
   id: string;
+  /** The CHINESE name — what the church types and what every list is sorted by. */
   full_name: string;
-  chinese_name: string | null;
+  /**
+   * The English name (migration 0018), null when the person has none. Together
+   * with `full_name` it is the identity of a member: the database refuses a
+   * second row with the same pair, so two people who share a Chinese name are
+   * told apart here.
+   */
+  english_name: string | null;
   email: string | null;
   phone: string | null;
   gender: Gender | null;
@@ -205,36 +465,6 @@ export interface ChurchEvent {
   ends_at: string | null;
   /** null = 全堂开放 / 联合聚会. */
   hall_id: string | null;
-  /** Set when this event was generated by a 循环聚会 rule. */
-  recurring_id: string | null;
-  created_at: string;
-}
-
-/**
- * A 循环聚会 schedule — e.g. 每周日 10:00 主日崇拜. The calendar is topped up
- * from these rules (`lookahead_days` ahead) instead of anyone adding the same
- * service by hand every week.
- *
- * Deleting a rule keeps the events it already produced; they just lose the
- * link back to it.
- */
-export interface RecurringEvent {
-  id: string;
-  title: string;
-  event_type: EventType;
-  weekday: Weekday;
-  start_time: string; // "HH:MM:SS" (Postgres `time`)
-  location: string | null;
-  /** null = 全堂 / 联合聚会. */
-  hall_id: string | null;
-  lookahead_days: number;
-  active: boolean;
-  /**
-   * Last date this rule generated. Generation only looks past it, so a
-   * deleted occurrence stays deleted and editing the weekday/time doesn't
-   * regenerate the window already filled at the old time.
-   */
-  generated_through: string | null;
   created_at: string;
 }
 
@@ -278,19 +508,57 @@ export interface Donation {
 }
 
 // ---------------------------------------------------------------------------
-// Training catalog, sessions, enrollment & attendance
+// 培训&活动 — the catalog, its sessions, enrollment & attendance
 // ---------------------------------------------------------------------------
+
+/**
+ * Which shape a `trainings` row is (`kind`, migration 0014). Both take
+ * sign-ups and both get ticked off; only the shape differs.
+ *
+ * A stored code, never a label — the UI branches on it and the catalog filters
+ * by it, so it has to survive a language switch (rule G8).
+ */
+export enum TrainingKind {
+  /** Several sessions on several dates, ticked session by session. */
+  Course = 'course',
+  /** ONE occasion: people sign up, you tick who came (兄弟团爬山…). */
+  Activity = 'activity',
+}
+
+export const TRAINING_KINDS: readonly TrainingKind[] = [
+  TrainingKind.Course,
+  TrainingKind.Activity,
+];
+
+/** Is this a shape the app ships? Guards a write against a junk `kind`. */
+export function isTrainingKind(value: unknown): value is TrainingKind {
+  return (TRAINING_KINDS as readonly string[]).includes(String(value));
+}
 
 export interface Training {
   id: string;
   name: string;
   description: string | null;
-  category: string | null;
-  trainer_id: string | null;
+  /** 'course' | 'activity' — see TrainingKind. */
+  kind: TrainingKind;
+  /** 负责人 — free text: the person in charge is often not a member (0016). */
+  pic: string | null;
+  /** How to reach them — a phone number, usually. People ring before signing up. */
+  pic_contact: string | null;
   total_sessions: number;
   is_enrollable: boolean;
   starts_on: string | null;
   ends_on: string | null;
+  /** An ACTIVITY's start time, "HH:MM:SS" (Postgres `time`) — Malaysia, always. */
+  start_time: string | null;
+  /** An ACTIVITY's meeting point. A course's places live on its sessions. */
+  location: string | null;
+  /** 报名费. null (or 0) = free, and the payment fields below stay hidden. */
+  fee: string | number | null;
+  /** Free text: bank account, TnG number, "pay the treasurer on the day". */
+  payment_instructions: string | null;
+  /** Public URL of an uploaded payment QR image; null = none. */
+  payment_qr_url: string | null;
   /** null = 全堂开放（任何堂的成员都可报名）. */
   hall_id: string | null;
   created_at: string;
@@ -323,6 +591,12 @@ export interface TrainingEnrollment {
   enrolled_at: string;
   completed_at: string | null;
   notes: string | null;
+  /**
+   * The receipt uploaded with a sign-up for a course that charges a 报名费
+   * (0016). Null on a free one. The admin opens it BEFORE approving — that is
+   * what approval means on a paid course.
+   */
+  payment_slip_url: string | null;
 }
 
 export interface TrainingAttendance {

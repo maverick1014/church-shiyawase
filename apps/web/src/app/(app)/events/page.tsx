@@ -1,84 +1,253 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { Fragment, useMemo, useState } from 'react';
 import { useFetch } from '@/lib/hooks';
 import { api } from '@/lib/api';
 import { usePageChrome, useMe, useHallScope } from '@/components/AppShell';
-import { Empty, ErrorBanner, Field, HallSelect, Modal, PageBar, RepeatIcon, Skeleton, SkeletonCards, SkeletonScreen, useConfirm, useToast } from '@/components/ui';
-import { can } from '@/lib/perms';
-import { EventDetail, EventRow, MemberRow } from '@/lib/types';
 import {
-  ATTENDANCE_OPTIONS,
-  attendanceKey,
-  eventBadgeClass,
-  eventTypeKey,
-  EVENT_TYPE_OPTIONS,
-  formatDateTime,
-} from '@/lib/labels';
-import { addChurchDays, fromChurchInput, startOfChurchDay, toChurchInput } from '@/lib/time';
+  ErrorBanner,
+  ExportButton,
+  Field,
+  HallSelect,
+  MemberName,
+  Modal,
+  MonthPicker,
+  PageBar,
+  SheetTick,
+  SheetTickAll,
+  SheetTotals,
+  SkeletonScreen,
+  SkeletonTable,
+  useConfirm,
+  useToast,
+} from '@/components/ui';
+import { can } from '@/lib/perms';
+import { exportMatrix } from '@/lib/export';
+import {
+  RollCallSheet,
+  RollCallSheetRow,
+  SheetCell,
+  SheetColumn,
+  SheetMeeting,
+  SheetTickName,
+} from '@/lib/types';
+import { columnTickState, type ColumnTickState } from '@/lib/sheet';
+import { sheetTickKey } from '@/lib/labels';
+import { churchParts, fromChurchInput, toChurchInput } from '@/lib/time';
 import { useT } from '@/lib/i18n';
-import { AttendanceStatus, EventType, MemberStatus } from '@tog/shared';
+import { EventType } from '@tog/shared';
 
-/** Tone class per attendance option — matches the seg-button palette. */
-const ATTENDANCE_TONE: Record<AttendanceStatus, string> = {
-  [AttendanceStatus.Present]: 'on-good',
-  [AttendanceStatus.Excused]: 'on-warn',
-  [AttendanceStatus.Absent]: 'on-crit',
-};
-
+/**
+ * 崇拜与祷告会 — ONE roll-call sheet for the month.
+ *
+ * Its columns come from the calendar and from the meetings themselves, in date
+ * order: every Sunday of the month with its two ticks (会前 / 主日), and each
+ * meeting someone added — a 31 August night prayer meeting — with the one tick
+ * a single occasion has. Nothing creates a Sunday, and a meeting's column
+ * appears the moment the meeting does.
+ *
+ * The page never learns that those two live in different tables: the API hands
+ * each column an opaque `key`, the page ticks it, and the server decides where
+ * that lands (`lib/sheet.ts` + `/api/attendance/sheet`).
+ *
+ * With the congregation switcher on 全部堂会 the sheet simply lists every
+ * member; narrowing it narrows the member list and the meetings alike.
+ */
 export default function EventsPage() {
-  const router = useRouter();
   const t = useT();
   const toast = useToast();
   const confirm = useConfirm();
   const perms = can(useMe().role);
-  const events = useFetch<EventRow[]>('/events');
-  const members = useFetch<MemberRow[]>('/members');
-  const [activeId, setActiveId] = useState<string | null>(null);
+
+  // Which month, defaulting to Malaysia's own calendar — on a UTC Worker the
+  // first 8 hours of a new month still read as the old one (rule G6a).
+  const nowParts = churchParts(new Date());
+  const [year, setYear] = useState(nowParts.year);
+  const [month, setMonth] = useState(nowParts.month);
+
   const [addOpen, setAddOpen] = useState(false);
-  const [editing, setEditing] = useState<EventRow | null>(null);
+  const [editing, setEditing] = useState<SheetMeeting | null>(null);
 
   usePageChrome({ title: t('events.title') }, [t]);
 
-  // Same three-section shape as the training catalog, so both pages read the
-  // same way: what needs attention now, what is coming, what is done.
-  // "Today" is its own group because it is the one an admin actually acts on —
-  // it is the roll-call list for the day.
-  const { today, upcoming, past } = useMemo(() => {
-    // "Today" means today in Malaysia — setHours() would use the runtime's
-    // zone, so the Worker (UTC) put the 08:00-and-earlier services in the
-    // wrong bucket.
-    const startOfToday = startOfChurchDay();
-    const startOfTomorrow = addChurchDays(startOfToday, 1);
+  // useFetch appends the viewed hall itself (withHallParam), so the query here
+  // carries only the month.
+  const sheet = useFetch<RollCallSheet>(`/attendance/sheet?year=${year}&month=${month}`);
+  const columns = sheet.data?.columns ?? [];
+  const rows = sheet.data?.rows ?? [];
+  /**
+   * Finding one person on a sheet of the whole congregation.
+   *
+   * It narrows what is DRAWN and nothing else: the check-all still fills the
+   * column for everybody, and the footer still counts everybody, because
+   * "全员到齐" must not quietly come to mean "everyone matching what I typed"
+   * and an occasion's attendance is a fact about the occasion, not about a
+   * filter. The line under the bar says so whenever a search is on.
+   */
+  const [query, setQuery] = useState('');
+  const visibleRows = useMemo(() => {
+    const q2 = query.trim().toLowerCase();
+    if (!q2) return rows;
+    // Either name finds a person (0018) — the sheet lists everybody, and half
+    // the congregation is looked for by the English name they answer to.
+    return rows.filter((r) =>
+      `${r.member.full_name} ${r.member.english_name ?? ''}`.toLowerCase().includes(q2),
+    );
+  }, [rows, query]);
 
-    const td: EventRow[] = [];
-    const up: EventRow[] = [];
-    const pa: EventRow[] = [];
-    for (const e of events.data ?? []) {
-      const at = new Date(e.starts_at);
-      if (at >= startOfTomorrow) up.push(e);
-      else if (at >= startOfToday) td.push(e);
-      else pa.push(e);
+  const toggle = async (row: RollCallSheetRow, column: SheetColumn, tick: SheetTickName) => {
+    const current = row.cells[column.key] ?? {};
+    // Send the whole cell, so the server never has to merge a partial one.
+    const next: SheetCell = {};
+    for (const name of column.ticks) next[name] = !!current[name];
+    next[tick] = !next[tick];
+    try {
+      // A list of one — the same shape the column shortcut below sends, so a
+      // single tick and 全员到齐 go down exactly the same path.
+      await api.put('/attendance/sheet', {
+        column: column.key,
+        member_ids: [row.member.id],
+        ...next,
+      });
+      sheet.reload();
+    } catch (e) {
+      toast((e as Error).message, 'error');
     }
-    const byTime = (a: EventRow, b: EventRow) => +new Date(a.starts_at) - +new Date(b.starts_at);
-    // Soonest first while it is still ahead; most recent first once it is over.
-    return { today: td.sort(byTime), upcoming: up.sort(byTime), past: pa.sort(byTime).reverse() };
-  }, [events.data]);
+  };
 
-  const total = today.length + upcoming.length + past.length;
+  /** A column's own heading: a Sunday's date, or the meeting's name. */
+  const columnLabel = (c: SheetColumn) => c.meeting?.title ?? c.date.slice(5);
 
-  const delEvent = async (e: EventRow): Promise<boolean> => {
+  /** What one sub-column is called in a confirmation: "08-02 · Pre-service". */
+  const tickLabel = (c: SheetColumn, tick: SheetTickName) =>
+    `${columnLabel(c)} · ${t(sheetTickKey(tick))}`;
+
+  /**
+   * Every sub-column's all / none / some state, and how many ticks it holds —
+   * derived once per sheet rather than per header cell (rule G5). The count is
+   * what the untick confirmation quotes (a warning has to name the records it
+   * is about to throw away) AND what the totals row at the foot of the sheet
+   * shows: both are the same question — how many people were there.
+   */
+  const columnStates = useMemo(() => {
+    const map = new Map<string, { state: ColumnTickState; ticked: number }>();
+    for (const c of columns) {
+      for (const tick of c.ticks) {
+        const flags = rows.map((r) => !!r.cells[c.key]?.[tick]);
+        map.set(`${c.key}|${tick}`, {
+          state: columnTickState(flags),
+          ticked: flags.filter(Boolean).length,
+        });
+      }
+    }
+    return map;
+  }, [columns, rows]);
+
+  /**
+   * The foot of the sheet: one number per sub-column — how many PEOPLE carry
+   * that tick. A roll call answers "how many came that Sunday", not "how many
+   * Sundays did this person come to", so the number belongs under its own
+   * column rather than at the end of a row. Read straight off `columnStates`,
+   * which already counted them for the check-all (rule G5).
+   */
+  const totals = useMemo(
+    () =>
+      columns.flatMap((c) =>
+        c.ticks.map((tick) => ({
+          key: `${c.key}|${tick}`,
+          value: columnStates.get(`${c.key}|${tick}`)?.ticked ?? 0,
+        })),
+      ),
+    [columns, columnStates],
+  );
+
+  /**
+   * 全员到齐 — fill (or clear) one whole sub-column.
+   *
+   * Everybody already ticked means the press CLEARS the column, which destroys
+   * real records, so that direction goes through the shared confirmation with
+   * the number of ticks it will remove (rule G3). Filling one needs no
+   * confirmation: nothing is lost.
+   *
+   * The members are grouped by what their OTHER tick in this column already
+   * says, so filling 主日 can never rewrite somebody's 会前 — which is exactly
+   * what one flat "set the whole cell for everyone" call would have done. That
+   * is at most two requests for a Sunday and one for a meeting; never one per
+   * member.
+   */
+  const toggleColumn = async (column: SheetColumn, tick: SheetTickName) => {
+    const here = columnStates.get(`${column.key}|${tick}`);
+    if (!here || rows.length === 0) return;
+    const next = here.state !== 'all';
+    if (!next) {
+      const ok = await confirm({
+        title: t('sheet.tickAll.title'),
+        message: t('sheet.tickAll.message', {
+          column: tickLabel(column, tick),
+          n: here.ticked,
+        }),
+        confirmText: t('sheet.tickAll.confirm'),
+        danger: true,
+      });
+      if (!ok) return;
+    }
+    const groups = new Map<string, { cell: SheetCell; ids: string[] }>();
+    for (const r of rows) {
+      const current = r.cells[column.key] ?? {};
+      const cell: SheetCell = {};
+      for (const name of column.ticks) cell[name] = name === tick ? next : !!current[name];
+      const shape = column.ticks.map((name) => (cell[name] ? '1' : '0')).join('');
+      const group = groups.get(shape);
+      if (group) group.ids.push(r.member.id);
+      else groups.set(shape, { cell, ids: [r.member.id] });
+    }
+    try {
+      await Promise.all(
+        [...groups.values()].map((g) =>
+          api.put('/attendance/sheet', { column: column.key, member_ids: g.ids, ...g.cell }),
+        ),
+      );
+      sheet.reload();
+    } catch (e) {
+      toast((e as Error).message, 'error');
+      sheet.reload();
+    }
+  };
+
+  const exportSheet = () => {
+    if (!sheet.data) return;
+    const headers = [
+      t('members.col.member'),
+      ...columns.flatMap((c) =>
+        c.ticks.map((tick) => `${columnLabel(c)} ${t(sheetTickKey(tick))}`),
+      ),
+    ];
+    // The exported sheet reads like the screen: ticks, then ONE totals row at
+    // the bottom — the headcount per occasion, not a per-person tally.
+    const matrix: (string | number)[][] = rows.map((r) => [
+      r.member.full_name,
+      ...columns.flatMap((c) => c.ticks.map((tick) => (r.cells[c.key]?.[tick] ? '✓' : ''))),
+    ]);
+    matrix.push([t('sheet.totalPeople'), ...totals.map((x) => x.value)]);
+    exportMatrix(
+      t('events.exportFile', { year, month: String(month).padStart(2, '0') }),
+      t('events.sheet'),
+      headers,
+      matrix,
+    );
+  };
+
+  const deleteMeeting = async (meeting: SheetMeeting): Promise<boolean> => {
     const ok = await confirm({
       title: t('events.delete.title'),
-      message: t('events.delete.message', { name: e.title }),
+      message: t('events.delete.message', { name: meeting.title }),
       confirmText: t('common.delete'),
       danger: true,
     });
     if (!ok) return false;
     try {
-      await api.delete(`/events/${e.id}`);
-      events.reload();
+      await api.delete(`/events/${meeting.id}`);
+      sheet.reload();
       toast(t('events.toast.deleted'));
       return true;
     } catch (err) {
@@ -87,120 +256,183 @@ export default function EventsPage() {
     }
   };
 
-  // One card shape for every section — same structure as a training card.
-  const renderCards = (items: EventRow[], faded?: boolean) => (
-    <div className="grid g3">
-      {items.map((e) => (
-        <div className="card" key={e.id} style={{ display: 'flex', flexDirection: 'column', opacity: faded ? 0.86 : 1 }}>
-          <div className="flex-between">
-            <span className={`badge ${eventBadgeClass(e.event_type)}`}>
-              {t(eventTypeKey(e.event_type))}
-            </span>
-            {e.hall?.name && (
-              <span className="muted" style={{ fontSize: 12 }}>{e.hall.name}</span>
-            )}
-          </div>
-          <h3 style={{ margin: '12px 0 2px', fontSize: 16 }} className="serif">{e.title}</h3>
-          <div className="muted" style={{ fontSize: 12.5 }}>
-            {formatDateTime(e.starts_at)}{e.location ? ` · ${e.location}` : ''}
-          </div>
-          <div className="grow" />
-          <div className="flex gap-8 mt-14">
-            <button className="btn sm grow" onClick={() => setActiveId(e.id)}>{t('events.rollCall')}</button>
-            {perms.write && (
-              <button className="btn ghost sm" onClick={() => setEditing(e)}>{t('common.edit')}</button>
-            )}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-
-  const section = (
-    dot: string,
-    title: string,
-    sub: string,
-    items: EventRow[],
-    empty: string,
-    faded?: boolean,
-  ) => (
-    <>
-      <div className="section-label mb-14" style={{ marginTop: 28 }}>
-        <span style={{ width: 8, height: 8, borderRadius: '50%', background: dot, display: 'inline-block' }} />
-        {title} <span className="faint" style={{ fontWeight: 400 }}>{sub}</span>
-      </div>
-      {items.length ? renderCards(items, faded) : <div className="empty">{empty}</div>}
-    </>
-  );
-
-  // The page's own action row needs no data, so it goes up immediately and the
-  // sections below it carry the skeleton — the cards then fade in where the
-  // placeholders already were instead of pushing the page down.
   return (
     <>
-      <ErrorBanner message={events.error} />
+      <ErrorBanner message={sheet.error} />
 
-      {perms.write && (
-        <PageBar
-          actions={
-            <>
-              <button className="btn ghost" onClick={() => router.push('/events/recurring')}>
-                <RepeatIcon />
-                {t('events.recurring')}
-              </button>
-              <button className="btn" onClick={() => setAddOpen(true)}>{t('events.add')}</button>
-            </>
-          }
-        />
-      )}
+      <PageBar
+        filters={
+          <>
+            {/* Search first, then the dropdowns — the filter order every list
+                page uses (rule G7a). The placeholder is the members page's own
+                string: it is the same question. */}
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder={t('members.searchPlaceholder')}
+              aria-label={t('common.search')}
+            />
+            <MonthPicker
+              year={year}
+              month={month}
+              years={[nowParts.year, nowParts.year - 1]}
+              onChange={(next) => {
+                setYear(next.year);
+                setMonth(next.month);
+              }}
+            />
+          </>
+        }
+        actions={
+          <>
+            <ExportButton
+              onClick={exportSheet}
+              disabled={!sheet.data || rows.length === 0}
+              title={t('events.exportTitle')}
+            />
+            {perms.write && (
+              <button className="btn" onClick={() => setAddOpen(true)}>{t('events.addMeeting')}</button>
+            )}
+          </>
+        }
+      />
 
-      {events.initialLoading ? (
-        <SkeletonScreen>
-          <Skeleton width={150} style={{ margin: '28px 0 14px' }} />
-          <SkeletonCards count={3} lines={2} />
-          <Skeleton width={150} style={{ margin: '28px 0 14px' }} />
-          <SkeletonCards count={3} lines={2} />
-        </SkeletonScreen>
-      ) : total === 0 ? (
-        <Empty>{t('events.empty')}</Empty>
-      ) : (
-        <>
-          {section('var(--brand)', t('events.today'), t('events.todaySub'), today, t('events.emptyToday'))}
-          {section('var(--good)', t('events.upcoming'), t('events.upcomingSub'), upcoming, t('events.emptyUpcoming'))}
-          {section('var(--faint)', t('events.past'), t('events.pastSub'), past, t('events.emptyPast'), true)}
-        </>
-      )}
+      {/* The sheet is wide by nature, so it scrolls inside its own card exactly
+          like the life-group one; the page body never scrolls sideways. */}
+      <div className="card">
+        <div className="card-head">
+          <div>
+            <h3>{t('events.sheet')}</h3>
+            <div className="muted" style={{ fontSize: 12.5, marginTop: 2 }}>{t('events.sheetSub')}</div>
+          </div>
+        </div>
 
-      {activeId && (
-        <AttendancePanel
-          key={activeId}
-          eventId={activeId}
-          members={(members.data ?? []).filter((m) => m.status === MemberStatus.Active)}
-          onClose={() => setActiveId(null)}
-          onSaved={() => {
-            toast(t('events.toast.attendance'));
-            setActiveId(null);
-          }}
-        />
-      )}
+        {/* Said out loud, because the numbers below do NOT follow the search:
+            the footer counts the whole congregation and the check-all fills it
+            for everybody. */}
+        {query.trim() && rows.length > 0 && (
+          <div className="faint mb-14" style={{ fontSize: 12 }}>
+            {t('events.searchCount', { n: visibleRows.length, total: rows.length })}
+          </div>
+        )}
+
+        {sheet.initialLoading ? (
+          <SkeletonScreen>
+            <SkeletonTable rows={5} columns={7} bare />
+          </SkeletonScreen>
+        ) : rows.length === 0 ? (
+          <div className="empty-inline">{t('events.sheetEmpty')}</div>
+        ) : visibleRows.length === 0 ? (
+          <div className="empty-inline">{t('events.searchEmpty', { q: query.trim() })}</div>
+        ) : (
+          <div className="table-wrap">
+            <table className="sheet-table">
+              <thead>
+                <tr>
+                  <th rowSpan={2}>{t('members.col.member')}</th>
+                  {columns.map((c) => {
+                    const meeting = c.meeting;
+                    return (
+                      <th key={c.key} colSpan={c.ticks.length} className="tnum" style={{ textAlign: 'center' }}>
+                        {meeting && perms.write ? (
+                          // A meeting's own name is where it is edited from —
+                          // the sheet is the only place it is listed now.
+                          <button
+                            className="btn ghost sm"
+                            onClick={() => setEditing(meeting)}
+                            title={t('events.edit.title')}
+                          >
+                            {meeting.title}
+                          </button>
+                        ) : (
+                          columnLabel(c)
+                        )}
+                        {meeting && (
+                          <div className="faint" style={{ fontSize: 10.5, fontWeight: 400 }}>
+                            {c.date.slice(5)}
+                          </div>
+                        )}
+                      </th>
+                    );
+                  })}
+                </tr>
+                <tr>
+                  {/* Under the date, each sub-column carries its own check-all
+                      — a Sunday has two ticks, so 会前 and 主日 are filled
+                      independently. Hidden from a read-only account, whose
+                      press could only ever be refused (rule G2). */}
+                  {columns.map((c) => (
+                    <Fragment key={c.key}>
+                      {c.ticks.map((tick) => {
+                        const here = columnStates.get(`${c.key}|${tick}`);
+                        return (
+                          <th key={tick} style={{ textAlign: 'center' }}>
+                            <div>{t(sheetTickKey(tick))}</div>
+                            {perms.write && (
+                              <SheetTickAll
+                                state={here?.state ?? 'none'}
+                                onToggle={() => toggleColumn(c, tick)}
+                                disabled={rows.length === 0}
+                                title={t(
+                                  here?.state === 'all' ? 'sheet.tickAll.uncheck' : 'sheet.tickAll.check',
+                                  { column: tickLabel(c, tick) },
+                                )}
+                              />
+                            )}
+                          </th>
+                        );
+                      })}
+                    </Fragment>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {visibleRows.map((r) => (
+                  <tr key={r.member.id}>
+                    <td><MemberName member={r.member} /></td>
+                    {columns.map((c) => (
+                      <Fragment key={c.key}>
+                        {c.ticks.map((tick) => (
+                          <td key={tick} style={{ textAlign: 'center' }}>
+                            <SheetTick
+                              checked={!!r.cells[c.key]?.[tick]}
+                              onToggle={() => toggle(r, c, tick)}
+                              disabled={!perms.write}
+                              title={`${columnLabel(c)} · ${t(sheetTickKey(tick))}`}
+                            />
+                          </td>
+                        ))}
+                      </Fragment>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+              {/* How many people each occasion drew, under its own column —
+                  the shared footer all three sheets use (rule G4). */}
+              <SheetTotals counts={totals} />
+            </table>
+          </div>
+        )}
+      </div>
 
       {(addOpen || editing) && (
-        <EventModal
-          event={editing}
+        <MeetingModal
+          meeting={editing}
           onClose={() => {
             setAddOpen(false);
             setEditing(null);
           }}
           onSaved={() => {
+            const wasEdit = !!editing;
             setAddOpen(false);
             setEditing(null);
-            events.reload();
-            toast(editing ? t('events.toast.updated') : t('events.toast.created'));
+            sheet.reload();
+            toast(wasEdit ? t('events.toast.updated') : t('events.toast.created'));
           }}
           onDelete={
             editing && perms.delete
               ? async () => {
-                  if (await delEvent(editing)) setEditing(null);
+                  if (await deleteMeeting(editing)) setEditing(null);
                 }
               : undefined
           }
@@ -210,119 +442,23 @@ export default function EventsPage() {
   );
 }
 
-function AttendancePanel({
-  eventId,
-  members,
-  onClose,
-  onSaved,
-}: {
-  eventId: string;
-  members: MemberRow[];
-  onClose: () => void;
-  onSaved: () => void;
-}) {
-  const detail = useFetch<EventDetail>(`/events/${eventId}`);
-  const t = useT();
-  const toast = useToast();
-  const [marks, setMarks] = useState<Record<string, AttendanceStatus>>({});
-  const [saving, setSaving] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!detail.data) return;
-    const init: Record<string, AttendanceStatus> = {};
-    for (const a of detail.data.attendance) init[a.member_id] = a.status;
-    setMarks(init);
-  }, [detail.data]);
-
-  const set = (memberId: string, status: AttendanceStatus) =>
-    setMarks((m) => ({ ...m, [memberId]: status }));
-
-  const marked = Object.keys(marks).length;
-
-  const save = async () => {
-    setSaving(true);
-    setErr(null);
-    try {
-      const records = members
-        .filter((m) => marks[m.id])
-        .map((m) => ({ member_id: m.id, status: marks[m.id] }));
-      await api.post(`/events/${eventId}/attendance`, { records });
-      onSaved();
-    } catch (e) {
-      setErr((e as Error).message);
-      toast((e as Error).message, 'error');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <Modal onClose={onClose} size="wide">
-      {err && <ErrorBanner message={err} />}
-      <div className="flex-between" style={{ alignItems: 'flex-start' }}>
-        <div>
-          <h3 className="serif" style={{ margin: 0, fontSize: 18 }}>
-            {t('events.attendance.heading', { name: detail.data?.title ?? t('events.attendance.title') })}
-          </h3>
-          <div className="muted" style={{ fontSize: 12.5, marginTop: 2 }}>{t('events.attendance.sub')}</div>
-        </div>
-        <button className="icon-btn" onClick={onClose} title={t('common.close')}>✕</button>
-      </div>
-
-      {detail.loading ? (
-        <SkeletonScreen>
-          <div style={{ margin: '14px 0 4px' }}>
-            {[0, 1, 2, 3, 4, 5].map((i) => (
-              <div key={i} className="flex-between" style={{ padding: '10px 4px', borderBottom: '1px solid var(--border)' }}>
-                <Skeleton width={132} height={14} />
-                <Skeleton width={186} height={32} radius={8} />
-              </div>
-            ))}
-          </div>
-        </SkeletonScreen>
-      ) : (
-        <div style={{ maxHeight: '54vh', overflowY: 'auto', margin: '14px 0 4px' }}>
-          {members.map((m) => {
-            const cur = marks[m.id];
-            return (
-              <div key={m.id} className="flex-between" style={{ padding: '10px 4px', borderBottom: '1px solid var(--border)' }}>
-                <strong>{m.full_name}</strong>
-                <div className="seg">
-                  {ATTENDANCE_OPTIONS.map((st) => (
-                    <button
-                      key={st}
-                      className={cur === st ? ATTENDANCE_TONE[st] : ''}
-                      onClick={() => set(m.id, st)}
-                    >
-                      {t(attendanceKey(st))}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            );
-          })}
-          {members.length === 0 && <div className="empty-inline">{t('events.attendance.empty')}</div>}
-        </div>
-      )}
-
-      <div className="modal-actions">
-        <button className="btn ghost" onClick={onClose}>{t('common.close')}</button>
-        <button className="btn accent" onClick={save} disabled={saving || detail.loading}>
-          {t('events.attendance.save', { n: marked })}
-        </button>
-      </div>
-    </Modal>
-  );
-}
-
-function EventModal({
-  event,
+/**
+ * Add / edit one hand-added meeting. A name and a date is all it takes — the
+ * sheet's Sunday columns cover the standing services, so nothing here asks for
+ * a type, a location or a recurrence. An existing meeting keeps its own time of
+ * day: the field only moves the date, so a 20:00 prayer meeting does not
+ * silently become a midnight one.
+ *
+ * Deleting it takes its ticks with it, which is why that button goes through
+ * the shared confirmation (rule G3) in the page above.
+ */
+function MeetingModal({
+  meeting,
   onClose,
   onSaved,
   onDelete,
 }: {
-  event: EventRow | null;
+  meeting: SheetMeeting | null;
   onClose: () => void;
   onSaved: () => void;
   onDelete?: () => void;
@@ -330,20 +466,20 @@ function EventModal({
   const t = useT();
   const toast = useToast();
   const { hallId } = useHallScope();
+  const stored = toChurchInput(meeting?.starts_at);
   const [form, setForm] = useState({
-    title: event?.title ?? '',
-    event_type: (event?.event_type ?? EventType.Service) as EventType,
-    location: event?.location ?? '',
-    starts_at: toChurchInput(event?.starts_at),
-    // Editing keeps the event's own hall; creating defaults to the hall being
-    // viewed (and to the all-halls / joint option only when viewing all halls).
-    hall_id: event ? event.hall_id : hallId || null,
+    title: meeting?.title ?? '',
+    date: stored.slice(0, 10),
+    // Editing keeps the meeting's own hall; creating defaults to the hall being
+    // viewed (and to 全堂 only when viewing all congregations).
+    hall_id: meeting ? meeting.hall_id : hallId || null,
   });
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const timeOfDay = stored.slice(11, 16) || '00:00';
 
   const save = async () => {
-    if (!form.title.trim() || !form.starts_at) {
+    if (!form.title.trim() || !form.date) {
       setErr(t('events.err.required'));
       return;
     }
@@ -352,13 +488,14 @@ function EventModal({
     try {
       const payload = {
         title: form.title.trim(),
-        event_type: form.event_type,
-        location: form.location || null,
-        starts_at: fromChurchInput(form.starts_at),
+        starts_at: fromChurchInput(`${form.date}T${timeOfDay}`),
         hall_id: form.hall_id,
       };
-      if (event) await api.patch(`/events/${event.id}`, payload);
-      else await api.post('/events', payload);
+      if (meeting) await api.patch(`/events/${meeting.id}`, payload);
+      // `event_type` is set only on create, and never asked for: a hand-added
+      // meeting is a meeting. Editing an older row leaves whatever type it
+      // already carries alone.
+      else await api.post('/events', { ...payload, event_type: EventType.Meeting });
       onSaved();
     } catch (e) {
       setErr((e as Error).message);
@@ -369,26 +506,23 @@ function EventModal({
   };
 
   return (
-    <Modal title={event ? t('events.edit.title') : t('events.new.title')} onClose={onClose}>
+    <Modal title={meeting ? t('events.edit.title') : t('events.new.title')} onClose={onClose}>
       {err && <ErrorBanner message={err} />}
       <Field label={t('events.field.title')}>
-        <input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder={t('events.titlePlaceholder')} />
+        <input
+          value={form.title}
+          onChange={(e) => setForm({ ...form, title: e.target.value })}
+          placeholder={t('events.titlePlaceholder')}
+        />
       </Field>
       <div className="form-row">
-        <Field label={t('events.field.type')}>
-          <select value={form.event_type} onChange={(e) => setForm({ ...form, event_type: e.target.value as EventType })}>
-            {EVENT_TYPE_OPTIONS.map((et) => (
-              <option key={et} value={et}>{t(eventTypeKey(et))}</option>
-            ))}
-          </select>
-        </Field>
-        <Field label={t('events.field.location')}>
-          <input value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} placeholder={t('events.locationPlaceholder')} />
-        </Field>
-      </div>
-      <div className="form-row">
-        <Field label={t('events.field.startsAt')}>
-          <input type="datetime-local" className={form.starts_at ? undefined : 'date-empty'} value={form.starts_at} onChange={(e) => setForm({ ...form, starts_at: e.target.value })} />
+        <Field label={t('events.field.date')}>
+          <input
+            type="date"
+            className={form.date ? undefined : 'date-empty'}
+            value={form.date}
+            onChange={(e) => setForm({ ...form, date: e.target.value })}
+          />
         </Field>
         <Field label={t('hall.label')}>
           <HallSelect
@@ -401,11 +535,7 @@ function EventModal({
       </div>
       <div className="modal-actions">
         {onDelete && (
-          <button
-            className="btn danger"
-            style={{ marginRight: 'auto' }}
-            onClick={onDelete}
-          >
+          <button className="btn danger" style={{ marginRight: 'auto' }} onClick={onDelete}>
             {t('events.delete')}
           </button>
         )}

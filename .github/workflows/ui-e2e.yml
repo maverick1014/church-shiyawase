@@ -9,12 +9,15 @@ name: UI E2E (browser interaction test)
 # clean.
 #
 # THE SCRIPT MUST COME FROM THE COMMIT THAT WAS DEPLOYED. A workflow_run job
-# checks out the default branch by default, but deploy.yml only ever runs on
-# feature branches — so main's script would be pointed at a branch's build and
-# fail on every UI change that hadn't landed yet. That is what turned this
-# workflow into a permanent red-email generator: every automatic run failed
-# while every manual dispatch passed. Pin the checkout to the deployed SHA and
-# make the script confirm that SHA is actually live before it asserts anything.
+# checks out the default branch by default, which was wrong while deploy.yml
+# fired on feature branches: main's script was pointed at a branch's build and
+# failed on every UI change that had not landed yet — a permanent red-email
+# generator, every automatic run failing while every manual dispatch passed.
+# deploy.yml runs on main now, so the two usually agree, but the pin stays:
+# a manual branch deploy still happens, and a merge landing while this runs
+# would otherwise leave it asserting against a newer build than it was written
+# for. Pin the checkout to the deployed SHA and make the script confirm that
+# SHA is actually live before it asserts anything.
 on:
   workflow_dispatch:
     inputs:
@@ -44,7 +47,6 @@ jobs:
       # when the SMOKE_PASSWORD secret isn't set — otherwise the script aborts
       # with "UI_E2E_PASSWORD is required" and the whole workflow shows red.
       UI_E2E_PASSWORD: ${{ secrets.SMOKE_PASSWORD || 'grace2026' }}
-      UI_E2E_SHOTS: ${{ github.workspace }}/ui-shots
       # Which build this run is allowed to test. Empty on a manual dispatch
       # (test whatever is live); on workflow_run it is the deployed commit.
       UI_E2E_EXPECT_BUILD: ${{ github.event.workflow_run.head_sha }}
@@ -67,24 +69,4 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: Run UI E2E
         working-directory: apps/web
-        run: mkdir -p "$UI_E2E_SHOTS" && npm run test:ui-e2e
-      # ui-e2e drives a 402px phone, so everything inside `.only-desktop` — the
-      # list tables, and therefore most column work — is never in its
-      # screenshots. This read-only sweep captures the same pages at 1280px so
-      # a desktop layout change can actually be looked at. It runs even when
-      # the assertions above failed, because that is exactly when the pictures
-      # are worth having.
-      - name: Desktop screenshot sweep
-        if: ${{ !cancelled() }}
-        working-directory: apps/web
-        env:
-          WIDE: '1'
-          OUT: ${{ github.workspace }}/ui-shots/desktop
-        run: npm run ui:shots
-      - name: Upload screenshots
-        if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: ui-e2e-screenshots
-          path: ui-shots
-          retention-days: 14
+        run: npm run test:ui-e2e

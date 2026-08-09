@@ -44,7 +44,7 @@ with a distinctive **40-day one-on-one discipleship (四十天一对一守望)**
 1. One system for **人 / 聚会 / 奉献 / 培训 / 门训**.
 2. Every member's **rank/身份** comes from a single place (the group setup page) — no double maintenance.
 3. Every member has a **personal training record** (what they attended + progress).
-4. Trainings are **fully customizable** (multiple sessions, a trainer, opt-in enrollment, admin-checked attendance, printable/checkable namelist).
+4. Trainings are **fully customizable** (multiple sessions, a named PIC with a contact, an optional 报名费 with payment instructions and a receipt, opt-in enrollment, admin-checked attendance, printable/checkable namelist).
 5. **40-day discipleship** is a **cascade** the pastor can monitor in real time, and the mentor fills a **daily form via a private link** (no login).
 
 ---
@@ -53,25 +53,43 @@ with a distinctive **40-day one-on-one discipleship (四十天一对一守望)**
 
 Derived from the church logo (a charcoal **globe** wrapped by a **crimson cross-arrow**, red "GRACE" wordmark).
 
-### Palette (crimson + charcoal on warm white)
-| Token | Light | Dark | Use |
+### Palette — the church's two colours, on warm white
+
+**A theme is two colours** and they are **data**, on the `church` row (migration
+0017), chosen in 教会设置 → 主题颜色. The default pair is this church's own
+(crimson + charcoal), so the table below is what an unthemed deployment looks
+like — not a constant.
+
+| Token | Value | Source | Use |
 | --- | --- | --- | --- |
-| brand (crimson) | `#a51f24` | `#d94a4f` | primary actions, active nav, key data |
-| brand-2 | `#7f171b` | `#c23c41` | gradients, hover |
-| brand-soft | `#f6e3e3` | `#3a2422` | brand-tinted badges |
-| accent (charcoal) | `#33302f` | `#cbc6c3` | secondary emphasis, data endpoints |
-| rail (sidebar) | `#201d1b` | `#100e0d` | sidebar = the "globe" charcoal |
-| paper | `#f6f3f2` | `#141211` | app background |
-| surface | `#ffffff` | `#1c1917` | cards |
-| border | `#e7e1df` | `#322d2b` | hairlines |
-| ink | `#232120` | `#ece7e5` | text |
-| muted | `#6f6a68` | `#a29b97` | secondary text |
-| semantic good | `#2f8f5b` | `#4bab74` | present/approved/completed |
-| semantic warn | `#c9871f` | `#d8a441` | pending/excused/needs-follow-up |
-| semantic crit | `#d9482f` | `#e86b52` | absent/dropped (kept distinct from brand crimson) |
+| **rail** | `#201d1b` | `church.theme_rail` | the sidebar — the "globe" charcoal |
+| **brand** | `#a51f24` | `church.theme_brand` | primary actions, active nav, key data |
+| brand-2 | `#80181c` | `color-mix(in srgb, var(--brand) 78%, #000)` | gradients, hover |
+| brand-soft | `#f4e4e5` | `color-mix(in srgb, var(--brand) 12%, #fff)` | brand-tinted badges, focus rings |
+| accent | `#312f2d` | `color-mix(in srgb, var(--rail) 92%, #fff)` | secondary emphasis on a light surface |
+| accent-soft | `#e8e8e8` | `color-mix(in srgb, var(--rail) 10%, #fff)` | accent badges, skeleton tint |
+| rail-ink | `#fff` | — | the sidebar's brightest text |
+| rail-text / -muted / -faint / -dim | — | `color-mix(in srgb, #fff 88/74/62/50%, var(--rail))` | sidebar body text → section labels |
+| paper | `#f6f3f2` | independent | app background |
+| surface | `#ffffff` | independent | cards |
+| border | `#e7e1df` | independent | hairlines |
+| ink | `#232120` | independent | text |
+| muted | `#6f6a68` | independent | secondary text |
+| semantic good | `#2f8f5b` | independent | present/approved/completed |
+| semantic warn | `#c9871f` | independent | pending/excused/needs-follow-up |
+| semantic crit | `#d9482f` | independent | absent/dropped (kept distinct from the brand) |
 
 - **Brand mark:** a small globe (circle + meridians) with a subtle cross, crimson on white — echoes the logo.
-- Semantic colors are **separate** from the brand crimson so "absent/danger" never reads as "brand".
+- Semantic colors and the warm neutrals are **independent of the theme**: "absent/danger" must not
+  become the brand colour because a church picked a red one. `ROLE_TAG` (the member-role palette) is
+  not themed either.
+- Everything that IS a shade of the two chosen colours is `color-mix()`'d from them in `globals.css`,
+  so there is one source per colour. The sidebar's foregrounds are mixes of white **towards the
+  rail** rather than fixed greys, which is what lets the rail be any dark colour — and the API
+  refuses a rail (≥ 8:1 against white) or a brand (≥ 4.5:1) too pale to carry the light text on it.
+- **Presets** ship in code (`THEME_PRESETS` in `packages/shared`): charcoal/crimson (the default),
+  ink, forest, plum, amber. The chosen pair is stored **alongside** the preset key, so editing a
+  preset in a later release cannot restyle a church that picked it.
 
 ### Typography (system CJK, no webfonts)
 The Artifact/CSP blocks font CDNs and CJK webfonts are too large to inline, so use **system CJK fonts**:
@@ -80,7 +98,9 @@ The Artifact/CSP blocks font CDNs and CJK webfonts are too large to inline, so u
 - Use `font-variant-numeric: tabular-nums` for figures.
 
 ### Rules
-- **Light + dark themes**, both first-class (token-driven; a theme toggle stamps `data-theme`).
+- **Light only** (this was originally specced as light + dark; the app ships light, rule G7). The
+  church's theme changes the two colours the light theme is built from — it is not a dark mode, and
+  there is no `data-theme` / `prefers-color-scheme` branch anywhere.
 - **Mobile-first / fully responsive.** Sidebar collapses into a slide-in drawer (☰) on ≤820px; grids stack; wide tables scroll inside their own container.
 - Classic admin shell: charcoal left nav, top bar (title + actions), summary-before-detail content.
 
@@ -138,9 +158,24 @@ tog/
 ## 5. Modules & features
 
 ### 5.1 Members directory (成员目录)
-- Fields: 姓名(中/英)、邮箱、电话、性别、出生日期、**church_role**(牧师/一般成员)、状态(在册/慕道/停止聚会)、所属小组、加入日期、备注.
+- Fields: 姓名(中/英)、邮箱、电话、性别、出生日期、**church_role**(牧师/一般成员)、状态(在册/慕道/停止聚会)、所属小组、加入日期、备注、照片.
+- **A member IS the pair of names** (migration 0018): the Chinese `full_name` and the
+  nullable `english_name`, unique together (trimmed, case-insensitive, "no English name"
+  counting as a value). Everything that puts a person on the roll — the form, an import, the
+  public registration — matches on that pair, which is what lets a re-import say "this is the
+  same person" instead of growing a twin.
 - List with **filter by 身份 (derived)** and **by 小组**, search by name.
-- Create / edit / delete.
+- Create / edit / delete, plus two bulk ways in:
+  - **Import a spreadsheet** (`.xlsx` / `.csv`, super_admin / admin): parsed in the browser,
+    **previewed row by row** (add / update / skipped-and-why) and only then applied;
+    an existing name pair is an update of **only the columns the file filled in**, so a sparse
+    re-import never blanks what the church already had. Headers and enum values are read in all
+    three interface languages, a template is offered, and the server re-plans the same file
+    itself — the preview is a courtesy (G2). Refusals name the spreadsheet row.
+  - **A public self-registration link** (`/join`, copied from this page): people fill in their
+    own contact details and photo. See §5.7.
+- Photos use the shared `<PhotoPicker />` — `accept="image/*"` and deliberately **no `capture`**,
+  so a phone offers both the camera and the gallery.
 - **Member detail** = profile + **personal training record** (5.5) + discipleship pairs they're in.
 - The 身份 shown is **derived** (see §3); it is not edited here.
 
@@ -154,22 +189,51 @@ tog/
 - **铁三角 (leadership team)**: pick who holds 小组长/副组长/实习组长 directly here (rules 2 & 3 enforced — one holder per slot, auto-demote the incumbent). This is the only identity assignment on this page.
 - The member list itself is a simple name + remove list — no per-member position dropdown; 核心成员/普通成员/新成员 are set on the member's own profile page instead.
 
-### 5.3 Events & attendance (聚会与出席)
-- Event types: 主日崇拜 / 聚会 / 祷告会 / 团契 / 其他; fields: 标题、说明、地点、开始/结束时间、堂会.
-- List (upcoming vs past); create/edit/delete.
-- **Attendance check-in**: per member mark 出席 / 请假 / 缺席; bulk save; simple counts.
-- **循环聚会 (`/events/recurring`)**: schedules like 每周日 10:00 主日崇拜. Each rule sets 名称/类型/星期/时间/地点/堂会/提前天数 (default 35 ≈ one month) and can be paused. `GET /events` fills the window from the active rules — generation is **lazy, not a cron job**: the calendar only has to be right for whoever is looking at it, and there's no scheduled task to fail silently. Forward-only and idempotent, so a service deliberately deleted (public holiday) is not resurrected. **Deleting a rule keeps its already-generated events** (they carry attendance records).
+### 5.3 Services & attendance (崇拜与祷告会 · `/events`)
+**Every Sunday simply happens — nobody creates one.** The page is ONE SHEET for
+the month: the members down the left, and across the top that month's Sundays
+followed, in date order, by every meeting someone added for it.
+- **A Sunday column** (`sunday_attendance`, migration 0013) carries the two
+  ticks a Sunday has — 会前 (pre-service prayer) and 主日 (the service). A
+  Sunday nobody was marked on has no rows at all, which is "not recorded"
+  rather than "everyone was absent"; unticking both deletes the row rather than
+  storing two falses.
+- **A meeting column** (`events` / `event_attendance`) is one hand-added
+  occasion — a 31 August night prayer meeting — sorted into place among the
+  Sundays with exactly ONE tick (到场). There is no 会前 to invent for it.
+  Adding / editing one asks for a name and a date only (plus the congregation,
+  forced server-side for a hall-scoped account); its own name in the column
+  header is the edit affordance. Deleting it takes its ticks with it
+  (`event_attendance` cascades), so it goes through the danger confirmation.
+- **One grid, two tables, and the page knows about neither.** Each column
+  carries an opaque `key` (`sunday:YYYY-MM-DD` / `meeting:<id>`);
+  `PUT /attendance/sheet` quotes it back and the server resolves which table the
+  tick lands in (`lib/sheet.ts`). Column ORDER is a pure function of the
+  calendar and the meetings, unit-tested under a non-Malaysia `TZ`.
+- **Congregations.** Narrowing with the switcher narrows the member list and
+  the meeting columns together (a meeting with `hall_id is null` is 全堂开放 and
+  shows for everyone). On 全部堂会 the sheet simply lists **every** member — it
+  used to refuse with a 400, which is gone. A tick is still filed under the
+  member's OWN congregation, so what was recorded never loses its hall, and a
+  client-sent `hall_id` is never trusted.
+- **循环聚会 is gone** (migration 0015 drops `recurring_events` and
+  `events.recurring_id`). It existed only to manufacture rows for dates the
+  calendar already knew about; with the sheet supplying its own columns there is
+  nothing left for a schedule to pre-create.
 
 ### 5.4 Donations (奉献管理)
 - Fields: 奉献人(可匿名)、金额、币种、类别(十一/主日/建堂/宣教/感恩…)、方式(现金/转账/刷卡/线上)、日期、备注.
 - List with filter by member/fund; create/edit/delete.
 - **Summary** by fund + total.
 
-### 5.5 Trainings (培训课程) + personal record
-- **Catalog:** name, 说明, 类别, **trainer**(讲师), **total_sessions**, **is_enrollable**, start/end dates.
-- **Sessions:** a training can have **multiple sessions** (number, title, time, location, notes).
+### 5.5 Trainings & Activities (培训&活动) + personal record
+- **Two shapes, one catalog** (`kind`, migration 0014): a **course** runs over several sessions; an **activity** (兄弟团爬山, 姐妹团做蛋糕) is ONE occasion people sign up for and get ticked off at. Everything else — sign-ups, the roll call, the public link, the hall rule — is shared, so they are the same record and the same pages. An activity's single occasion is the one `training_sessions` row the API creates with it (it is what the roll call ticks); its **date, time and meeting point** are the record's own `starts_on`/`ends_on`, `start_time` and `location` (0016), and `total_sessions` is forced to 1 server-side.
+- **The shape is convertible** (0016). course → activity keeps only the FIRST session and deletes the rest **with their attendance**, behind a `useConfirm({ danger: true })` that names how many sessions and how many ticks go; activity → course simply lets the single session become session 1. The invariant lives in `ensureSingleSession` on the server, so a stale client can never leave a four-session activity behind.
+- **Catalog:** name, 说明, **kind**, **pic + pic_contact** (负责人 and a number to ring — free text since 0016, because the person in charge is often an outsider), **total_sessions**, **is_enrollable**, start/end dates, an activity's time + place, and the 报名费 block. 类别 is **gone** (0016): it was a display tag that described none of an activity. The catalog lists both shapes together — no kind filter, since every card carries its own shape badge. On screen the `course` shape is a **培训 / Training**; `kind` keeps the `course` code on the wire.
+- **报名费 (0016):** `fee` null/0 = free and nothing below appears. A fee carries `payment_instructions` (free text — bank account, TnG number, a note; ONE column, because a church invents methods nobody modelled) and an optional uploaded `payment_qr_url`. Sign-ups then carry `training_enrollments.payment_slip_url` — the receipt, uploaded **with** the sign-up and opened by the admin **from the review row, beside Approve**, because approving a paid sign-up means somebody checked that the money arrived.
+- **Sessions:** a course can have **multiple sessions** (number, title, time, location, notes); an activity shows no session list at all.
 - **Enrollment:** member enrolls → `pending`; **admin approves** and tracks status (待审核/已通过/进行中/已完成/已退出). The 报名审核 progress bar shows each enrollee's **real attendance rate** (attended ÷ total sessions from the namelist).
-- **Public self-enrollment link (no login):** `/enroll/[id]` — sharable when the course is 开放报名. A visitor types their **full Chinese name**; the server enrolls them (`pending`) only if it matches **exactly one** existing member. No match / multiple matches → "请联系牧师加入成员系统" (never auto-creates a member, avoiding duplicates). Copy the link from the 培训详情 header (「🔗 报名链接」).
+- **Public self-enrollment link (no login):** `/enroll/[id]` — sharable when the course **or activity** is 开放报名; the public payload is an allow-list carrying `kind`, the date/time/place, the PIC and their contact, and the fee block, so an activity reads as "On <date> <time> at <place>" instead of "1 sessions" and a payer can see what to pay and where. On a PAID one the form shows the amount, the instructions and the QR **above a required receipt upload** (image or PDF, 5MB), and the receipt is posted as one multipart request WITH the sign-up — nothing reaches storage until the name has matched exactly one member, so the app's only unauthenticated upload path cannot be used as file storage. A visitor types their **full Chinese name**; the server enrolls them (`pending`) only if it matches **exactly one** existing member. No match / multiple matches → "请联系牧师加入成员系统" (never auto-creates a member, avoiding duplicates). Copy the link from the 培训详情 header (「🔗 报名链接」).
 - **Attendance / namelist:** admin marks attended per session; system **generates a checking namelist** (members × sessions grid with ✓).
 - **Personal training record:** on each member's detail page — every training they enrolled in + status + progress.
 
@@ -185,6 +249,23 @@ tog/
   - Form shows: pair info (带领者 ➜ 被带领者), progress bar, 40-day mini grid, and today's entry: **第几天 / 是否完成 / 反馈备注 / 提交**; then a thank-you state.
   - One `(pair, day_number)` is unique; re-submitting updates (idempotent).
 
+### 5.7 Public member self-registration (`/join`)
+- One link the church hands out; **no login**, mobile-first, same shell-less shape as `/d/<token>`
+  and `/enroll/<id>` (the church's own logo, name and theme, the app's default language).
+  Copied from the member list with the shared `copyText`, which reports success either way.
+- Fields: **Chinese name (required)**, English name, phone, email, gender, date of birth,
+  congregation (asked only when the church has more than one) and a photo.
+- The photo travels **with** the registration in one multipart POST — the same rule the paid
+  sign-up's receipt follows: nothing reaches storage until the row has been accepted, so the
+  unauthenticated upload paths cannot be used as file storage.
+- **What it cannot do**, by construction: set a church role (every self-registration is an
+  ordinary member), a status, a life group, a group position or notes; touch anybody but the
+  one name pair typed in; or read anything back. The answer is one word (`created` / `updated`),
+  the same shape either way and carrying no member data.
+- An existing name pair is an **update of that person's contact details**, so the page can say
+  "we've updated your details" instead of welcoming somebody the church has known for years —
+  and the roll never grows a second copy of them.
+
 ---
 
 ## 6. Data model (PostgreSQL — source of truth)
@@ -192,25 +273,45 @@ tog/
 Enums: `church_role(pastor,member)`, `group_position(leader,assistant_leader,intern_leader,core_member,regular_member,new_member)`, `member_status(active,inactive)`, `gender_type`, `event_type`, `attendance_status(present,absent,excused)`, `donation_method`, `enrollment_status(pending,approved,in_progress,completed,dropped)`, `pair_status(active,completed,paused)`.
 
 Tables:
+- `church(id, name, short_name, description, logo_url, theme_preset, theme_rail, theme_brand, timestamps)` —
+  **one row**, seeded by 0012. The church's identity is data, not a hardcoded string: the sidebar
+  brand, the login card and both public forms render from it. `GET /api/church` is **public** (the
+  login page has no session) and carries the theme, since those pages are painted in it before
+  anyone signs in; every write is super_admin. `logo_url` points at the public `branding` storage
+  bucket, uploaded through `POST /api/church/logo` — the same mechanism as a member's avatar.
+  The theme columns (0017) are the two colours plus the preset key they came from (null = custom);
+  both colours are `check`ed as `^#[0-9a-fA-F]{6}$` in the database as well as in the API, because
+  they end up inside a CSS custom property.
+- `church_modules(church_id→church on delete cascade, module, enabled, timestamps, pk(church_id,module))` —
+  which **optional** modules this church runs. The catalog of what CAN be switched lives in code
+  (`OPTIONAL_MODULES` in `packages/shared`: a key, the nav href it owns, the API prefixes it owns);
+  only the on/off state lives here, and a key outside the registry is a 400. Today the one entry is
+  `discipleship` (四十天守望). A missing row counts as ON.
 - `halls(id, name, sort_order, created_at)` — 中文堂 / 英文堂 / 马来文堂. One shared database; a hall is a **scope column**, not a separate deployment.
 - `groups(id, name, description, meeting_day weekday, meeting_time, location, tags text[], hall_id→halls **NOT NULL**, created_at)` — **no leader columns** (derived); 小组状态 (可分植/可加人/刚好) is also derived, not stored.
 - `households(id, name, address, phone, created_at)` — optional family grouping.
-- `members(id, full_name, chinese_name, email, phone, gender, date_of_birth, church_role, status, group_id→groups, group_position, household_id→households, hall_id→halls **NOT NULL**, joined_at, notes, timestamps)`
+- `members(id, full_name, **english_name**, email, phone, gender, date_of_birth, church_role, status, group_id→groups, group_position, household_id→households, hall_id→halls **NOT NULL**, joined_at, notes, timestamps)` — `full_name` is the CHINESE name; `english_name` (0018, renamed from the mislabelled `chinese_name`) is the English one and may be null.
   - `check (group_position is null or group_id is not null)`
   - **partial unique indexes**: one `leader` / one `assistant_leader` / one `intern_leader` per `group_id`.
-- `events(id, title, description, event_type, location, starts_at, ends_at, hall_id→halls **nullable**, recurring_id→recurring_events **nullable, on delete set null**, created_at)` — `hall_id is null` = 全堂 / 联合聚会. Unique index `(starts_at, hall_id) nulls not distinct where event_type='service'` so each hall may hold its own 10:00 主日崇拜; `(recurring_id, starts_at)` keeps the top-up idempotent.
-- `recurring_events(id, title, event_type, weekday, start_time, location, hall_id→halls nullable, lookahead_days default 35, active, created_at)` — 循环聚会 schedules. `GET /events` tops the calendar up from the active rules (lazy, no cron). Deleting a rule **keeps** the events it produced (FK is `on delete set null`); it only stops future generation.
+  - **`members_name_pair_key` (0018)**: unique on `(lower(btrim(full_name)), lower(btrim(coalesce(english_name,''))))` — the PAIR of names is the identity of a person, compared case- and whitespace-insensitively, with "no English name" counting as a value of its own. A second 张伟 with no English name is refused; the API turns the 23505 into a **409** naming the conflict (`unwrap` in `lib/server/db.ts`).
+- `sunday_attendance(id, hall_id→halls **NOT NULL**, service_date date, member_id→members, pre_service, service, updated_at, unique(hall_id,service_date,member_id))` — 主日点名. `check (pre_service or service)` so an all-false row can never be stored (no row already means "not recorded"), and `check (extract(dow from service_date) = 0)` so only Sundays land on the Sunday sheet. Indexed `(hall_id, service_date)` — the sheet is always read as one hall, one month — and `(member_id, service_date desc)` for a member's own history.
+- `events(id, title, description, event_type, location, starts_at, ends_at, hall_id→halls **nullable**, created_at)` — the meetings someone adds by hand, each a dated column on the roll-call sheet; `hall_id is null` = 全堂. The old `events_unique_sunday_service` index went with 0013 (nothing manufactures a 主日崇拜 row any more) and `recurring_id` with 0015.
+- ~~`recurring_events`~~ — **dropped by 0015**, together with `events.recurring_id`. The schedules only ever pre-created event rows for dates the calendar already had; the roll-call sheet builds its own columns, so nothing needed them.
 - `event_attendance(id, event_id, member_id, status, checked_in_at, notes, unique(event_id,member_id))`
 - `donations(id, member_id?, amount, currency, fund, method, donated_at, notes, created_at)`
-- `trainings(id, name, description, category, trainer_id→members, total_sessions, is_enrollable, starts_on, ends_on, hall_id→halls **nullable**, created_at)` — `hall_id is null` = 全堂开放.
-- `training_sessions(id, training_id, session_number, title, scheduled_at, location, notes, unique(training_id,session_number))`
-- `training_enrollments(id, training_id, member_id, status, progress, enrolled_at, completed_at, notes, unique(training_id,member_id))`
+- `trainings(id, name, description, **kind** `course|activity` check, default `course`, **pic**, **pic_contact**, total_sessions, is_enrollable, starts_on, ends_on, **start_time**, **location**, **fee** numeric ≥ 0, **payment_instructions**, **payment_qr_url**, hall_id→halls **nullable**, created_at)` — `hall_id is null` = 全堂开放. `kind` (0014) is the only thing that tells a course from a one-off activity; the catalog of shapes is `TrainingKind` in `packages/shared`. 0016 dropped `category` and replaced `trainer_id→members` with free-text `pic` (+ its contact), copying each linked member's name forward first.
+- `training_sessions(id, training_id, session_number, title, scheduled_at, location, notes, unique(training_id,session_number))` — an ACTIVITY's single row is plumbing for the roll call: its `scheduled_at`/`location` stay null, because the occasion's time and place live on the training row.
+- `training_enrollments(id, training_id, member_id, status, progress, enrolled_at, completed_at, notes, **payment_slip_url**, unique(training_id,member_id))`
 - `training_attendance(id, session_id, member_id, attended, checked_at, notes, unique(session_id,member_id))`
 - `discipleship_programs(id, name, description, total_days=40 check ≥ 1, created_at)` — the
-  **module** (模块) in the UI; managed from `/discipleship`. It has no `hall_id`, so no hall
-  gate applies. Deleting one **cascades** to every pair under it (`program_id` is
-  `on delete cascade`) and from there to all their `discipleship_progress` rows, which is why
-  the UI's confirmation states the pair count before it calls `DELETE`.
+  **module** (模块) in the UI. It has no `hall_id`, so no hall gate applies. It is **created
+  once and then read**: the app has `GET`/`POST` and `GET /:id` only. There is no edit and no
+  delete, on the server or in the UI — a delete here would **cascade** to every pair under it
+  (`program_id` is `on delete cascade`) and from there to all their `discipleship_progress`
+  rows, and the manager that offered one was a misreading of what the church calls a "module"
+  (they meant the add-on switches on `/church`). The create path is kept for exactly one
+  case: a church with no module at all, whose 四十天守望 page would otherwise be
+  unrecoverable from the UI.
 - `discipleship_pairs(id, program_id, mentor_id→members, trainee_id→members, parent_pair_id?, status, start_date, form_token uuid unique, created_at, unique(program_id,trainee_id), check mentor≠trainee)`
 - `discipleship_progress(id, pair_id, day_number, entry_date, completed, notes, timestamps, unique(pair_id,day_number))`
 - View `discipleship_pair_summary` — per-pair days_completed + percent_complete for the pastor overview.
@@ -225,16 +326,18 @@ Tables:
 | `/members` | 成员目录 | filter chips by 身份(derived) + 小组, search, table, create |
 | `/members/[id]` | 成员详情 | profile + **个人培训档案** + 门训对子 |
 | `/groups` | 小组管理 · 列表 | table of all groups (小组名称+标签, 组长, 组员人数, 新成员人数, 小组状态, 聚会时间地点), sortable, filter by 标签/星期几, click a row → detail |
-| `/groups/[id]` | 小组详情 | create/delete, member allocation (simple list), **铁三角** leader picker (the only identity assignment here) |
-| `/events` | 聚会与出席 | event cards + **点名** (出席/请假/缺席) |
-| `/events/recurring` | 循环聚会 | recurring schedules (每周X HH:MM) that auto-fill the calendar; pause/edit/delete |
+| `/groups/[id]` | 小组详情 | create/delete, member allocation (simple list), **铁三角** leader picker (the only identity assignment here), roll-call card for the group's OWN meetings (year/month, then export at the end of its toolbar; each week column has a check-all in its header) |
+| `/events` | 崇拜与祷告会 Services | ONE 聚会点名 sheet: members × (the month's Sundays with 会前 / 主日 ticks + each hand-added meeting as a dated 到场 column), a check-all per sub-column, per-tick totals, export; ＋新增聚会, edit/delete from a meeting's column header |
 | `/donations` | 奉献管理 | fund summary tiles + records table + create |
-| `/trainings` | 培训课程 | catalog cards + create |
-| `/trainings/[id]` | 培训详情 | sessions, enrollment approval, **核对名单** grid, per-session attendance |
+| `/trainings` | 培训&活动 | catalog cards for both shapes, no filter, ＋新增培训 / ＋新增活动 |
+| `/trainings/[id]` | 培训 / 活动详情 | a course: sessions, enrolment approval, **核对名单** grid, per-session attendance. An activity: no session list, one 「到场」 column |
 | `/discipleship` | 四十天守望 | cascade chain, **牧者总览** (per-pair progress + 复制链接/打开表单), a pair's 40-day grid |
 | `/discipleship/pairs/[id]` | 对子进度 | 40-day grid + cascade lineage (pastor view) |
 | `/d/[token]` | 每日填写页（独立） | **standalone, mobile-first, no login** mentor daily form |
-| `/enroll/[id]` | 培训报名页（独立） | **standalone, mobile-first, no login** self-enrollment — matches full Chinese name to a member |
+| `/enroll/[id]` | 报名页（独立） | **standalone, mobile-first, no login** self-enrollment for a course or an activity — matches full Chinese name to a member |
+| `/join` | 成员注册页（独立） | **standalone, mobile-first, no login** member self-registration — name pair, contact details, congregation, photo |
+| `/settings` | 用户管理 | login accounts (super_admin only) |
+| `/church` | 教会设置 | the church record (name / short name / description / logo), its **theme colours** (a preset or a custom pair) + the **add-on module catalog** — super_admin only |
 
 ---
 
@@ -242,16 +345,19 @@ Tables:
 
 | Area | Endpoints |
 | --- | --- |
-| Members | `GET/POST /members`, `GET/PATCH/DELETE /members/:id`, `GET /members/:id/trainings` (filters: `church_role`, `group_position`, `group_id`, `q`) |
+| Members | `GET/POST /members`, `GET/PATCH/DELETE /members/:id`, `GET /members/:id/trainings`, `POST /members/:id/avatar` (image upload) (filters: `church_role`, `group_position`, `group_id`, `q`) |
+| Member import | `POST /members/import` `{hall_id, rows[{row, full_name, english_name, phone, email, gender, date_of_birth, joined_at, church_role, status, hall, group}]}` → `{created, updated, skipped[{row, issue, field, detail, message}], failures[{row, message}]}`. **super_admin / admin only**, 300 rows at most. Rows are matched on the name pair and planned by the same `lib/members-import.ts` the browser previewed with; a refused row never stops the others |
+| **Public registration** | `GET /members/register` → `{halls[{id,name}]}` (the form's own bootstrap) and `POST /members/register` (JSON, or multipart when a photo rides along) → `{status:'created'\|'updated'}`. No session; the ONLY public path under `/members`, and only those two methods. It reads an allow-list of fields — a body carrying `church_role` / `group_id` / `status` / `notes` has them ignored — and answers with no member data at all |
 | Halls | `GET /halls` — 堂会 list (read-only; a hall-scoped account only sees its own) |
-| Groups | `GET/POST /groups`, `GET/PATCH/DELETE /groups/:id` (member positions live on `members`) |
+| Groups | `GET/POST /groups`, `GET/PATCH/DELETE /groups/:id` (member positions live on `members`), `GET /groups/:id/attendance`, `POST /groups/:id/meetings`, `DELETE /groups/meetings/:meetingId`, `POST /groups/meetings/:meetingId/attendance` `{records[{member_id,status}]}` — one tick or a whole column in the same call; a group meeting's hall is its **group's** hall, checked server-side |
 | Households | `GET/POST /households`, `GET/PATCH/DELETE /households/:id` |
-| Events | `GET/POST /events`, `GET/PATCH/DELETE /events/:id`, `POST /events/:id/attendance` |
+| 聚会点名 | `GET /attendance/sheet?year&month[&hall_id]` → `{hall_id, columns[{key, kind, date, ticks[], meeting}], rows[{member, cells{key:{…ticks}}}]}` — no `hall_id` means every congregation's members; `PUT /attendance/sheet` `{column, member_ids[], …ticks}` → `{column, member_ids[], count, …ticks}` — the cells of **one or many** members in one call (`member_id` is the singular alias), created / updated / **deleted** (every tick false) by the same call, in `sunday_attendance` or `event_attendance` depending on the column. A list is the general shape so the column check-all cannot drift from a single tick: same gate, same hall rule (each row filed under **that member's own** hall), same delete-instead-of-false. 400 on a non-Sunday `sunday:` column, a column key the server never handed out, an empty list, or an id that is not a member (refused whole — never half-applied) |
+| Events | `GET/POST /events`, `GET/PATCH/DELETE /events/:id` — the hand-added meetings; their attendance is a column on the sheet above |
 | Donations | `GET/POST /donations`, `GET /donations/summary`, `PATCH/DELETE /donations/:id` |
-| Trainings | `GET/POST /trainings`, `GET/PATCH/DELETE /trainings/:id`, `GET /trainings/:id/namelist`, **public** `GET/POST /trainings/enroll/:id` |
+| Trainings & Activities | `GET/POST /trainings`, `GET/PATCH/DELETE /trainings/:id`, `GET /trainings/:id/namelist`, `POST /trainings/:id/payment-qr` (image upload), **public** `GET/POST /trainings/enroll/:id` (JSON, or multipart when a receipt rides along). `kind` is validated server-side (400 on anything but `course`/`activity`); creating **or converting to** an `activity` forces `total_sessions: 1`, `ends_on = starts_on` and exactly one session; `fee` must be a number ≥ 0; a paid sign-up with no receipt is a 400 in words |
 | Sessions | `POST /trainings/:id/sessions`, `PATCH/DELETE /trainings/sessions/:sessionId`, `POST /trainings/sessions/:sessionId/attendance` |
 | Enrollment | `POST /trainings/:id/enroll`, `PATCH/DELETE /trainings/enrollments/:enrollmentId` |
-| Discipleship | `GET/POST /discipleship/programs`, `GET/PATCH/DELETE /discipleship/programs/:id` (the module — no hall column, so no hall gate), `GET /discipleship/programs/:id/overview`, `GET/POST /discipleship/pairs`, `GET/PATCH/DELETE /discipleship/pairs/:id`, `POST /discipleship/pairs/:id/progress` |
+| Discipleship | `GET/POST /discipleship/programs`, **`GET` only** on `/discipleship/programs/:id` (the module — no hall column, so no hall gate; PATCH and DELETE were removed with the module manager and now 404), `GET /discipleship/programs/:id/overview`, `GET/POST /discipleship/pairs`, `GET/PATCH/DELETE /discipleship/pairs/:id`, `POST /discipleship/pairs/:id/progress` |
 | **Private form** | `GET /discipleship/form/:token`, `POST /discipleship/form/:token/progress` (no login) |
 
 ---
@@ -275,7 +381,7 @@ Groups: **恩典小组** (周六 15:00), **青年小组** (周五 20:00), **迦�
 | 郑喜乐 | 迦南小组 | 新成员 (慕道) |
 
 Discipleship cascade (program 四十天一对一守望): 陈约翰→林玛丽 (31/40) → 林玛丽→黄彼得 (22/40) → 黄彼得→吴恩慈 (12/40) → 吴恩慈→王但以理 (5/40) → 王但以理→陈路得 (0/40).
-Sample training: **门徒训练 101** (讲师 陈约翰, 3 场次: 得救确据 / 祷告 / 读经), enrollments with mixed statuses.
+Sample training: **门徒训练 101** (负责人 陈约翰 · 012-345 6789, 3 场次: 得救确据 / 祷告 / 读经), enrollments with mixed statuses; **事奉训练营** carries a RM 80 报名费 with bank/TnG instructions.
 Donations: 十一奉献/主日奉献/建堂/宣教, methods 现金/转账/线上; monthly total ~ RM 8,650.
 
 ---
@@ -286,7 +392,7 @@ Donations: 十一奉献/主日奉献/建堂/宣教, methods 现金/转账/线上
 | --- | --- | --- |
 | 1 | Currency | **RM (MYR)** |
 | 2 | Households module needed? | Modeled but optional; can hide in v1 |
-| 3 | Training categories preset | 门徒 / 栽培 / 事奉 (free text otherwise) |
+| 3 | ~~Training categories preset~~ | **Removed (0016)** — the tag described none of an activity and nobody filtered on it |
 | 4 | Donation fund presets | 十一奉献 / 主日奉献 / 建堂 / 宣教 / 感恩 |
 | 5 | Mentor can have multiple trainees? | **Yes** (multiple pairs) |
 | 6 | Auth now? | **No** — add Supabase Auth + role permissions later |

@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { BrandLogo } from '@/components/BrandLogo';
 import { Field, PasswordInput } from '@/components/ui';
+import { useChurchProfile } from '@/lib/church';
 import { useT } from '@/lib/i18n';
 
 export default function LoginPage() {
@@ -11,7 +12,12 @@ export default function LoginPage() {
   // No session exists yet, so there is no account language to honour: the
   // login screen always renders in the app default (English) via the i18n
   // context's default value.
+  //
+  // The church's NAME is the exception, and it is not a language question at
+  // all: it is data on the church record, the same in all three languages, so
+  // it is fetched from the public `GET /api/church` rather than translated.
   const t = useT();
+  const church = useChurchProfile();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [err, setErr] = useState<string | null>(null);
@@ -59,10 +65,10 @@ export default function LoginPage() {
           <span
             style={{ width: 40, height: 40, borderRadius: 11, background: '#fff', display: 'grid', placeItems: 'center', flexShrink: 0, overflow: 'hidden', boxShadow: '0 1px 2px rgba(0,0,0,.12), inset 0 0 0 1px rgba(0,0,0,.05)' }}
           >
-            <BrandLogo size={34} />
+            <BrandLogo size={34} church={church} />
           </span>
           <div className="serif" style={{ fontSize: 19, fontWeight: 600 }}>
-            {t('login.title')}
+            {church?.name ?? t('church.defaultName')}
             <div className="muted" style={{ fontSize: 11, fontWeight: 500, letterSpacing: 1 }}>
               {t('login.subtitle')}
             </div>

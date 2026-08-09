@@ -8,11 +8,29 @@ import { usePageChrome, useMe } from '@/components/AppShell';
 import { ErrorBanner, PageBar, SkeletonCards, SkeletonScreen, useConfirm, useToast } from '@/components/ui';
 import { TrainingModal } from '@/components/TrainingModal';
 import { can } from '@/lib/perms';
-import { MemberRow, TrainingRow } from '@/lib/types';
-import { categoryBadgeClass, formatDate, trainingCategoryLabel } from '@/lib/labels';
+import { TrainingRow } from '@/lib/types';
+import {
+  formatMoney,
+  hasFee,
+  trainingKindClass,
+  trainingKindKey,
+  trainingMeta,
+} from '@/lib/labels';
 import { endOfChurchDate } from '@/lib/time';
 import { useT } from '@/lib/i18n';
+import { TrainingKind } from '@tog/shared';
 
+/**
+ * 培训&活动 — one catalog, two shapes (`kind`, migration 0014).
+ *
+ * A COURSE runs over several sessions; an ACTIVITY is one occasion people sign
+ * up for and get ticked off at (兄弟团爬山, 姐妹团做蛋糕). They are the same
+ * record — sign-ups and a roll call — so they share this page, the detail page
+ * and the public sign-up link; only the wording and the shape-specific fields
+ * differ. The catalog lists both together: each card carries its own shape
+ * badge, and a church runs few enough of either for filtering to be worth a
+ * control.
+ */
 export default function TrainingsPage() {
   const router = useRouter();
   const t = useT();
@@ -20,8 +38,8 @@ export default function TrainingsPage() {
   const confirm = useConfirm();
   const perms = can(useMe().role);
   const trainings = useFetch<TrainingRow[]>('/trainings');
-  const members = useFetch<MemberRow[]>('/members');
-  const [addOpen, setAddOpen] = useState(false);
+  // Which shape to CREATE — also what tells the modal apart from an edit.
+  const [adding, setAdding] = useState<TrainingKind | null>(null);
   const [editing, setEditing] = useState<TrainingRow | null>(null);
 
   usePageChrome({ title: t('trainings.title') }, [t]);
@@ -34,7 +52,9 @@ export default function TrainingsPage() {
     for (const course of list) {
       // ends_on is a DATE and covers its whole Malaysian day — comparing
       // against new Date(ends_on) retired the course at 08:00 that morning,
-      // because a bare date parses as UTC midnight.
+      // because a bare date parses as UTC midnight. An activity stores its one
+      // day as both starts_on and ends_on, so the same test retires it the day
+      // after it happened.
       const endsAfter = endOfChurchDate(course.ends_on);
       const isEnded = !!endsAfter && endsAfter <= now;
       if (isEnded || !course.is_enrollable) e.push(course);
@@ -45,8 +65,9 @@ export default function TrainingsPage() {
   }, [list]);
 
   const del = async (course: TrainingRow): Promise<boolean> => {
+    const isActivity = course.kind === TrainingKind.Activity;
     const ok = await confirm({
-      title: t('trainings.delete.title'),
+      title: isActivity ? t('trainings.deleteActivity.title') : t('trainings.delete.title'),
       message: t('trainings.delete.message', { name: course.name }),
       confirmText: t('common.delete'),
       danger: true,
@@ -55,7 +76,7 @@ export default function TrainingsPage() {
     try {
       await api.delete(`/trainings/${course.id}`);
       trainings.reload();
-      toast(t('trainings.toast.deleted'));
+      toast(isActivity ? t('trainings.toast.activityDeleted') : t('trainings.toast.deleted'));
       return true;
     } catch (e) {
       toast((e as Error).message, 'error');
@@ -67,10 +88,19 @@ export default function TrainingsPage() {
     <div className="grid g3">
       {items.map((course) => (
         <div className="card" key={course.id} style={{ display: 'flex', flexDirection: 'column', opacity: faded ? 0.86 : 1 }}>
-          <div className="flex-between">
-            <span className={`badge ${categoryBadgeClass(course.category)}`}>
-              {trainingCategoryLabel(course.category, t) || t('trainings.defaultCategory')}
-            </span>
+          <div className="flex-between flex-wrap gap-8">
+            <div className="flex items-center gap-6 flex-wrap">
+              <span className={`badge ${trainingKindClass(course.kind)}`}>
+                {t(trainingKindKey(course.kind))}
+              </span>
+              {/* 报名费 — only a paid row says anything, so a free one reads
+                  exactly as it did before (0016). */}
+              {hasFee(course.fee) && (
+                <span className="badge b-accent">
+                  {t('trainings.fee', { amount: formatMoney(course.fee) })}
+                </span>
+              )}
+            </div>
             <span className={`badge ${course.is_enrollable ? 'b-good' : 'b-gray'}`}>
               {course.is_enrollable ? t('trainings.open') : t('trainings.closed')}
             </span>
@@ -78,16 +108,10 @@ export default function TrainingsPage() {
           <h3 style={{ margin: '12px 0 2px', fontSize: 16, cursor: 'pointer' }} className="serif" onClick={() => router.push(`/trainings/${course.id}`)}>
             {course.name}
           </h3>
-          <div className="muted" style={{ fontSize: 12.5 }}>
-            {t('trainings.trainer', { name: course.trainer?.full_name ?? t('common.pending') })}
-            {' · '}
-            {t('trainings.sessions', { n: course.total_sessions })}
-          </div>
-          <div className="muted" style={{ fontSize: 12, marginTop: 10 }}>
-            {t('trainings.dateRange', {
-              from: formatDate(course.starts_on),
-              to: formatDate(course.ends_on),
-            })}
+          {/* The same "who and when" line the detail page shows, built once in
+              lib/labels.ts so the two can never drift (rule G4). */}
+          <div className="muted" style={{ fontSize: 12.5, lineHeight: 1.7 }}>
+            {trainingMeta(course, t).join(' · ')}
           </div>
           <div className="grow" />
           <div className="flex gap-8 mt-14">
@@ -99,17 +123,25 @@ export default function TrainingsPage() {
     </div>
   );
 
-  // The add button and both section headings are static, so they render at
-  // once and only the two catalog grids below them wait on the fetch.
+  // The bar and both section headings are static, so they render at once and
+  // only the two catalog grids below them wait on the fetch.
   return (
     <>
       <ErrorBanner message={trainings.error} />
 
-      {perms.write && (
-        <PageBar
-          actions={<button className="btn" onClick={() => setAddOpen(true)}>{t('trainings.add')}</button>}
-        />
-      )}
+      {/* No shape filter: the catalog is one list of what the church is
+          running, every card already says which shape it is, and a church has
+          few enough of either for hiding half of them to be worth a control. */}
+      <PageBar
+        actions={
+          perms.write ? (
+            <>
+              <button className="btn ghost" onClick={() => setAdding(TrainingKind.Activity)}>{t('trainings.addActivity')}</button>
+              <button className="btn" onClick={() => setAdding(TrainingKind.Course)}>{t('trainings.add')}</button>
+            </>
+          ) : undefined
+        }
+      />
 
       <div className="section-label mb-14">
         <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--good)', display: 'inline-block' }} />
@@ -139,21 +171,28 @@ export default function TrainingsPage() {
         <div className="empty">{t('trainings.emptyEnded')}</div>
       )}
 
-      {(addOpen || editing) && (
+      {(adding || editing) && (
         <TrainingModal
-          members={members.data ?? []}
           initial={editing ?? undefined}
+          kind={adding ?? undefined}
           onClose={() => {
-            setAddOpen(false);
+            setAdding(null);
             setEditing(null);
           }}
-          onSaved={(id) => {
-            const wasEdit = !!editing;
-            setAddOpen(false);
+          onSaved={(saved) => {
+            const edited = editing;
+            // The SAVED row's kind, never the one the modal opened on: a row
+            // that was just converted has to be reported as what it now is.
+            const isActivity = saved.kind === TrainingKind.Activity;
+            setAdding(null);
             setEditing(null);
             trainings.reload();
-            toast(wasEdit ? t('trainings.toast.updated') : t('trainings.toast.created'));
-            if (!wasEdit) router.push(`/trainings/${id}`);
+            if (edited)
+              toast(isActivity ? t('trainings.toast.activityUpdated') : t('trainings.toast.updated'));
+            else {
+              toast(isActivity ? t('trainings.toast.activityCreated') : t('trainings.toast.created'));
+              router.push(`/trainings/${saved.id}`);
+            }
           }}
           onDelete={
             editing && perms.delete
@@ -167,4 +206,3 @@ export default function TrainingsPage() {
     </>
   );
 }
-

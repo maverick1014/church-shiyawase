@@ -10,11 +10,13 @@ import {
   Avatar,
   BackBar,
   ChevronRightIcon,
+  Combobox,
   EntityHeader,
   ErrorBanner,
   Field,
   HallSelect,
   Loading,
+  MemberName,
   Modal,
   PageBar,
   PasswordInput,
@@ -158,7 +160,7 @@ export default function SettingsPage() {
                 <tbody>
                   {sortedAccounts.map((u) => (
                     <tr key={u.id}>
-                      <td><strong>{u.member?.full_name ?? '—'}</strong></td>
+                      <td><MemberName member={u.member} /></td>
                       <td>
                         {u.member ? <RoleBadge role={churchDisplayRole(u.member.church_role)} /> : '—'}
                       </td>
@@ -185,7 +187,7 @@ export default function SettingsPage() {
               <div key={u.id} className="mtile" onClick={() => setDetailId(u.id)}>
                 <div className="mtile-row1">
                   <div className="flex items-center gap-8 flex-wrap" style={{ minWidth: 0 }}>
-                    <strong>{u.member?.full_name ?? '—'}</strong>
+                    <MemberName member={u.member} />
                     {u.member && <RoleBadge role={churchDisplayRole(u.member.church_role)} />}
                   </div>
                   <span className="mtile-cta"><ChevronRightIcon /></span>
@@ -193,7 +195,12 @@ export default function SettingsPage() {
                 <div className="mtile-line">{u.email}</div>
                 <div className="mtile-line flex items-center gap-8 flex-wrap">
                   <span className={`badge ${accountRoleClass(u.account_role)}`}>{t(accountRoleKey(u.account_role))}</span>
-                  <span className={`badge ${accountStatusClass(u.status)}`}>{t(accountStatusKey(u.status))}</span>
+                  {/* Enabled is the normal state, so saying it on every tile is
+                      noise on a phone where room is the scarce thing. Only the
+                      exception is worth a badge. */}
+                  {u.status !== AccountStatus.Active && (
+                    <span className={`badge ${accountStatusClass(u.status)}`}>{t(accountStatusKey(u.status))}</span>
+                  )}
                   <span>{u.last_sign_in_at ? formatDateTime(u.last_sign_in_at) : t('settings.neverSignedIn')}</span>
                 </div>
               </div>
@@ -375,7 +382,7 @@ function AccountDetail({
   };
 
   return (
-    <div style={{ maxWidth: 720 }}>
+    <div className="page-narrow">
       {/* "View member profile" leaves this record and so belongs with back,
           not inside the record's own card. */}
       <BackBar
@@ -394,7 +401,7 @@ function AccountDetail({
       <div className="card">
         <EntityHeader
           avatar={<Avatar name={account.member?.full_name ?? null} size="lg" />}
-          title={account.member?.full_name}
+          title={<MemberName member={account.member} fallback={t('settings.thisAccount')} />}
           badges={
             <>
               <span className={`badge ${accountRoleClass(role)}`}>{t(accountRoleKey(role))}</span>
@@ -415,11 +422,9 @@ function AccountDetail({
             />
           </Field>
           <AccountRoleField value={role} onChange={setRole} />
-          <div className="hint" style={{ gridColumn: '1 / -1' }}>{t('settings.emailHint')}</div>
           <Field label={t('hall.label')}>
             <HallSelect value={hall} onChange={setHall} allowAll allLabel={t('hall.unlimited')} />
           </Field>
-          <div className="hint" style={{ gridColumn: '1 / -1' }}>{t('settings.hallHint')}</div>
           <div style={{ gridColumn: '1 / -1' }} className="flex-between" >
             <div style={{ background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 10, padding: '11px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
               <div>
@@ -472,7 +477,11 @@ function AccountDetail({
         <button className="btn danger" onClick={del}>{t('settings.deleteAccount')}</button>
       </div>
 
-      <div className="flex-between flex-wrap mt-16">
+      {/* Pinned to the foot of the viewport (`.detail-footer` in globals.css),
+          so Save is reachable from anywhere in a long form instead of only
+          after scrolling back down. It stays in the flow — sticky, not fixed —
+          so it can never sit on top of the last row of content. */}
+      <div className="detail-footer">
         <button className="btn ghost" onClick={onBack}>{t('common.cancel')}</button>
         <button className="btn" onClick={save} disabled={busy}>{busy ? t('common.saving') : t('settings.saveAccount')}</button>
       </div>
@@ -553,20 +562,23 @@ function AddAccountModal({
   return (
     <Modal title={t('settings.new.title')} onClose={onClose}>
       {err && <ErrorBanner message={err} />}
-      <p className="muted" style={{ margin: '0 0 14px', fontSize: 12.5, lineHeight: 1.6 }}>
-        {t('settings.new.intro')}
-      </p>
       <Field label={t('settings.linkMember')}>
-        <select value={memberId} onChange={(e) => pickMember(e.target.value)}>
-          <option value="">{t('settings.chooseMember')}</option>
-          {members
+        {/* Type-to-search, like every other member field (rule G4) — members
+            who already have an account are simply not in the list. */}
+        <Combobox
+          value={memberId}
+          onChange={pickMember}
+          options={members
             .filter((m) => !takenMembers.has(m.id))
-            .map((m) => (
-              <option key={m.id} value={m.id}>
-                {t('disc.memberOption', { name: m.full_name, role: t(roleKey(memberRole(m))) })}
-              </option>
-            ))}
-        </select>
+            .map((m) => ({
+              value: m.id,
+              label: m.full_name,
+              sub: m.english_name,
+              hint: t(roleKey(memberRole(m))),
+            }))}
+          placeholder={t('settings.chooseMember')}
+          ariaLabel={t('settings.linkMember')}
+        />
       </Field>
       <div className="form-row">
         <Field label={t('settings.emailFromMember')}>
@@ -580,7 +592,6 @@ function AddAccountModal({
         </Field>
         <AccountRoleField value={role} onChange={setRole} />
       </div>
-      <div className="hint" style={{ marginBottom: 14 }}>{t('settings.emailHint')}</div>
       <Field label={t('hall.label')}>
         <HallSelect value={hall} onChange={setHall} allowAll allLabel={t('hall.unlimited')} />
       </Field>

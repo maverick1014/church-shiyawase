@@ -4,14 +4,15 @@ import { useParams } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '@/lib/api';
 import { BrandLogo } from '@/components/BrandLogo';
-import { Field } from '@/components/ui';
+import { Field, MemberName } from '@/components/ui';
+import { useChurchProfile } from '@/lib/church';
 import { useT } from '@/lib/i18n';
 
 interface FormPair {
   id: string;
   form_token: string;
-  mentor?: { full_name: string };
-  trainee?: { full_name: string };
+  mentor?: { full_name: string; english_name: string | null };
+  trainee?: { full_name: string; english_name: string | null };
   program?: { name: string; total_days: number };
   progress: { day_number: number; completed: boolean }[];
 }
@@ -19,14 +20,16 @@ interface FormPair {
 export default function DailyFormPage() {
   const { token } = useParams<{ token: string }>();
   // Public link — no session, so this renders in the app default language.
+  // The church's name is data, not a translation, so the privacy line takes it
+  // as a {church} placeholder rather than baking it into three dictionaries.
   const t = useT();
+  const church = useChurchProfile();
   const [pair, setPair] = useState<FormPair | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [step, setStep] = useState<'form' | 'done'>('form');
 
   const [day, setDay] = useState<number>(1);
-  const [completed, setCompleted] = useState(true);
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -63,9 +66,14 @@ export default function DailyFormPage() {
   const submit = async () => {
     setSaving(true);
     try {
+      // Always complete. Submitting the day IS the claim that it was done —
+      // a mentor who has not done it simply does not open the form, and the
+      // "not completed" half of the old toggle was a way to fill in a day and
+      // still leave the chart saying nothing happened. Marking a day back to
+      // incomplete stays possible from the admin side.
       await api.post(`/discipleship/form/${token}/progress`, {
         day_number: day,
-        completed,
+        completed: true,
         notes: notes || undefined,
       });
       setStep('done');
@@ -83,7 +91,7 @@ export default function DailyFormPage() {
       <div className="flex-between" style={{ padding: '15px 20px', borderBottom: '1px solid var(--border)', background: 'var(--surface)', position: 'sticky', top: 0, zIndex: 2 }}>
         <div className="flex items-center gap-10 serif" style={{ fontWeight: 600, fontSize: 15 }}>
           <span style={{ width: 30, height: 30, borderRadius: 8, background: '#fff', display: 'grid', placeItems: 'center', flexShrink: 0, overflow: 'hidden', boxShadow: 'inset 0 0 0 1px rgba(0,0,0,.06)' }}>
-            <BrandLogo size={26} />
+            <BrandLogo size={26} church={church} />
           </span>
           {t('form.header')}
         </div>
@@ -108,10 +116,10 @@ export default function DailyFormPage() {
             <>
               <div className="flex items-center gap-10 flex-wrap" style={{ marginBottom: 4 }}>
                 <span className="badge b-brand">{t('disc.col.mentor')}</span>
-                <strong>{pair?.mentor?.full_name}</strong>
+                <MemberName member={pair?.mentor} fallback="" />
                 <span style={{ color: 'var(--accent)', fontWeight: 700 }}>➜</span>
                 <span className="badge b-accent">{t('disc.col.trainee')}</span>
-                <strong>{pair?.trainee?.full_name}</strong>
+                <MemberName member={pair?.trainee} fallback="" />
               </div>
               <div className="muted" style={{ fontSize: 12.5 }}>
                 {t('form.progressSummary', { done, total })}
@@ -137,16 +145,6 @@ export default function DailyFormPage() {
                   ))}
                 </select>
               </Field>
-              <Field label={t('form.completedLabel')}>
-                <div className="seg block">
-                  <button className={completed ? 'on-good' : ''} onClick={() => setCompleted(true)}>
-                    {t('disc.progress.completed')}
-                  </button>
-                  <button className={!completed ? 'on-crit' : ''} onClick={() => setCompleted(false)}>
-                    {t('form.notCompleted')}
-                  </button>
-                </div>
-              </Field>
               <Field label={t('form.notes')}>
                 <textarea rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder={t('form.notesPlaceholder')} />
               </Field>
@@ -157,7 +155,7 @@ export default function DailyFormPage() {
           )}
         </div>
         <div className="faint" style={{ marginTop: 18, fontSize: 12, textAlign: 'center', maxWidth: 460 }}>
-          {t('form.privacy')}
+          {t('form.privacy', { church: church?.name ?? '' })}
         </div>
       </div>
     </div>

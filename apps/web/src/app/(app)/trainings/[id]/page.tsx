@@ -6,23 +6,26 @@ import { useFetch } from '@/lib/hooks';
 import { useSortableRows } from '@/lib/sort';
 import { api } from '@/lib/api';
 import { usePageChrome, useMe } from '@/components/AppShell';
-import { BackButton, ErrorBanner, ExportButton, Field, LinkIcon, Modal, SkeletonCard, SkeletonScreen, SortTh, useConfirm, useToast } from '@/components/ui';
+import { BackButton, Combobox, ErrorBanner, ExportButton, Field, LinkIcon, MemberName, Modal, SheetTotals, SkeletonCard, SkeletonScreen, SortTh, useConfirm, useToast } from '@/components/ui';
 import { can } from '@/lib/perms';
 import { exportMatrix } from '@/lib/export';
 import { EnrollmentRow, MemberRow, NamelistResponse, SessionRow, TrainingDetail } from '@/lib/types';
 import {
-  categoryBadgeClass,
   enrollmentStatusClass,
   enrollmentStatusKey,
-  formatDate,
   formatDateTime,
+  formatMoney,
+  hasFee,
   memberRole,
   roleKey,
-  trainingCategoryLabel,
+  trainingKindClass,
+  trainingKindKey,
+  trainingMeta,
 } from '@/lib/labels';
+import { copyText } from '@/lib/clipboard';
 import { fromChurchInput, toChurchInput } from '@/lib/time';
 import { useT } from '@/lib/i18n';
-import { EnrollmentStatus } from '@tog/shared';
+import { EnrollmentStatus, TrainingKind } from '@tog/shared';
 import { TrainingModal } from '@/components/TrainingModal';
 
 export default function TrainingDetailPage() {
@@ -40,6 +43,8 @@ export default function TrainingDetailPage() {
   const [editOpen, setEditOpen] = useState(false);
   const [sessionOpen, setSessionOpen] = useState(false);
   const [editSession, setEditSession] = useState<SessionRow | null>(null);
+  /** The enrolment picker's own selection; cleared once the person is added. */
+  const [enrolPick, setEnrolPick] = useState('');
 
   // Hooks must run unconditionally on every render (rules of hooks) — this
   // has to sit above the loading/error early-returns below, not after them.
@@ -51,7 +56,15 @@ export default function TrainingDetailPage() {
       { key: 'name', dir: 'asc' },
     );
 
-  usePageChrome({ title: tr('training.title') }, [id, tr]);
+  // 培训&活动: the same page serves a course and a one-off activity. An
+  // activity's single session is plumbing (it is what the attendance sheet
+  // ticks), so nothing about it is shown as a "session list" — its date lives
+  // on the record itself and is edited in the activity form.
+  const isActivity = detail.data?.kind === TrainingKind.Activity;
+  usePageChrome(
+    { title: isActivity ? tr('training.activityTitle') : tr('training.title') },
+    [id, tr, isActivity],
+  );
 
   // Course header card over the sessions/roster pair — the same three boxes
   // the loaded page draws.
@@ -73,11 +86,27 @@ export default function TrainingDetailPage() {
 
   const t = detail.data;
   const pending = t.enrollments.filter((e) => e.status === EnrollmentStatus.Pending).length;
+  // Whether the review rows below have a receipt to offer at all (0016).
+  const paidCourse = hasFee(t.fee);
 
   // Real attendance rate for the enrolment-review bar: attended / total
   // sessions, read from the attendance sheet (only approved+ enrollees appear
   // there, so a pending enrollee correctly shows 0%).
   const sessionTotal = nl?.sessions.length ?? 0;
+
+  /**
+   * The foot of the namelist: how many PEOPLE turned up to each session —
+   * derived once and read by both the table and the export (rule G5). It is the
+   * same reading the other two roll-call sheets take: a namelist column is one
+   * occasion, and what a church wants from it is the headcount.
+   */
+  const sessionTotals = (nl?.sessions ?? []).map((s) => ({
+    key: s.id,
+    value: (nl?.rows ?? []).filter((r) =>
+      r.attendance.some((a) => a.session_id === s.id && a.attended),
+    ).length,
+  }));
+
   const attendanceOf = (memberId: string) => {
     const row = nl?.rows.find((r) => r.member.id === memberId);
     const attended = row ? row.attendance.filter((a) => a.attended).length : 0;
@@ -99,6 +128,7 @@ export default function TrainingDetailPage() {
 
   const enrollMember = async (memberId: string) => {
     if (!memberId) return;
+    setEnrolPick('');
     try {
       await api.post(`/trainings/${id}/enroll`, { member_id: memberId });
       detail.reload();
@@ -162,7 +192,7 @@ export default function TrainingDetailPage() {
 
   const del = async () => {
     const ok = await confirm({
-      title: tr('trainings.delete.title'),
+      title: isActivity ? tr('trainings.deleteActivity.title') : tr('trainings.delete.title'),
       message: tr('trainings.delete.message', { name: t.name }),
       confirmText: tr('common.delete'),
       danger: true,
@@ -170,7 +200,7 @@ export default function TrainingDetailPage() {
     if (!ok) return;
     try {
       await api.delete(`/trainings/${id}`);
-      toast(tr('trainings.toast.deleted'));
+      toast(isActivity ? tr('trainings.toast.activityDeleted') : tr('trainings.toast.deleted'));
       router.push('/trainings');
     } catch (e) {
       toast((e as Error).message, 'error');
@@ -183,16 +213,19 @@ export default function TrainingDetailPage() {
       tr('training.col.enrollee'),
       tr('export.role'),
       ...nl.sessions.map((s) =>
-        `${tr('export.session', { n: s.session_number })} ${s.title ?? ''}`.trim(),
+        isActivity
+          ? tr('training.col.attendedActivity')
+          : `${tr('export.session', { n: s.session_number })} ${s.title ?? ''}`.trim(),
       ),
-      tr('training.exportSessionCount'),
     ];
-    const matrix = sortedNamelist.map((r) => [
+    // Marks, then ONE totals row: how many people came to each session, which
+    // is the question a namelist is read to answer.
+    const matrix: (string | number)[][] = sortedNamelist.map((r) => [
       r.member.full_name,
       tr(roleKey(memberRole(r.member))),
       ...r.attendance.map((a) => (a.attended ? tr('training.legend.present') : tr('training.legend.absent'))),
-      r.attendance.filter((a) => a.attended).length,
     ]);
+    matrix.push([tr('sheet.totalPeople'), '', ...sessionTotals.map((x) => x.value)]);
     exportMatrix(
       tr('training.exportFile', { name: t.name }),
       tr('trainings.roster'),
@@ -201,12 +234,14 @@ export default function TrainingDetailPage() {
     );
   };
 
-  const copyEnrollLink = () => {
+  // Copy, and SAY so either way. Through `navigator.clipboard` alone a browser
+  // without the async API did nothing at all — no copy and no message — so the
+  // button read as broken (`lib/clipboard.ts` explains the fallback).
+  const copyEnrollLink = async () => {
     const link = `${window.location.origin}/enroll/${id}`;
-    navigator.clipboard?.writeText(link).then(
-      () => toast(tr('training.toast.linkCopied')),
-      () => toast(link),
-    );
+    const ok = await copyText(link);
+    if (ok) toast(tr('training.toast.linkCopied'));
+    else toast(tr('common.copyFailed', { link }), 'error');
   };
 
   return (
@@ -217,21 +252,21 @@ export default function TrainingDetailPage() {
         <div className="flex-between flex-wrap">
           <div>
             <div className="flex items-center gap-10 flex-wrap">
-              <span className={`badge ${categoryBadgeClass(t.category)}`}>
-                {trainingCategoryLabel(t.category, tr) || tr('trainings.defaultCategory')}
-              </span>
+              <span className={`badge ${trainingKindClass(t.kind)}`}>{tr(trainingKindKey(t.kind))}</span>
+              {hasFee(t.fee) && (
+                <span className="badge b-accent">
+                  {tr('trainings.fee', { amount: formatMoney(t.fee) })}
+                </span>
+              )}
               <span className={`badge ${t.is_enrollable ? 'b-good' : 'b-gray'}`}>
                 {t.is_enrollable ? tr('trainings.open') : tr('trainings.closed')}
               </span>
             </div>
             <h2 style={{ margin: '10px 0 3px', fontSize: 22 }} className="serif">{t.name}</h2>
-            <div className="muted" style={{ fontSize: 12.5 }}>
-              {tr('training.summary', {
-                trainer: t.trainer?.full_name ?? tr('common.pending'),
-                sessions: t.total_sessions,
-                from: formatDate(t.starts_on),
-                to: formatDate(t.ends_on),
-              })}
+            {/* Who is in charge, how to reach them, and when / where — the same
+                line the catalog card shows, built once (rules G4/G5). */}
+            <div className="muted" style={{ fontSize: 12.5, lineHeight: 1.7 }}>
+              {trainingMeta(t, tr).join(' · ')}
             </div>
           </div>
           <div className="flex gap-8">
@@ -241,13 +276,50 @@ export default function TrainingDetailPage() {
                 {tr('training.enrollLink')}
               </button>
             )}
-            {perms.write && <button className="btn ghost" onClick={() => setEditOpen(true)}>{tr('training.editCourse')}</button>}
+            {perms.write && (
+              <button className="btn ghost" onClick={() => setEditOpen(true)}>
+                {isActivity ? tr('training.editActivity') : tr('training.editCourse')}
+              </button>
+            )}
           </div>
         </div>
       </div>
 
-      <div className="grid g2 mt-16">
-        {/* Sessions */}
+      {/* 报名费 — shown only when there is one, and only as a reminder of what
+          the public page tells people: the amount, how to pay it and the QR.
+          It is EDITED in the same form as everything else (Edit above), so
+          there is one place a fee can be changed. */}
+      {hasFee(t.fee) && (
+        <div className="card mt-16">
+          <div className="card-head">
+            <div>
+              <h3>{tr('training.payment')}</h3>
+              <div className="muted" style={{ fontSize: 12.5, marginTop: 2 }}>{tr('training.paymentSub')}</div>
+            </div>
+            <span className="badge b-accent">{tr('trainings.fee', { amount: formatMoney(t.fee) })}</span>
+          </div>
+          <div className="flex gap-14 flex-wrap items-center">
+            {t.payment_qr_url && (
+              /* eslint-disable-next-line @next/next/no-img-element */
+              <img
+                src={t.payment_qr_url}
+                alt={tr('training.qrAlt')}
+                style={{ width: 120, height: 120, objectFit: 'contain', borderRadius: 10, border: '1px solid var(--border)', background: '#fff' }}
+              />
+            )}
+            {t.payment_instructions && (
+              <div className="muted" style={{ fontSize: 12.5, lineHeight: 1.8, whiteSpace: 'pre-wrap', minWidth: 200, flex: 1 }}>
+                {t.payment_instructions}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* An activity has ONE occasion and no session list, so it drops to a
+          single full-width card instead of leaving half the row empty. */}
+      <div className={isActivity ? 'mt-16' : 'grid g2 mt-16'}>
+        {!isActivity && (
         <div className="card">
           <div className="card-head">
             <h3>{tr('training.sessionList')}</h3>
@@ -278,6 +350,7 @@ export default function TrainingDetailPage() {
             <div className="empty-inline">{tr('training.noSessions')}</div>
           )}
         </div>
+        )}
 
         {/* Enrollment approval */}
         <div className="card">
@@ -289,14 +362,24 @@ export default function TrainingDetailPage() {
           </div>
           {perms.write && (
             <div className="flex gap-8 mb-14">
-              <select defaultValue="" onChange={(e) => { enrollMember(e.target.value); e.target.value = ''; }} style={{ flex: 1 }}>
-                <option value="">{tr('training.addEnrollee')}</option>
-                {(members.data ?? [])
+              {/* Type-to-search, like every other member field (rule G4).
+                  Picking somebody enrols them straight away and the field
+                  clears itself for the next one. */}
+              <Combobox
+                value={enrolPick}
+                onChange={enrollMember}
+                options={(members.data ?? [])
                   .filter((m) => !t.enrollments.some((e) => e.member_id === m.id))
-                  .map((m) => (
-                    <option key={m.id} value={m.id}>{m.full_name}</option>
-                  ))}
-              </select>
+                  .map((m) => ({
+                    value: m.id,
+                    label: m.full_name,
+                    sub: m.english_name,
+                    hint: tr(roleKey(memberRole(m))),
+                  }))}
+                placeholder={tr('training.addEnrollee')}
+                ariaLabel={tr('training.addEnrollee')}
+                style={{ flex: 1 }}
+              />
             </div>
           )}
           <div className="enrol-list">
@@ -305,7 +388,7 @@ export default function TrainingDetailPage() {
               return (
               <div key={e.id} className="enrol-row flex items-center gap-10" style={{ padding: '9px 0', borderBottom: '1px solid var(--border)' }}>
                 <div className="grow">
-                  <strong style={{ fontSize: 13 }}>{e.member?.full_name ?? '—'}</strong>
+                  <MemberName member={e.member} style={{ fontSize: 13 }} />
                   <div className="muted" style={{ fontSize: 11.5 }}>
                     {e.member ? tr(roleKey(memberRole(e.member))) : ''}
                   </div>
@@ -328,6 +411,29 @@ export default function TrainingDetailPage() {
                     overflow set the row's min-content — which propagated up
                     through the grid and scrolled the whole page sideways. */}
                 <div className="row-actions flex items-center gap-6">
+                  {/* The receipt, WHERE THE DECISION IS MADE: approving a paid
+                      sign-up means a person checked that the money arrived, so
+                      the slip opens from this row rather than another page.
+                      A paid course with no slip says so rather than staying
+                      silent — that enrolment predates the fee, or came in by
+                      hand, and the reviewer should know before approving. */}
+                  {paidCourse &&
+                    (e.payment_slip_url ? (
+                      <a
+                        className="btn ghost sm"
+                        style={{ flexShrink: 0 }}
+                        href={e.payment_slip_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title={tr('training.viewSlipTitle')}
+                      >
+                        {tr('training.viewSlip')}
+                      </a>
+                    ) : (
+                      <span className="badge b-warn" style={{ flexShrink: 0 }} title={tr('training.noSlipTitle')}>
+                        {tr('training.noSlip')}
+                      </span>
+                    ))}
                   <span className={`badge ${enrollmentStatusClass(e.status)}`} style={{ flexShrink: 0 }}>
                     {tr(enrollmentStatusKey(e.status))}
                   </span>
@@ -356,20 +462,28 @@ export default function TrainingDetailPage() {
         <div className="card-head">
           <div>
             <h3>{tr('training.namelist')}</h3>
-            <div className="muted" style={{ fontSize: 12.5, marginTop: 2 }}>{tr('training.namelistSub')}</div>
+            <div className="muted" style={{ fontSize: 12.5, marginTop: 2 }}>
+              {isActivity ? tr('training.namelistSubActivity') : tr('training.namelistSub')}
+            </div>
           </div>
           <ExportButton onClick={exportNamelist} disabled={!nl || nl.rows.length === 0} title={tr('training.exportTitle')} />
         </div>
         <div className="table-wrap">
-          <table>
+          <table className="sheet-table">
             <thead>
               <tr>
                 <SortTh sortKey="name" activeKey={nlSortKey} dir={nlSortDir} onSort={toggleNlSort}>{tr('training.col.enrollee')}</SortTh>
                 <SortTh sortKey="role" activeKey={nlSortKey} dir={nlSortDir} onSort={toggleNlSort}>{tr('members.col.role')}</SortTh>
                 {(nl?.sessions ?? []).map((s) => (
                   <th key={s.id} style={{ textAlign: 'center' }}>
-                    {tr('training.col.session', { n: s.session_number })}
-                    <br /><span style={{ fontWeight: 400 }}>{s.title ?? ''}</span>
+                    {isActivity
+                      ? tr('training.col.attendedActivity')
+                      : tr('training.col.session', { n: s.session_number })}
+                    {!isActivity && (
+                      <>
+                        <br /><span style={{ fontWeight: 400 }}>{s.title ?? ''}</span>
+                      </>
+                    )}
                   </th>
                 ))}
               </tr>
@@ -378,7 +492,7 @@ export default function TrainingDetailPage() {
               {sortedNamelist.map((r) => (
                 <tr key={r.member.id}>
                   <td style={{ whiteSpace: 'nowrap' }}>
-                    <strong>{r.member.full_name}</strong>
+                    <MemberName member={r.member} />
                   </td>
                   <td className="muted" style={{ whiteSpace: 'nowrap' }}>{tr(roleKey(memberRole(r.member)))}</td>
                   {r.attendance.map((a) => (
@@ -402,6 +516,11 @@ export default function TrainingDetailPage() {
                 </tr>
               )}
             </tbody>
+            {/* Only once somebody is on the list: an empty namelist shows its
+                empty row and no footer, the same way the other two sheets draw
+                no table at all when nobody is on them. The label spans the two
+                leading columns (name + role). */}
+            {sortedNamelist.length > 0 && <SheetTotals span={2} counts={sessionTotals} />}
           </table>
         </div>
         <div className="flex gap-12 flex-wrap muted mt-14" style={{ fontSize: 12 }}>
@@ -412,13 +531,19 @@ export default function TrainingDetailPage() {
 
       {editOpen && (
         <TrainingModal
-          members={members.data ?? []}
           initial={t}
           onClose={() => setEditOpen(false)}
-          onSaved={() => {
+          onSaved={(saved) => {
             setEditOpen(false);
             detail.reload();
-            toast(tr('trainings.toast.updated'));
+            // A conversion changes which shape this page is showing, so the
+            // namelist (one column or several) has to be re-read too.
+            namelist.reload();
+            toast(
+              saved.kind === TrainingKind.Activity
+                ? tr('trainings.toast.activityUpdated')
+                : tr('trainings.toast.updated'),
+            );
           }}
           onDelete={perms.delete ? del : undefined}
         />

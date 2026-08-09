@@ -1,4 +1,4 @@
-import { getDb, HttpError, json, unwrap } from '@/lib/server/db';
+import { getDb, HttpError, json, unwrap, unwrapWrite } from '@/lib/server/db';
 import {
   clearCookie,
   getSession,
@@ -7,8 +7,39 @@ import {
   signSession,
   verifyPassword,
 } from '@/lib/server/auth';
-import { CHURCH_TZ_OFFSET, churchParts } from '@/lib/time';
-import { LANGUAGES, normalizeLanguage } from '@tog/shared';
+import { churchInstant, churchParts, isSundayDate } from '@/lib/time';
+import {
+  meetingColumnKey,
+  parseColumnKey,
+  sheetColumns,
+  sundayColumnKey,
+} from '@/lib/sheet';
+import type { SheetCell, SheetMeeting } from '@/lib/types';
+import {
+  IMPORT_COLUMNS,
+  MAX_IMPORT_ROWS,
+  planImport,
+  type ImportContext,
+  type ImportIssue,
+  type ImportRow,
+  type PlannedRow,
+} from '@/lib/members-import';
+import {
+  ChurchRole,
+  isOptionalModule,
+  isTrainingKind,
+  isUsableBrand,
+  isUsableRail,
+  LANGUAGES,
+  MIN_BRAND_CONTRAST,
+  MIN_RAIL_CONTRAST,
+  moduleForApiPath,
+  normalizeHexColor,
+  normalizeLanguage,
+  OPTIONAL_MODULES,
+  themePreset,
+  TrainingKind,
+} from '@tog/shared';
 
 /**
  * The whole REST API, ported from the NestJS app into a single Cloudflare
@@ -25,14 +56,33 @@ export const revalidate = 0;
 export const fetchCache = 'force-no-store';
 
 const MEMBER_SELECT = '*, group:groups(id,name), household:households(id,name), hall:halls(id,name)';
-const MEMBER_BRIEF = 'id,full_name,church_role,group_position';
-const ACCOUNT_MEMBER_BRIEF = 'id,full_name,email,church_role,group_position';
+/**
+ * A person, everywhere a name is only shown: the CHINESE name and the English
+ * one under it (0018). Both travel together in every brief, because every list,
+ * tile and roll-call row draws them as one thing (`<MemberName />`) — a payload
+ * that carried only `full_name` would silently render half a person.
+ */
+const MEMBER_BRIEF = 'id,full_name,english_name,church_role,group_position';
+const ACCOUNT_MEMBER_BRIEF = 'id,full_name,english_name,email,church_role,group_position';
 const PAIR_SELECT =
-  '*, mentor:members!discipleship_pairs_mentor_id_fkey(id,full_name,church_role,group_position), trainee:members!discipleship_pairs_trainee_id_fkey(id,full_name,church_role,group_position)';
+  `*, mentor:members!discipleship_pairs_mentor_id_fkey(${MEMBER_BRIEF}), trainee:members!discipleship_pairs_trainee_id_fkey(${MEMBER_BRIEF})`;
 /** Same shape, but an !inner mentor join so a hall filter can be pushed down. */
 const PAIR_SELECT_SCOPED =
-  '*, mentor:members!discipleship_pairs_mentor_id_fkey!inner(id,full_name,church_role,group_position), trainee:members!discipleship_pairs_trainee_id_fkey(id,full_name,church_role,group_position)';
+  `*, mentor:members!discipleship_pairs_mentor_id_fkey!inner(${MEMBER_BRIEF}), trainee:members!discipleship_pairs_trainee_id_fkey(${MEMBER_BRIEF})`;
 const ACCOUNT_SELECT = `*, member:members(${ACCOUNT_MEMBER_BRIEF}), hall:halls(id,name)`;
+
+/**
+ * One value inside a PostgREST `or(…)` filter, quoted.
+ *
+ * `or` takes a comma-separated list in a single string, so an unquoted value
+ * that contains a comma or a parenthesis does not search for those characters —
+ * it adds conditions of its own. Anything that comes from a REQUEST goes
+ * through here (a search term does; a uuid this file just read does not), with
+ * `"` and `\` escaped so the quoting itself cannot be closed early.
+ */
+function orValue(raw: string): string {
+  return `"${raw.replace(/["\\]/g, '\\$&')}"`;
+}
 
 async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Response> {
   const { path } = await ctx.params;
@@ -63,25 +113,46 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
     return json({ build: process.env.NEXT_PUBLIC_BUILD_ID ?? 'dev' });
   }
 
-  // Public-by-design, no session: the mentor daily form (/d/<token>) and the
-  // training self-enrollment form (/enroll/<id>). Both are narrow, specific
-  // handlers below — nothing else under these prefixes is reachable unauthed.
+  // Public-by-design, no session: the mentor daily form (/d/<token>), the
+  // training self-enrollment form (/enroll/<id>), the member self-registration
+  // form (/join), and the church's own name/description/logo — which the login
+  // card and all of those forms have to render before anyone has signed in,
+  // and none of which is sensitive. Each is a narrow, specific handler below;
+  // nothing else under these prefixes is reachable unauthed, and /church is
+  // public for GET ONLY — changing the record stays super_admin (see the role
+  // gate below). `/members/register` is likewise the ONLY public member path:
+  // it is two methods on one exact path, never a prefix, so nothing else under
+  // /members is opened by it.
   const isPublicForm =
-    (r0 === 'discipleship' && r1 === 'form') || (r0 === 'trainings' && r1 === 'enroll');
+    (r0 === 'discipleship' && r1 === 'form') ||
+    (r0 === 'trainings' && r1 === 'enroll') ||
+    (r0 === 'members' && r1 === 'register' && !r2 && (method === 'GET' || method === 'POST')) ||
+    (r0 === 'church' && !r1 && method === 'GET');
 
   // Hall scope for this request. `null` = 全堂权限 (sees and may write every
   // hall). A non-null value pins the account to one hall: reads are filtered
   // to it and writes are forced onto it, server-side — the client never gets
   // to choose (rule G2: the server is authoritative).
   let hallScope: string | null = null;
+  // The account's permission role, for the handful of paths whose rule is more
+  // than "may this role write at all" — a bulk import is one (see /members/
+  // import). Null on the public forms, which have no account behind them.
+  let sessionRole: string | null = null;
   if (!isPublicForm) {
     const session = await getSession(req);
     if (!session) throw new HttpError(401, 'Not signed in');
     hallScope = session.hall ?? null;
+    sessionRole = session.role;
     // Login accounts (emails, roles, sign-in history) are super_admin-only —
     // for reads as well as writes (rule G2), so the account list never leaks.
     if (r0 === 'accounts' && session.role !== 'super_admin')
       throw new HttpError(403, 'Only a super admin may manage login accounts');
+    // The church record and the module catalog are readable by any signed-in
+    // account (the shell renders the name and needs to know which nav entries
+    // exist), but only a super admin may CHANGE either — the same split the
+    // 教会设置 page renders (rule G2).
+    if (r0 === 'church' && method !== 'GET' && session.role !== 'super_admin')
+      throw new HttpError(403, 'Only a super admin may change church settings');
     if (method !== 'GET') {
       // Permission matrix enforcement.
       if (session.role === 'readonly') throw new HttpError(403, 'A read-only account cannot make changes');
@@ -89,6 +160,29 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
         throw new HttpError(403, 'This role may not delete records');
     }
   }
+
+  // ---- Module enablement ----------------------------------------------------
+  // The third dimension of access control, beside role and hall: a church may
+  // not run every module (四十天守望 is an add-on). Hiding the nav entry is
+  // only the UX half — a path owned by a module this church has switched off
+  // is refused HERE, so a bookmark, a stale tab or a hand-rolled request gets
+  // nothing either (rule G2).
+  //
+  // Deliberately outside the session block above, so it covers the PUBLIC
+  // mentor form too: switching the module off has to close its links as well,
+  // or a mentor's daily form would outlive the feature it belongs to. It is
+  // below `authRoute` (which returns earlier) and `moduleForApiPath` answers
+  // null for /church, /auth and every core path, so signing in, reading the
+  // church record and reaching the catalog can never be gated by it.
+  //
+  // 404 rather than 403 on purpose: a disabled module is not "you may not" —
+  // no role, hall or session can reach it, because for this church the
+  // feature does not exist. That is what "not found" means, it matches the
+  // fall-through at the bottom of dispatch(), and it keeps a public token URL
+  // from distinguishing "wrong token" from "module switched off".
+  const gatedModule = moduleForApiPath(p);
+  if (gatedModule && !(await moduleEnabled(db, gatedModule)))
+    throw new HttpError(404, `The ${gatedModule} module is not enabled for this church`);
 
   /**
    * The hall this request's list reads are narrowed to — `null` = 全部堂会
@@ -181,8 +275,144 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
     return json(unwrap(await query));
   }
 
+  // ---- Church record & module catalog ---------------------------------------
+  // The church's identity (name / description / logo) and which optional
+  // modules it runs. `GET /church` is public — see `isPublicForm` above; every
+  // write here is super_admin-only, enforced in the gate rather than repeated
+  // per handler.
+  if (r0 === 'church') {
+    if (!r1) {
+      if (method === 'GET') {
+        // Deliberately only the public fields, not the whole row: this one
+        // answers without a session. The theme is among them because the
+        // login card and both public forms are painted in the church's
+        // colours before anyone signs in — and a colour is not a secret.
+        const c = await churchRow(db);
+        return json({
+          name: c.name,
+          short_name: c.short_name,
+          description: c.description,
+          logo_url: c.logo_url,
+          theme_preset: c.theme_preset,
+          theme_rail: c.theme_rail,
+          theme_brand: c.theme_brand,
+        });
+      }
+      if (method === 'PATCH') {
+        const c = await churchRow(db);
+        return json(
+          unwrap(
+            await db
+              .from('church')
+              .update(churchWrite(await body()))
+              .eq('id', c.id)
+              .select(CHURCH_SELECT)
+              .single(),
+          ),
+        );
+      }
+    } else if (r1 === 'logo' && method === 'POST') {
+      // Same mechanism as a member's photo (`/members/:id/avatar`): the file
+      // goes through this service-role handler into a public bucket and the
+      // resulting URL is stored on the row.
+      const c = await churchRow(db);
+      const form = await req.formData();
+      const file = checkedFile(form.get('file'), IMAGE_UPLOAD);
+      const url = await storeFile(db, 'branding', `${c.id}/${Date.now()}.${fileExt(file, 'png')}`, file);
+      return json(
+        unwrap(
+          await db
+            .from('church')
+            .update({ logo_url: url })
+            .eq('id', c.id)
+            .select(CHURCH_SELECT)
+            .single(),
+        ),
+      );
+    } else if (r1 === 'modules') {
+      // Every signed-in account reads this — the nav has to know which entries
+      // exist before it can render itself.
+      if (!r2 && method === 'GET') return json(await moduleStates(db));
+      if (r2 && !r3 && method === 'PATCH') {
+        // A key that is not in the code registry is rejected outright rather
+        // than inserted: `church_modules` must never hold a row for a feature
+        // this build does not ship.
+        if (!isOptionalModule(r2)) throw new HttpError(400, `Unknown module: ${r2}`);
+        const enabled = (await body()).enabled;
+        if (typeof enabled !== 'boolean') throw new HttpError(400, 'enabled must be true or false');
+        const c = await churchRow(db);
+        const row = unwrap<{ module: string; enabled: boolean }>(
+          await db
+            .from('church_modules')
+            .upsert({ church_id: c.id, module: r2, enabled }, { onConflict: 'church_id,module' })
+            .select('module,enabled')
+            .single(),
+        );
+        return json({ key: row.module, enabled: row.enabled });
+      }
+    }
+  }
+
   // ---- Members --------------------------------------------------------------
   if (r0 === 'members') {
+    // The two NAMED sub-paths come first, and each ends in a return or a 404,
+    // so neither word can ever reach the id-addressed branches below: a
+    // `DELETE /members/import` must be "no such route", not a delete addressed
+    // by the word "import".
+    //
+    // /members/register — PUBLIC self-registration (no session; see the
+    // isPublicForm gate above). The church hands out one link and people fill
+    // in their own details instead of somebody typing them off a paper slip.
+    //
+    // What this path CAN do, deliberately and exhaustively: add one member
+    // carrying a name pair, a phone, an email, a gender, a birthday, a
+    // congregation and one photo — or, when that pair is already on the roll,
+    // update those same contact details on that one row. What it CANNOT do:
+    // set a church role (every registration is an ordinary member), a status,
+    // a life group, a group position or notes — the fields are read by name
+    // from an allow-list, so a body carrying `church_role: 'pastor'` has it
+    // ignored rather than obeyed; touch anyone but the single person whose
+    // name pair was typed; or read anything back — the answer is one word,
+    // the same shape either way, and never a member's stored data.
+    if (r1 === 'register' && !r2) {
+      if (method === 'GET') {
+        // The form's own bootstrap. A public page cannot call /halls (that
+        // needs a session), and it must offer the real congregations rather
+        // than a free-text box nobody can match later. Id + name only.
+        return json({
+          halls: unwrap(await db.from('halls').select('id,name').order('sort_order')),
+        });
+      }
+      if (method === 'POST') return json(await registerMember(db, req));
+      throw new HttpError(404, `No route for ${method} /api/${p.join('/')}`);
+    }
+    // /members/import — a spreadsheet of members, matched on the name pair.
+    if (r1 === 'import' && !r2) {
+      if (method !== 'POST') throw new HttpError(404, `No route for ${method} /api/${p.join('/')}`);
+      // One request that creates and overwrites people in bulk is a bigger
+      // thing than editing one member, so it is held to the same bar as a
+      // delete: super_admin / admin only. `readonly` is already refused by the
+      // gate above; this is what keeps a coworker's mistyped file from
+      // rewriting the whole roll (rule G2 — the button is hidden for the same
+      // roles, but the server is what decides).
+      if (!['super_admin', 'admin'].includes(sessionRole ?? ''))
+        throw new HttpError(403, 'Only an administrator may import members');
+      const dto = await body();
+      const rows = Array.isArray(dto.rows) ? dto.rows : null;
+      if (!rows || rows.length === 0)
+        throw new HttpError(400, 'rows must be a non-empty list of member rows');
+      if (rows.length > MAX_IMPORT_ROWS)
+        throw new HttpError(
+          400,
+          `An import may carry at most ${MAX_IMPORT_ROWS} rows — split the file and import it in parts`,
+        );
+      const ctx = await importContext(db, hallScope, dto.hall_id);
+      // The client previewed this same plan in the browser; it is computed
+      // again HERE, against the database as it is right now, because that
+      // preview is a courtesy and this is the decision (rule G2).
+      const plan = planImport(rows.map(incomingImportRow), ctx);
+      return json(await applyImport(db, plan));
+    }
     if (!r1) {
       if (method === 'GET') {
         let query = db
@@ -193,7 +423,15 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
         if (q.get('church_role')) query = query.eq('church_role', q.get('church_role'));
         if (q.get('group_position')) query = query.eq('group_position', q.get('group_position'));
         if (q.get('group_id')) query = query.eq('group_id', q.get('group_id'));
-        if (q.get('q')) query = query.ilike('full_name', `%${q.get('q')}%`);
+        // Either name finds a person (0018): somebody who is filed as 陈约翰
+        // is looked for as "John" just as often. The term is quoted, so a
+        // comma or a parenthesis in it stays part of the search rather than
+        // becoming another PostgREST filter.
+        const term = q.get('q');
+        if (term)
+          query = query.or(
+            `full_name.ilike.${orValue(`%${term}%`)},english_name.ilike.${orValue(`%${term}%`)}`,
+          );
         return json(unwrap(await query));
       }
       if (method === 'POST') {
@@ -205,30 +443,20 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
         unwrap(
           await db
             .from('training_enrollments')
-            .select('*, training:trainings(id,name,category,total_sessions)')
+            .select('*, training:trainings(id,name,total_sessions)')
             .eq('member_id', r1)
             .order('enrolled_at', { ascending: false }),
         ),
       );
     } else if (r2 === 'avatar' && method === 'POST') {
       const form = await req.formData();
-      const file = form.get('file');
-      if (!(file instanceof File)) throw new HttpError(400, 'No file uploaded');
-      if (!(file.type || '').startsWith('image/')) throw new HttpError(400, 'Only image files are supported');
-      if (file.size > 5 * 1024 * 1024) throw new HttpError(400, 'The image must be 5MB or smaller');
-      const ext = (file.name.split('.').pop() || 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
-      const path = `${r1}/${Date.now()}.${ext}`;
-      const bytes = new Uint8Array(await file.arrayBuffer());
-      const up = await db.storage
-        .from('avatars')
-        .upload(path, bytes, { contentType: file.type || 'image/jpeg', upsert: true });
-      if (up.error) throw new HttpError(500, up.error.message);
-      const { data: pub } = db.storage.from('avatars').getPublicUrl(path);
+      const file = checkedFile(form.get('file'), IMAGE_UPLOAD);
+      const url = await storeFile(db, 'avatars', `${r1}/${Date.now()}.${fileExt(file, 'jpg')}`, file);
       return json(
         unwrap(
           await db
             .from('members')
-            .update({ avatar_url: pub.publicUrl })
+            .update({ avatar_url: url })
             .eq('id', r1)
             .select()
             .single(),
@@ -253,17 +481,45 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
     }
   }
 
+  /**
+   * A group meeting's hall is its GROUP's hall — `group_meetings` carries no
+   * hall column of its own, the same shape a 守望配对 has. Used for the roll
+   * call and for deleting a meeting, so a hall-pinned account cannot reach
+   * another congregation's group through a meeting id (rule G2).
+   *
+   * It resolves the group and then defers to `assertOwnsRow`, rather than
+   * re-rolling the comparison off an embedded join: the hall check stays in
+   * one place, and there is no ambiguous-relationship shape to get wrong.
+   */
+  const assertGroupMeetingWritable = async (meetingId: string) => {
+    if (!hallScope) return;
+    const row = unwrap<{ group_id: string }>(
+      await db.from('group_meetings').select('group_id').eq('id', meetingId).single(),
+    );
+    await assertOwnsRow('groups', row.group_id);
+  };
+
   // ---- Groups ---------------------------------------------------------------
   if (r0 === 'groups') {
     // /groups/meetings/:meetingId ...
     if (r1 === 'meetings' && r2) {
+      // The life-group roll call. `records` is a LIST by design — one tick is
+      // a list of one, and the column header's 全员到齐 shortcut sends the
+      // whole roster in the same call, so the two can never diverge (the same
+      // reasoning as `member_ids` on the services sheet above).
       if (r3 === 'attendance' && method === 'POST') {
+        await assertGroupMeetingWritable(r2);
         const dto = await body();
-        const records = (dto.records as Array<Record<string, unknown>>).map((r) => ({
-          meeting_id: r2,
-          member_id: r.member_id,
-          status: r.status ?? 'present',
-        }));
+        const list = Array.isArray(dto.records) ? (dto.records as Array<Record<string, unknown>>) : null;
+        if (!list || list.length === 0)
+          throw new HttpError(400, 'records must be a non-empty list of { member_id, status }');
+        if (list.length > 1000)
+          throw new HttpError(400, 'Too many records in one write — 1000 at most');
+        const records = list.map((r) => {
+          const memberId = String(r.member_id ?? '');
+          if (!memberId) throw new HttpError(400, 'every record needs a member_id');
+          return { meeting_id: r2, member_id: memberId, status: r.status ?? 'present' };
+        });
         return json(
           unwrap(
             await db
@@ -274,6 +530,7 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
         );
       }
       if (!r3 && method === 'DELETE') {
+        await assertGroupMeetingWritable(r2);
         unwrap(await db.from('group_meetings').delete().eq('id', r2).select().single());
         return json({ id: r2 });
       }
@@ -289,6 +546,9 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
       await assertRowReadable('groups', r1);
       return json(await groupAttendance(db, r1));
     } else if (r2 === 'meetings' && method === 'POST') {
+      // The roll call creates the week's meeting row lazily, so this is a
+      // write into the group and follows the same hall rule as editing it.
+      await assertOwnsRow('groups', r1);
       const dto = await body();
       return json(
         unwrap(
@@ -308,7 +568,7 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
         const members = unwrap(
           await db
             .from('members')
-            .select('id,full_name,group_position,status')
+            .select('id,full_name,english_name,group_position,status')
             .eq('group_id', r1)
             .order('full_name'),
         );
@@ -328,11 +588,177 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
     }
   }
 
-  // ---- Events ---------------------------------------------------------------
+  // ---- 聚会点名 (the roll-call sheet) ----------------------------------------
+  // ONE grid per month: that month's Sundays (`sunday_attendance`, migration
+  // 0013) and the meetings someone genuinely added for it (`events` /
+  // `event_attendance`), in date order. Nothing creates a Sunday — the
+  // calendar already has them — and a meeting's own column appears the moment
+  // the meeting does.
+  //
+  // The two tables are this handler's business, never the page's: the read
+  // hands out an opaque `key` per column and the write resolves it here
+  // (`parseColumnKey`), so a tick lands in the right table without the client
+  // knowing there are two.
+  if (r0 === 'attendance' && r1 === 'sheet' && !r2) {
+    if (method === 'GET') {
+      // Which month, defaulting to Malaysia's own calendar month — on a UTC
+      // Worker the first 8 hours of a new month still read as the old one.
+      const nowParts = churchParts(new Date());
+      const year = Number(q.get('year')) || nowParts.year;
+      const month = Number(q.get('month')) || nowParts.month;
+      if (!Number.isInteger(year) || year < 1970 || year > 9999)
+        throw new HttpError(400, 'year must be a four-digit year');
+      if (!Number.isInteger(month) || month < 1 || month > 12)
+        throw new HttpError(400, 'month must be a number from 1 to 12');
+      // `hallFilter` may be null — 全部堂会 lists every congregation's members
+      // in one sheet. A tick still records WHICH congregation the person was
+      // counted in; it is read off the member's own hall when it is written.
+      return json(await rollCallSheet(db, hallFilter, year, month));
+    }
+    // ONE cell, or one whole column, through the SAME call.
+    //
+    // `member_ids` is the general shape and `member_id` its singular alias: a
+    // single tick is a list of one, and the header's 全员到齐 shortcut is the
+    // list of everybody on the sheet. Making the list the shape — rather than
+    // adding a second "bulk" endpoint — is what guarantees the shortcut can
+    // never drift from the single tick: same column resolution, same hall rule,
+    // same gate, same delete-instead-of-false. Thirteen members × two ticks ×
+    // five Sundays is 130 round trips otherwise, on a phone, over a mobile
+    // link.
+    if (method === 'PUT') {
+      const dto = await body();
+      const column = parseColumnKey(String(dto.column ?? ''));
+      if (!column)
+        throw new HttpError(400, `Unknown sheet column: ${String(dto.column ?? '')}`);
+      const asked = Array.isArray(dto.member_ids)
+        ? dto.member_ids
+        : dto.member_id !== undefined
+          ? [dto.member_id]
+          : [];
+      const memberIds = [...new Set(asked.map((v) => String(v ?? '')).filter(Boolean))];
+      if (memberIds.length === 0)
+        throw new HttpError(400, 'member_id (or a non-empty member_ids) is required');
+      // A sheet is one congregation's active members; anything an order of
+      // magnitude past that is a malformed request, not a roll call.
+      if (memberIds.length > 1000)
+        throw new HttpError(400, 'Too many members in one write — 1000 at most');
+
+      // Whose cells — and, for a Sunday, which congregation each tick is filed
+      // under. The member's OWN hall decides that (never a client-sent
+      // hall_id), and a hall-pinned account may only tick its own hall's
+      // members, exactly like every other write (rule G2). Read once for the
+      // whole list, so a column of thirteen is still one lookup.
+      const members = unwrap<Array<{ id: string; hall_id: string }>>(
+        await db.from('members').select('id,hall_id').in('id', memberIds),
+      );
+      if (members.length !== memberIds.length)
+        throw new HttpError(400, 'One of those members does not exist');
+      if (hallScope && members.some((m) => m.hall_id !== hallScope))
+        throw new HttpError(403, 'No permission to modify another congregation’s records');
+
+      if (column.kind === 'sunday') {
+        const serviceDate = column.date;
+        // Postgres would refuse this too (the sunday_attendance_is_sunday
+        // check), but a constraint name is not an answer anybody can act on.
+        if (!isSundayDate(serviceDate))
+          throw new HttpError(400, `${serviceDate} is not a Sunday — only Sundays belong on a Sunday column`);
+        const preService = dto.pre_service === true;
+        const service = dto.service === true;
+        const cell: SheetCell = { pre_service: preService, service };
+        // Both ticks off means "not recorded", which is what NO ROW already
+        // means — and the table's not-empty check forbids storing it. So an
+        // untick deletes rather than writing an empty row.
+        if (!preService && !service) {
+          // Grouped by the hall each member actually belongs to, exactly as a
+          // single untick is: on 全部堂会 the list spans congregations, and
+          // someone who moved mid-year can hold a row in each — clearing one
+          // must never reach the other.
+          const byHall = new Map<string, string[]>();
+          for (const m of members) {
+            const ids = byHall.get(m.hall_id);
+            if (ids) ids.push(m.id);
+            else byHall.set(m.hall_id, [m.id]);
+          }
+          for (const [hallId, ids] of byHall) {
+            unwrap(
+              await db
+                .from('sunday_attendance')
+                .delete()
+                .eq('hall_id', hallId)
+                .eq('service_date', serviceDate)
+                .in('member_id', ids)
+                .select('id'),
+            );
+          }
+        } else {
+          unwrap(
+            await db
+              .from('sunday_attendance')
+              .upsert(
+                members.map((m) => ({
+                  hall_id: m.hall_id,
+                  service_date: serviceDate,
+                  member_id: m.id,
+                  pre_service: preService,
+                  service,
+                })),
+                { onConflict: 'hall_id,service_date,member_id' },
+              )
+              .select('id'),
+          );
+        }
+        return json({
+          column: sundayColumnKey(serviceDate),
+          member_ids: memberIds,
+          count: memberIds.length,
+          ...cell,
+        });
+      }
+
+      // A meeting column. `assertRowReadable` rather than `assertOwnsRow`: a
+      // 全堂开放 meeting (hall_id is null) belongs to no single hall and every
+      // congregation rolls its own people on it.
+      await assertRowReadable('events', column.eventId);
+      const attended = dto.attended === true;
+      if (attended) {
+        unwrap(
+          await db
+            .from('event_attendance')
+            .upsert(
+              memberIds.map((id) => ({ event_id: column.eventId, member_id: id, status: 'present' })),
+              { onConflict: 'event_id,member_id' },
+            )
+            .select('id'),
+        );
+      } else {
+        // Same rule as a Sunday: an untick removes the row, so "no row" keeps
+        // meaning "nothing was recorded" rather than "was not there".
+        unwrap(
+          await db
+            .from('event_attendance')
+            .delete()
+            .eq('event_id', column.eventId)
+            .in('member_id', memberIds)
+            .select('id'),
+        );
+      }
+      return json({
+        column: meetingColumnKey(column.eventId),
+        member_ids: memberIds,
+        count: memberIds.length,
+        attended,
+      });
+    }
+  }
+
+  // ---- Events (the meetings someone adds by hand) ----------------------------
+  // A row here is one occasion with a name, a date and a congregation. It gets
+  // its own column on that month's roll-call sheet above, which is also where
+  // its attendance is ticked — deleting it takes those ticks with it
+  // (`event_attendance.event_id` is `on delete cascade`).
   if (r0 === 'events') {
     if (!r1) {
       if (method === 'GET') {
-        await ensureRecurringEvents(db);
         let query = db
           .from('events')
           .select('*, hall:halls(id,name)')
@@ -345,32 +771,12 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
       }
       if (method === 'POST')
         return json(unwrap(await db.from('events').insert(withHall(await body())).select().single()));
-    } else if (r2 === 'attendance' && method === 'POST') {
-      const dto = await body();
-      const records = (dto.records as Array<Record<string, unknown>>).map((r) => ({
-        event_id: r1,
-        member_id: r.member_id,
-        status: r.status ?? 'present',
-        notes: r.notes ?? null,
-      }));
-      return json(
-        unwrap(
-          await db.from('event_attendance').upsert(records, { onConflict: 'event_id,member_id' }).select(),
-        ),
-      );
     } else if (!r2) {
       if (method === 'GET') {
         await assertRowReadable('events', r1);
-        const event = unwrap<Record<string, unknown>>(
-          await db.from('events').select('*, hall:halls(id,name)').eq('id', r1).single(),
+        return json(
+          unwrap(await db.from('events').select('*, hall:halls(id,name)').eq('id', r1).single()),
         );
-        const attendance = unwrap(
-          await db
-            .from('event_attendance')
-            .select('*, member:members(id,full_name,church_role,group_position)')
-            .eq('event_id', r1),
-        );
-        return json({ ...event, attendance });
       }
       if (method === 'PATCH') {
         const dto = await body();
@@ -386,42 +792,6 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
     }
   }
 
-  // ---- Recurring events (循环聚会) -------------------------------------------
-  // Schedules that top up the events calendar. Hall-scoped exactly like the
-  // events they generate; deleting a rule keeps its past events (the FK is
-  // `on delete set null`), it only stops future generation.
-  if (r0 === 'recurring-events') {
-    if (!r1) {
-      if (method === 'GET') {
-        let query = db
-          .from('recurring_events')
-          .select('*, hall:halls(id,name)')
-          .order('created_at');
-        // Same rule as the events they generate: own hall + every 全堂 rule.
-        if (hallFilter) query = query.or(`hall_id.eq.${hallFilter},hall_id.is.null`);
-        return json(unwrap(await query));
-      }
-      if (method === 'POST')
-        return json(
-          unwrap(await db.from('recurring_events').insert(withHall(await body())).select().single()),
-        );
-    } else if (!r2) {
-      if (method === 'PATCH') {
-        const dto = await body();
-        assertHallWritable(dto);
-        await assertOwnsRow('recurring_events', r1);
-        return json(
-          unwrap(await db.from('recurring_events').update(dto).eq('id', r1).select().single()),
-        );
-      }
-      if (method === 'DELETE') {
-        await assertOwnsRow('recurring_events', r1);
-        unwrap(await db.from('recurring_events').delete().eq('id', r1).select().single());
-        return json({ id: r1 });
-      }
-    }
-  }
-
   // ---- Trainings ------------------------------------------------------------
   if (r0 === 'trainings') {
     // /trainings/enroll/:id — PUBLIC self-enrollment (no session; see the
@@ -430,31 +800,72 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
     // tell them to contact the pastor (never auto-create a member — avoids
     // duplicates).
     if (r1 === 'enroll' && r2) {
-      const training = unwrap<{
-        id: string;
-        name: string;
-        category: string | null;
-        is_enrollable: boolean;
-        total_sessions: number;
-      }>(
-        await db
-          .from('trainings')
-          .select('id,name,category,is_enrollable,total_sessions')
-          .eq('id', r2)
-          .single(),
+      const training = unwrap<PublicTraining>(
+        await db.from('trainings').select(PUBLIC_TRAINING_SELECT).eq('id', r2).single(),
       );
-      if (method === 'GET') {
+      // GET /trainings/enroll/:id/check?name=… — the SAME verdict the POST
+      // below would reach, without writing anything. The form calls it while
+      // the visitor types, so a name that will not match is said so on the spot
+      // instead of after the receipt has been attached and the button pressed.
+      //
+      // It answers with a status and, at most, the matched member's own name
+      // (which the visitor just typed) — never a list, never an id. That is
+      // strictly less than the POST already tells the same anonymous caller,
+      // so it opens nothing new.
+      if (r3 === 'check' && method === 'GET') {
+        const name = (q.get('name') ?? '').trim();
+        if (!training.is_enrollable) return json({ status: 'closed' });
+        if (!name) return json({ status: 'no_member' });
+        const matches = unwrap<Array<{ id: string; full_name: string }>>(
+          await db.from('members').select('id,full_name').eq('full_name', name),
+        );
+        if (matches.length === 0) return json({ status: 'no_member' });
+        if (matches.length > 1) return json({ status: 'ambiguous' });
+        const existing = unwrap<Array<{ id: string }>>(
+          await db
+            .from('training_enrollments')
+            .select('id')
+            .eq('training_id', r2)
+            .eq('member_id', matches[0].id),
+        );
         return json({
-          id: training.id,
-          name: training.name,
-          category: training.category,
-          is_enrollable: training.is_enrollable,
-          total_sessions: training.total_sessions,
+          status: existing.length > 0 ? 'already' : 'ok',
+          name: matches[0].full_name,
         });
       }
+      if (method === 'GET') {
+        // `kind`, the date/time/place and the payment block ride along so the
+        // public page can read as an activity ("Saturday 12 Sept, 9am, the
+        // church car park") instead of "1 sessions", and can show what the
+        // 报名费 is and how to pay it BEFORE asking for a receipt (rule G8's
+        // shape half: the wording follows the stored code, not a guess).
+        // Deliberately these fields and no more: this endpoint answers without
+        // a session, so it must never hand out the whole row.
+        return json(training);
+      }
       if (method === 'POST') {
+        // Two body shapes on one public path: JSON for a free sign-up (what it
+        // has always taken), multipart when a payment receipt rides along. The
+        // slip travels WITH the sign-up rather than through an upload endpoint
+        // of its own, which is what keeps this — the app's ONLY unauthenticated
+        // upload — from being usable as anonymous file storage: nothing reaches
+        // the bucket until every check below has passed.
+        const contentType = req.headers.get('content-type') ?? '';
+        let fullName = '';
+        let slip: File | null = null;
+        if (contentType.includes('multipart/form-data')) {
+          const form = await req.formData();
+          fullName = String(form.get('full_name') ?? '').trim();
+          const sent = form.get('slip');
+          slip = sent instanceof File && sent.size > 0 ? sent : null;
+        } else {
+          fullName = String((await body()).full_name ?? '').trim();
+        }
+
+        // Everything that can refuse this sign-up runs BEFORE a single byte is
+        // written to storage: the course must be open, the name must match one
+        // member, and that member must not already be on the list.
         if (!training.is_enrollable) return json({ status: 'closed' });
-        const fullName = String((await body()).full_name ?? '').trim();
         if (!fullName) return json({ status: 'no_member' });
         const matches = unwrap<Array<{ id: string; full_name: string }>>(
           await db.from('members').select('id,full_name').eq('full_name', fullName),
@@ -470,10 +881,38 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
             .eq('member_id', member.id),
         );
         if (existing.length > 0) return json({ status: 'already', name: member.full_name });
+
+        // A 报名费 makes the receipt part of the sign-up, not an afterthought:
+        // without it there is nothing for the admin to check before approving,
+        // so the request is refused rather than stored half-done.
+        let slipUrl: string | null = null;
+        if (isPaid(training.fee)) {
+          if (!slip)
+            throw new HttpError(
+              400,
+              'This sign-up has a fee — upload your payment receipt to complete it',
+            );
+          const file = checkedFile(slip, SLIP_UPLOAD);
+          slipUrl = await storeFile(
+            db,
+            'payments',
+            // A random name, not the member's or the training's: the bucket is
+            // public, so an object's URL must not be derivable from anything a
+            // stranger already knows.
+            `slips/${r2}/${crypto.randomUUID()}.${fileExt(file, 'jpg')}`,
+            file,
+          );
+        }
+
         unwrap(
           await db
             .from('training_enrollments')
-            .insert({ training_id: r2, member_id: member.id, status: 'pending' })
+            .insert({
+              training_id: r2,
+              member_id: member.id,
+              status: 'pending',
+              payment_slip_url: slipUrl,
+            })
             .select('id')
             .single(),
         );
@@ -525,7 +964,7 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
               .from('training_enrollments')
               .update(patch)
               .eq('id', r2)
-              .select('*, member:members(id,full_name,church_role,group_position)')
+              .select(`*, member:members(${MEMBER_BRIEF})`)
               .single(),
           ),
         );
@@ -540,25 +979,31 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
       if (method === 'GET') {
         let query = db
           .from('trainings')
-          .select('*, trainer:members(id,full_name), hall:halls(id,name)')
+          .select('*, hall:halls(id,name)')
           .order('created_at', { ascending: false });
         // A narrowed view sees that hall plus every 全堂开放 course.
         if (hallFilter) query = query.or(`hall_id.eq.${hallFilter},hall_id.is.null`);
         return json(unwrap(await query));
       }
-      if (method === 'POST')
-        return json(unwrap(await db.from('trainings').insert(withHall(await body())).select().single()));
+      if (method === 'POST') {
+        const dto = trainingWrite(await body());
+        const row = unwrap<{ id: string; kind: string }>(
+          await db.from('trainings').insert(withHall(dto)).select().single(),
+        );
+        // An activity's ONE occasion is a session row, created here rather than
+        // by the page: it is what gives the attendance sheet its single column
+        // to tick, and the invariant "an activity always has exactly one
+        // session" must not depend on a second request that can fail on its own.
+        if (row.kind === TrainingKind.Activity) await ensureSingleSession(db, row.id);
+        return json(row);
+      }
     }
     // /trainings/:id ...
     else if (r1 && !r2) {
       if (method === 'GET') {
         await assertRowReadable('trainings', r1);
         const training = unwrap<Record<string, unknown>>(
-          await db
-            .from('trainings')
-            .select('*, trainer:members(id,full_name), hall:halls(id,name)')
-            .eq('id', r1)
-            .single(),
+          await db.from('trainings').select('*, hall:halls(id,name)').eq('id', r1).single(),
         );
         const sessions = unwrap(
           await db.from('training_sessions').select('*').eq('training_id', r1).order('session_number'),
@@ -566,17 +1011,32 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
         const enrollments = unwrap(
           await db
             .from('training_enrollments')
-            .select('*, member:members(id,full_name,church_role,group_position)')
+            .select(`*, member:members(${MEMBER_BRIEF})`)
             .eq('training_id', r1)
             .order('enrolled_at'),
         );
         return json({ ...training, sessions, enrollments });
       }
       if (method === 'PATCH') {
-        const dto = await body();
+        const dto = trainingWrite(await body());
         assertHallWritable(dto);
         await assertOwnsRow('trainings', r1);
-        return json(unwrap(await db.from('trainings').update(dto).eq('id', r1).select().single()));
+        const row = unwrap<{ id: string; kind: string }>(
+          await db.from('trainings').update(dto).eq('id', r1).select().single(),
+        );
+        // 形态可以互换 (0016): a course that turns out to be one afternoon
+        // becomes an activity, and an activity that grows becomes a course.
+        // Only one direction has anything to reconcile — an activity is ONE
+        // occasion, so its sessions above the first are removed here, taking
+        // their attendance with them (`training_attendance.session_id` is
+        // `on delete cascade`). The page names exactly what goes and asks
+        // first (rule G3); the invariant itself is the SERVER's, so a stale
+        // client can never leave a four-session activity behind (rule G2).
+        // The other way round needs nothing: the single session simply becomes
+        // session 1 of the course, keeping the roll call already taken.
+        if (dto.kind !== undefined && row.kind === TrainingKind.Activity)
+          await ensureSingleSession(db, row.id);
+        return json(row);
       }
       if (method === 'DELETE') {
         await assertOwnsRow('trainings', r1);
@@ -584,11 +1044,37 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
         return json({ id: r1 });
       }
     }
-    // /trainings/:id/{namelist,sessions,enroll}
+    // /trainings/:id/{namelist,sessions,enroll,payment-qr}
     else if (r1 && r2) {
       if (r2 === 'namelist' && method === 'GET') {
         await assertRowReadable('trainings', r1);
         return json(await namelist(db, r1));
+      }
+      // The church's own payment QR (DuitNow / TnG). Same mechanism as a
+      // member's photo and the church logo — service-role upload into a public
+      // bucket, the URL onto the row (rule G4) — and the same hall rule as any
+      // other write to this training. Removing it is a PATCH with
+      // `payment_qr_url: null`, so there is no second delete path.
+      if (r2 === 'payment-qr' && method === 'POST') {
+        await assertOwnsRow('trainings', r1);
+        const form = await req.formData();
+        const file = checkedFile(form.get('file'), IMAGE_UPLOAD);
+        const url = await storeFile(
+          db,
+          'payments',
+          `qr/${r1}/${Date.now()}.${fileExt(file, 'png')}`,
+          file,
+        );
+        return json(
+          unwrap(
+            await db
+              .from('trainings')
+              .update({ payment_qr_url: url })
+              .eq('id', r1)
+              .select()
+              .single(),
+          ),
+        );
       }
       if (r2 === 'sessions' && method === 'POST')
         return json(
@@ -607,7 +1093,7 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
             await db
               .from('training_enrollments')
               .insert({ training_id: r1, member_id: dto.member_id, status: dto.status ?? 'pending' })
-              .select('*, member:members(id,full_name,church_role,group_position)')
+              .select(`*, member:members(${MEMBER_BRIEF})`)
               .single(),
           ),
         );
@@ -641,24 +1127,18 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
         // A 守望模块 (discipleship_programs row) carries NO hall column — it is
         // church-wide configuration, like a training session or an enrollment,
         // so none of the hall helpers apply here. Access control is entirely
-        // the gate at the top of dispatch(): `readonly` cannot write at all,
-        // and DELETE is super_admin/admin only.
+        // the gate at the top of dispatch(): `readonly` cannot write at all.
+        //
+        // READ ONLY BY ID, deliberately. A module is created (POST above) and
+        // then left alone: editing or deleting one was a manager built on a
+        // misreading of what the church meant by "module", and it shipped a
+        // button whose whole job was to cascade away every pair under a module
+        // and all of their daily records. PATCH and DELETE therefore fall
+        // through to the 404 at the foot of dispatch() — the route does not
+        // exist, rather than existing and being hidden in the UI (rule G2:
+        // the server is the authority, not the page).
         if (method === 'GET') {
           return json(unwrap(await db.from('discipleship_programs').select('*').eq('id', r2).single()));
-        }
-        if (method === 'PATCH') {
-          return json(
-            unwrap(await db.from('discipleship_programs').update(await body()).eq('id', r2).select().single()),
-          );
-        }
-        if (method === 'DELETE') {
-          // This CASCADES: discipleship_pairs.program_id is `on delete
-          // cascade` and discipleship_progress.pair_id cascades from there, so
-          // every pair under the module and all their daily entries go with
-          // it. The 四十天守望 page names that blast radius (how many pairs,
-          // how many days of records) in its confirmation before calling this.
-          unwrap(await db.from('discipleship_programs').delete().eq('id', r2).select().single());
-          return json({ id: r2 });
         }
       }
     } else if (r1 === 'pairs') {
@@ -700,7 +1180,11 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
                 .single<{ total_days: number }>(),
             );
             const days = Math.min(n, program.total_days);
-            unwrap(
+            // unwrapWrite, not unwrap: an upsert with no `.select()` succeeds
+            // with `data: null`, which unwrap reports as a 404 — the pair was
+            // created and the days written, and the page still said "Resource
+            // not found".
+            unwrapWrite(
               await db.from('discipleship_progress').upsert(
                 Array.from({ length: days }, (_, i) => ({
                   pair_id: pair.id,
@@ -746,7 +1230,11 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
         await db
           .from('discipleship_pairs')
           .select(
-            '*, mentor:members!discipleship_pairs_mentor_id_fkey(id,full_name), trainee:members!discipleship_pairs_trainee_id_fkey(id,full_name), program:discipleship_programs(id,name,total_days)',
+            // Both names, like everywhere else a person is shown: the mentor
+            // reading this form knows their trainee by whichever one they use.
+            // Nothing else about either member is handed out — this path
+            // answers with no session at all.
+            '*, mentor:members!discipleship_pairs_mentor_id_fkey(id,full_name,english_name), trainee:members!discipleship_pairs_trainee_id_fkey(id,full_name,english_name), program:discipleship_programs(id,name,total_days)',
           )
           .eq('form_token', r2)
           .single(),
@@ -820,6 +1308,463 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
   throw new HttpError(404, `No route for ${method} /api/${p.join('/')}`);
 }
 
+/* -------------------------------------------------------------------------
+ * Members: self-registration and import
+ *
+ * Two ways a member row arrives other than somebody typing it into the form —
+ * a stranger filling in the public link, and a spreadsheet — and BOTH decide
+ * what a row means with the same `planImport` (lib/members-import.ts). That is
+ * on purpose: the rule "a member is a pair of names, and an existing pair is an
+ * update rather than a second row" is the whole point of migration 0018, and it
+ * would be worth nothing if each entry point re-implemented it slightly
+ * differently. What differs between them is only which columns they are allowed
+ * to carry, which is exactly what each caller passes in.
+ * ---------------------------------------------------------------------- */
+
+/** Every issue the plan can report, as the sentence a person is told. */
+const IMPORT_ISSUE_MESSAGE: Record<ImportIssue, string> = {
+  name_missing: 'The Chinese name is required',
+  too_long: 'One of the values is too long',
+  duplicate_in_file: 'The same pair of names appears twice in this file',
+  unknown_hall: 'No congregation goes by that name',
+  unknown_group: 'No life group goes by that name',
+  unknown_role: 'That is not a church role this app knows',
+  unknown_gender: 'That is not a gender this app knows',
+  unknown_status: 'That is not a member status this app knows',
+  bad_date: 'That is not a date — write it as YYYY-MM-DD',
+  bad_email: 'That is not an email address',
+  bad_phone: 'That is not a phone number',
+  no_hall: 'A congregation is required',
+  other_hall: 'That record belongs to another congregation',
+  group_other_hall: 'That life group belongs to another congregation',
+};
+
+/** The message a refused row is reported with — a value, never a stack. */
+function rowFailure(e: unknown): string {
+  return e instanceof HttpError ? e.message : ((e as Error)?.message ?? 'Could not be saved');
+}
+
+/**
+ * The snapshot `planImport` decides against.
+ *
+ * `existing` is EVERY member, church-wide and never narrowed by hall: the name
+ * pair is unique across congregations, so a hall-scoped account importing
+ * somebody who is already filed in another hall has to be told that (and
+ * refused), rather than inserting a row the database would reject anyway.
+ * The list never leaves the server.
+ *
+ * If a deployment ever grew past whatever row ceiling PostgREST is configured
+ * with, a member beyond it would read as "not on the roll" and the import would
+ * try to add them again — at which point the pair INDEX refuses the insert and
+ * the row comes back as a named failure. So the worst case is a row a person
+ * has to look at, never a duplicate that quietly splits somebody's attendance.
+ */
+async function importContext(
+  db: ReturnType<typeof getDb>,
+  hallScope: string | null,
+  wantedHallId: unknown,
+): Promise<ImportContext> {
+  // Three independent reads (rule G6).
+  const [hallRes, groupRes, memberRes] = await Promise.all([
+    db.from('halls').select('id,name').order('sort_order'),
+    db.from('groups').select('id,name,hall_id'),
+    db.from('members').select('id,full_name,english_name,hall_id,group_position'),
+  ]);
+  const halls = unwrap<Array<{ id: string; name: string }>>(hallRes);
+  const groups = unwrap<Array<{ id: string; name: string; hall_id: string }>>(groupRes);
+  const existing = unwrap<ImportContext['existing']>(memberRes);
+
+  // Where a row that names no congregation lands. A hall-scoped account's own
+  // hall always wins (the same precedence as `hallFilter`); a full-access one
+  // may name the congregation it is looking at, and a church with a single
+  // hall needs neither.
+  const asked = wantedHallId == null ? '' : String(wantedHallId);
+  if (asked && !halls.some((h) => h.id === asked))
+    throw new HttpError(400, 'No congregation with that id');
+  const defaultHallId = hallScope ?? (asked || (halls.length === 1 ? halls[0].id : null));
+  return { halls, groups, existing, hallScope, defaultHallId };
+}
+
+/**
+ * One row of the request body, reduced to the columns an import may carry.
+ *
+ * An allow-list, so a body that also carries `id`, `avatar_url` or anything
+ * else the client invented is simply not read — the plan can only ever write
+ * what `IMPORT_COLUMNS` names.
+ */
+function incomingImportRow(raw: unknown, index: number): ImportRow {
+  const source = (raw ?? {}) as Record<string, unknown>;
+  // Fall back to the position in the list: every refusal is reported by row
+  // number, so a row without one would be unfixable.
+  const row: ImportRow = { row: Math.trunc(Number(source.row)) || index + 1 };
+  for (const column of IMPORT_COLUMNS) {
+    const value = source[column.field];
+    if (value === undefined || value === null) continue;
+    row[column.field] = String(value);
+  }
+  return row;
+}
+
+/**
+ * Write a plan. Nothing here decides anything — the plan already did.
+ *
+ * Creates go in as ONE statement per chunk, which is both far fewer round trips
+ * and atomic per chunk: a chunk that trips the name-pair index writes nothing,
+ * and is then retried row by row so the refusal can be reported against the
+ * spreadsheet row that caused it rather than against fifty innocent ones.
+ * Updates are one statement each by nature (each targets its own id), run a few
+ * at a time so a re-import of a whole congregation is seconds rather than
+ * minutes.
+ */
+async function applyImport(db: ReturnType<typeof getDb>, plan: ReturnType<typeof planImport>) {
+  const failures: Array<{ row: number; message: string }> = [];
+  let created = 0;
+  let updated = 0;
+
+  const chunks = <T,>(list: T[], size: number): T[][] =>
+    Array.from({ length: Math.ceil(list.length / size) }, (_, i) =>
+      list.slice(i * size, i * size + size),
+    );
+  const creates = plan.rows.filter((r) => r.action === 'create');
+  const updates = plan.rows.filter(
+    (r): r is PlannedRow & { member_id: string } => r.action === 'update' && !!r.member_id,
+  );
+
+  for (const chunk of chunks(creates, 50)) {
+    // PostgREST refuses a bulk insert whose objects do not all carry the same
+    // keys, and a spreadsheet's rows rarely do — one person has an email, the
+    // next does not. So every row in a chunk is widened to the chunk's union of
+    // columns, with the missing ones explicitly null. That is only sound
+    // because these are NEW rows: an unmentioned column on an insert is null
+    // anyway. The update path below must never do this — there a null would
+    // erase what the church already had.
+    const columns = [...new Set(chunk.flatMap((r) => Object.keys(r.values)))];
+    const widened = chunk.map((r) =>
+      Object.fromEntries(columns.map((c) => [c, r.values[c] ?? null])),
+    );
+    const res = await db.from('members').insert(widened).select('id');
+    if (!res.error) {
+      created += chunk.length;
+      continue;
+    }
+    for (const row of chunk) {
+      try {
+        unwrap(await db.from('members').insert(row.values).select('id').single());
+        created++;
+      } catch (e) {
+        failures.push({ row: row.row, message: rowFailure(e) });
+      }
+    }
+  }
+
+  for (const chunk of chunks(updates, 10)) {
+    const results = await Promise.all(
+      chunk.map(async (row) => {
+        try {
+          unwrap(
+            await db.from('members').update(row.values).eq('id', row.member_id).select('id').single(),
+          );
+          return null;
+        } catch (e) {
+          return { row: row.row, message: rowFailure(e) };
+        }
+      }),
+    );
+    for (const result of results) {
+      if (result) failures.push(result);
+      else updated++;
+    }
+  }
+
+  return {
+    created,
+    updated,
+    // The rows the plan itself refused, with the machine-readable reason the
+    // page renders through the dictionary (rule G8) — plus the same sentence in
+    // English, so a script (or api-e2e) reading this endpoint is told why too.
+    skipped: plan.rows
+      .filter((r) => r.action === 'skip')
+      .map((r) => ({
+        row: r.row,
+        issue: r.issue,
+        field: r.field ?? null,
+        detail: r.detail ?? null,
+        message: r.issue ? IMPORT_ISSUE_MESSAGE[r.issue] : 'Skipped',
+      })),
+    failures,
+  };
+}
+
+/** What the public form may send. Anything else in the body is not read. */
+const REGISTER_FIELDS = [
+  'full_name',
+  'english_name',
+  'phone',
+  'email',
+  'gender',
+  'date_of_birth',
+] as const;
+
+/**
+ * `POST /api/members/register` — the public self-registration form (`/join`).
+ *
+ * The shape follows the public sign-up path exactly (`/trainings/enroll/:id`):
+ * JSON when there is no photo, multipart when there is, and the photo travels
+ * WITH the registration rather than through an upload endpoint of its own. That
+ * is what keeps the app's unauthenticated upload paths from being usable as
+ * anonymous file storage: every check below runs first, and nothing reaches the
+ * bucket until this row is going to be written.
+ *
+ * The answer is one word — `created` or `updated` — and the same shape either
+ * way. It carries no member data at all: not an id, not a phone number, not
+ * even the name that was typed. The one thing it does reveal is whether that
+ * exact pair of names was already on the roll, which is unavoidable given the
+ * church asked to be told "we have updated your details" rather than "welcome",
+ * and is a fact about the visitor's own name.
+ */
+async function registerMember(
+  db: ReturnType<typeof getDb>,
+  req: Request,
+): Promise<{ status: 'created' | 'updated' }> {
+  const contentType = req.headers.get('content-type') ?? '';
+  const sent: Record<string, string> = {};
+  let hallId = '';
+  let photo: File | null = null;
+  if (contentType.includes('multipart/form-data')) {
+    const form = await req.formData();
+    for (const field of REGISTER_FIELDS) sent[field] = String(form.get(field) ?? '');
+    hallId = String(form.get('hall_id') ?? '');
+    const file = form.get('photo');
+    photo = file instanceof File && file.size > 0 ? file : null;
+  } else {
+    const dto = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+    for (const field of REGISTER_FIELDS) sent[field] = String(dto[field] ?? '');
+    hallId = String(dto.hall_id ?? '');
+  }
+
+  const halls = unwrap<Array<{ id: string; name: string }>>(
+    await db.from('halls').select('id,name').order('sort_order'),
+  );
+  // A church with one congregation should not make a stranger pick it; one
+  // with three must be told which, or the person lands in the wrong roll call.
+  const hall = hallId ? halls.find((h) => h.id === hallId) : halls.length === 1 ? halls[0] : null;
+  if (!hall) throw new HttpError(400, 'Please choose your congregation');
+
+  const existing = unwrap<ImportContext['existing']>(
+    await db.from('members').select('id,full_name,english_name,hall_id,group_position'),
+  );
+
+  // The same decision an imported row goes through, with only the columns this
+  // form is allowed to carry — so "an existing pair is an update, not a second
+  // row" is one rule with one implementation. `hallScope: null` because there
+  // is no account here to scope anything to; the congregation is the one the
+  // visitor picked, and it is only used when the person is NEW (an existing
+  // member keeps the congregation the church filed them under).
+  const row: ImportRow = { row: 1 };
+  for (const field of REGISTER_FIELDS) if (sent[field]) row[field] = sent[field];
+  const [planned] = planImport([row], {
+    halls,
+    groups: [],
+    existing,
+    hallScope: null,
+    defaultHallId: hall.id,
+  }).rows;
+  if (planned.action === 'skip')
+    throw new HttpError(400, IMPORT_ISSUE_MESSAGE[planned.issue ?? 'name_missing']);
+
+  const values = { ...planned.values };
+  if (planned.action === 'update') {
+    // A visitor may correct their own phone number; they may not re-spell the
+    // church's record of their name. The pair already matched, so these two
+    // differ from what is stored only in capitalisation or spacing anyway.
+    delete values.full_name;
+    delete values.english_name;
+  }
+
+  // Only now — the name has been resolved and the row is going to be written.
+  if (photo) {
+    const file = checkedFile(photo, PHOTO_UPLOAD);
+    values.avatar_url = await storeFile(
+      db,
+      'avatars',
+      // A random name, not the person's: the bucket is public, so an object's
+      // URL must not be derivable from anything a stranger already knows.
+      `self/${crypto.randomUUID()}.${fileExt(file, 'jpg')}`,
+      file,
+    );
+  }
+
+  if (planned.action === 'update' && planned.member_id) {
+    // Somebody who filled in nothing but their name has told us nothing new —
+    // and PostgREST refuses an empty patch anyway. They are still on the roll,
+    // which is what the answer says.
+    if (Object.keys(values).length === 0) return { status: 'updated' };
+    unwrap(await db.from('members').update(values).eq('id', planned.member_id).select('id').single());
+    return { status: 'updated' };
+  }
+  unwrap(
+    await db
+      .from('members')
+      .insert({
+        ...values,
+        // Everyone who registers themselves is an ordinary member. A church
+        // role is something the church confers, never something a form
+        // visitor claims — the same reason `church_role` is not in
+        // REGISTER_FIELDS at all.
+        church_role: ChurchRole.Member,
+      })
+      .select('id')
+      .single(),
+  );
+  return { status: 'created' };
+}
+
+// --- Church record & modules ------------------------------------------------
+
+const CHURCH_SELECT =
+  'id,name,short_name,description,logo_url,theme_preset,theme_rail,theme_brand';
+
+/** Only these may be written on the church record; anything else is refused
+ *  loudly rather than dropped, the same allow-list shape as the self-service
+ *  profile above. `id` and the timestamps are deliberately absent. */
+const CHURCH_FIELDS = [
+  'name',
+  'short_name',
+  'description',
+  'logo_url',
+  'theme_preset',
+  'theme_rail',
+  'theme_brand',
+] as const;
+
+type ChurchRow = {
+  id: string;
+  name: string;
+  short_name: string | null;
+  description: string | null;
+  logo_url: string | null;
+  theme_preset: string | null;
+  theme_rail: string;
+  theme_brand: string;
+};
+
+/**
+ * The church. One deployment serves exactly one church (halls are the scope
+ * column inside it), so this is a singleton row — seeded by migration 0012 and
+ * never created from the app. A missing row means the migration has not been
+ * applied, which is worth saying out loud rather than answering with nulls.
+ */
+async function churchRow(db: ReturnType<typeof getDb>): Promise<ChurchRow> {
+  const rows = unwrap<ChurchRow[]>(
+    await db.from('church').select(CHURCH_SELECT).order('created_at').limit(1),
+  );
+  if (rows.length === 0)
+    throw new HttpError(500, 'No church record yet — apply migration 0012_church_and_modules');
+  return rows[0];
+}
+
+/** Normalize a church PATCH: allow-listed fields only, and a real name. */
+function churchWrite(body: Record<string, unknown>): Record<string, unknown> {
+  const patch: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(body)) {
+    if (!(CHURCH_FIELDS as readonly string[]).includes(key))
+      throw new HttpError(403, `You may not change ${key} on the church record`);
+    patch[key] = value;
+  }
+  if ('name' in patch) {
+    const name = String(patch.name ?? '').trim();
+    if (!name) throw new HttpError(400, 'The church name cannot be empty');
+    patch.name = name;
+  }
+  for (const key of ['short_name', 'description', 'logo_url'] as const) {
+    if (key in patch) {
+      const v = String(patch[key] ?? '').trim();
+      patch[key] = v === '' ? null : v;
+    }
+  }
+
+  // ---- the theme (migration 0017) -------------------------------------------
+  // Two colours, and they end up inside a CSS custom property on every page of
+  // the app, so this is the place they are checked: a strict `#rrggbb` and
+  // nothing else — not a colour name, not `var(…)`, not anything carrying a
+  // `;` or a `}`. The column has the same constraint, but nothing should have
+  // to rely on that.
+  //
+  // The two are also refused when they are too PALE to work. The sidebar is
+  // light-on-dark by construction and the brand carries white text on every
+  // button, so a pale pair would not be an alternative look, it would be an
+  // app nobody can read (`isUsableRail` / `isUsableBrand` in packages/shared —
+  // the shipped presets all pass, by construction).
+  if ('theme_preset' in patch || 'theme_rail' in patch || 'theme_brand' in patch) {
+    const wanted = patch.theme_preset == null ? null : String(patch.theme_preset);
+    if (wanted !== null) {
+      // A preset names its own colours: the catalogue in code is the authority
+      // for what `charcoal` looks like, so a client cannot store a pair under
+      // a preset's name that the preset never had.
+      const preset = themePreset(wanted);
+      if (!preset) throw new HttpError(400, `Unknown theme preset: ${wanted}`);
+      patch.theme_preset = preset.key;
+      patch.theme_rail = preset.rail;
+      patch.theme_brand = preset.brand;
+    } else {
+      // Custom: both colours are required together. Writing one alone would
+      // leave the pair half from a preset and half by hand, which is neither.
+      const rail = normalizeHexColor(patch.theme_rail);
+      const brand = normalizeHexColor(patch.theme_brand);
+      if (!rail || !brand)
+        throw new HttpError(
+          400,
+          'A custom theme needs both theme_rail and theme_brand as #rrggbb',
+        );
+      if (!isUsableRail(rail))
+        throw new HttpError(
+          400,
+          `The sidebar colour is too light: it carries light text, so it needs at least ${MIN_RAIL_CONTRAST}:1 contrast against white`,
+        );
+      if (!isUsableBrand(brand))
+        throw new HttpError(
+          400,
+          `The brand colour is too light: buttons put white text on it, so it needs at least ${MIN_BRAND_CONTRAST}:1 contrast against white`,
+        );
+      patch.theme_preset = null;
+      patch.theme_rail = rail;
+      patch.theme_brand = brand;
+    }
+  }
+  return patch;
+}
+
+/**
+ * Every optional module with its on/off state, in catalog order.
+ *
+ * The catalog is the CODE registry, not the table: a stored row for a module
+ * this build no longer ships is ignored, and a module with no row yet counts
+ * as ON — a newly shipped module is available until someone turns it off,
+ * which is the same thing migration 0012's seed does for `discipleship`.
+ */
+async function moduleStates(
+  db: ReturnType<typeof getDb>,
+): Promise<Array<{ key: string; enabled: boolean }>> {
+  const c = await churchRow(db);
+  const rows = unwrap<Array<{ module: string; enabled: boolean }>>(
+    await db.from('church_modules').select('module,enabled').eq('church_id', c.id),
+  );
+  const stored = new Map(rows.map((r) => [r.module, r.enabled]));
+  return OPTIONAL_MODULES.map((m) => ({ key: m.key, enabled: stored.get(m.key) ?? true }));
+}
+
+/**
+ * Is one module on? Used by the gate, so it is one query rather than two:
+ * `church_modules.module` needs no church_id filter while the church row is a
+ * singleton, and the composite primary key means at most one row can match.
+ */
+async function moduleEnabled(db: ReturnType<typeof getDb>, key: string): Promise<boolean> {
+  const rows = unwrap<Array<{ enabled: boolean }>>(
+    await db.from('church_modules').select('enabled').eq('module', key),
+  );
+  return rows[0]?.enabled ?? true;
+}
+
 // --- Shared helpers ---------------------------------------------------------
 
 async function upsertProgress(
@@ -845,123 +1790,112 @@ async function upsertProgress(
   );
 }
 
-const WEEKDAY_INDEX: Record<string, number> = {
-  sunday: 0,
-  monday: 1,
-  tuesday: 2,
-  wednesday: 3,
-  thursday: 4,
-  friday: 5,
-  saturday: 6,
-};
-
 /**
- * Top up the calendar from the 循环聚会 rules so a weekly service never has to
- * be added by hand. Runs on GET /events — generation is lazy on purpose: the
- * schedule only needs to be correct for someone actually looking at it, which
- * avoids a cron job that can fail silently.
+ * 聚会点名 — one month's sheet: the members down the left, and across the top
+ * that month's Sundays followed, in date order, by every meeting someone added
+ * for it.
  *
- * Two things keep it from fighting the user:
- *  - `generated_through` means a rule only ever looks at dates AFTER the last
- *    one it produced. Deleting a single occurrence (a public holiday) makes it
- *    stay deleted, and editing a rule's weekday/time doesn't regenerate the
- *    window it already filled at the old time.
- *  - A slot already occupied by an equivalent event — same hall, same type,
- *    same moment, whoever created it — is skipped. That covers services that
- *    predate the rules (their `recurring_id` is null) and anything added by
- *    hand, and stops the insert from colliding with the Sunday-service unique
- *    index from 0008.
+ * The columns come from the CALENDAR and from the meetings themselves, never
+ * from the attendance data, so a Sunday nobody marked and a meeting nobody
+ * ticked both still get their column. Two tables are read for the cells and
+ * neither is named in the answer: each column carries the key a write quotes
+ * back, and `lib/sheet.ts` is the one place that knows what a key means.
+ *
+ * `hallFilter` narrows it. Null means 全部堂会: every congregation's members in
+ * one list, which is the simple thing to show when nobody has narrowed the
+ * view. A tick is still filed under the member's own congregation (see the PUT
+ * above), so what was recorded never loses its hall.
  */
-async function ensureRecurringEvents(db: ReturnType<typeof getDb>) {
-  const rules = unwrap(
-    await db
-      .from('recurring_events')
-      .select('id,title,event_type,weekday,start_time,location,hall_id,lookahead_days,generated_through')
-      .eq('active', true),
-  ) as Array<{
-    id: string;
-    title: string;
-    event_type: string;
-    weekday: string;
-    start_time: string;
-    location: string | null;
-    hall_id: string | null;
-    lookahead_days: number;
-    generated_through: string | null;
-  }>;
-  if (rules.length === 0) return;
+async function rollCallSheet(
+  db: ReturnType<typeof getDb>,
+  hallFilter: string | null,
+  year: number,
+  month: number,
+) {
+  // The month as MALAYSIA reads it: [1st 00:00, the 1st of the next month).
+  // `churchInstant` normalises month 13 into January, so December needs no
+  // special case.
+  const monthStart = churchInstant(year, month, 1).toISOString();
+  const monthEnd = churchInstant(year, month + 1, 1).toISOString();
 
-  // Malaysia's calendar date, via the same helper the UI reads with.
-  const nowParts = churchParts(new Date());
-  const todayLocal = new Date(Date.UTC(nowParts.year, nowParts.month - 1, nowParts.day));
+  let memberQuery = db
+    .from('members')
+    .select(MEMBER_BRIEF)
+    .eq('status', 'active')
+    .order('full_name');
+  if (hallFilter) memberQuery = memberQuery.eq('hall_id', hallFilter);
 
-  // Every date a rule still owes, within its own lookahead window.
-  const wanted: Array<{ rule: (typeof rules)[number]; date: string; startsAt: string }> = [];
-  for (const rule of rules) {
-    const target = WEEKDAY_INDEX[rule.weekday];
-    if (target === undefined) continue;
-    const daysUntil = (target - todayLocal.getUTCDay() + 7) % 7;
-    for (let offset = daysUntil; offset <= rule.lookahead_days; offset += 7) {
-      const d = new Date(todayLocal);
-      d.setUTCDate(d.getUTCDate() + offset);
-      const iso = d.toISOString().slice(0, 10);
-      if (rule.generated_through && iso <= rule.generated_through) continue;
-      wanted.push({ rule, date: iso, startsAt: `${iso}T${rule.start_time}${CHURCH_TZ_OFFSET}` });
-    }
+  let meetingQuery = db
+    .from('events')
+    .select('id,title,starts_at,hall_id')
+    .gte('starts_at', monthStart)
+    .lt('starts_at', monthEnd)
+    .order('starts_at');
+  // A narrowed view sees that hall's meetings plus every 全堂开放 one — the
+  // same rule the events list itself follows.
+  if (hallFilter) meetingQuery = meetingQuery.or(`hall_id.eq.${hallFilter},hall_id.is.null`);
+
+  // Independent reads, so they go together (rule G6).
+  const [memberRes, meetingRes] = await Promise.all([memberQuery, meetingQuery]);
+  const members = unwrap(memberRes) as Array<{ id: string; full_name: string; english_name: string | null }>;
+  const meetings = unwrap(meetingRes) as SheetMeeting[];
+
+  const columns = sheetColumns(year, month, meetings);
+  const sundays = columns.filter((c) => c.kind === 'sunday').map((c) => c.date);
+  const eventIds = meetings.map((m) => m.id);
+
+  const readSundayMarks = async () => {
+    if (!sundays.length) return [];
+    let query = db
+      .from('sunday_attendance')
+      .select('service_date,member_id,pre_service,service')
+      .gte('service_date', sundays[0])
+      .lte('service_date', sundays[sundays.length - 1]);
+    if (hallFilter) query = query.eq('hall_id', hallFilter);
+    return unwrap(await query) as Array<{
+      service_date: string;
+      member_id: string;
+      pre_service: boolean;
+      service: boolean;
+    }>;
+  };
+  const readMeetingMarks = async () => {
+    if (!eventIds.length) return [];
+    return unwrap(
+      await db.from('event_attendance').select('event_id,member_id,status').in('event_id', eventIds),
+    ) as Array<{ event_id: string; member_id: string; status: string }>;
+  };
+
+  const [sundayMarks, meetingMarks] = await Promise.all([readSundayMarks(), readMeetingMarks()]);
+
+  const byMember = new Map<string, Record<string, SheetCell>>();
+  const cellOf = (memberId: string, key: string): SheetCell => {
+    const cells = byMember.get(memberId) ?? {};
+    byMember.set(memberId, cells);
+    cells[key] = cells[key] ?? {};
+    return cells[key];
+  };
+
+  for (const m of sundayMarks) {
+    const cell = cellOf(m.member_id, sundayColumnKey(m.service_date.slice(0, 10)));
+    // OR-merged rather than assigned: with no narrowing, someone who moved
+    // congregation mid-year can carry a row in each hall for the same Sunday,
+    // and a tick that was taken must not disappear because of the other row.
+    cell.pre_service = cell.pre_service || m.pre_service;
+    cell.service = cell.service || m.service;
   }
-  if (wanted.length === 0) return;
-
-  // One read covering the whole window, then insert only what's missing.
-  const times = wanted.map((w) => w.startsAt).sort();
-  const existing = unwrap(
-    await db
-      .from('events')
-      .select('starts_at,hall_id,event_type,recurring_id')
-      .gte('starts_at', times[0])
-      .lte('starts_at', times[times.length - 1]),
-  ) as Array<{
-    starts_at: string;
-    hall_id: string | null;
-    event_type: string;
-    recurring_id: string | null;
-  }>;
-  const slotKey = (hallId: string | null, type: string, startsAt: string) =>
-    `${hallId ?? ''}|${type}|${new Date(startsAt).toISOString()}`;
-  const taken = new Set(existing.map((e) => slotKey(e.hall_id, e.event_type, e.starts_at)));
-
-  const rows = wanted
-    .filter((w) => !taken.has(slotKey(w.rule.hall_id, w.rule.event_type, w.startsAt)))
-    .map((w) => ({
-      title: w.rule.title,
-      event_type: w.rule.event_type,
-      location: w.rule.location,
-      starts_at: w.startsAt,
-      hall_id: w.rule.hall_id,
-      recurring_id: w.rule.id,
-    }));
-
-  if (rows.length > 0) {
-    // Best-effort: two concurrent requests could both see the same slot
-    // missing. The unique index on (recurring_id, starts_at) turns that race
-    // into a rejected insert rather than a duplicate — either way this must
-    // never fail the surrounding GET /events request, so the error is logged
-    // rather than thrown (a silent swallow once hid a real bug here).
-    const ins = await db.from('events').insert(rows);
-    if (ins.error) console.error('recurring top-up insert failed:', ins.error.message);
+  for (const a of meetingMarks) {
+    // A meeting column is one tick: was this person there. Rows left by the
+    // old 出席/请假/缺席 roll call that say anything else are "not present".
+    if (a.status !== 'present') continue;
+    cellOf(a.member_id, meetingColumnKey(a.event_id)).attended = true;
   }
 
-  // Advance each rule's watermark to the last date it just covered, so those
-  // dates are never reconsidered — even the ones skipped as already-occupied.
-  const lastByRule = new Map<string, string>();
-  for (const w of wanted) {
-    const prev = lastByRule.get(w.rule.id);
-    if (!prev || w.date > prev) lastByRule.set(w.rule.id, w.date);
-  }
-  await Promise.all(
-    [...lastByRule].map(([id, date]) =>
-      db.from('recurring_events').update({ generated_through: date }).eq('id', id),
-    ),
-  );
+  return {
+    hall_id: hallFilter,
+    columns,
+    rows: members.map((member) => ({ member, cells: byMember.get(member.id) ?? {} })),
+  };
 }
 
 async function groupAttendance(db: ReturnType<typeof getDb>, groupId: string) {
@@ -976,10 +1910,10 @@ async function groupAttendance(db: ReturnType<typeof getDb>, groupId: string) {
   const members = unwrap(
     await db
       .from('members')
-      .select('id, full_name, church_role, group_position')
+      .select(MEMBER_BRIEF)
       .eq('group_id', groupId)
       .order('full_name'),
-  ) as Array<{ id: string; full_name: string }>;
+  ) as Array<{ id: string; full_name: string; english_name: string | null }>;
 
   const meetingIds = meetings.map((m) => m.id);
   const att = meetingIds.length
@@ -1004,11 +1938,223 @@ async function groupAttendance(db: ReturnType<typeof getDb>, groupId: string) {
   return { meetings, rows };
 }
 
+/**
+ * What the PUBLIC sign-up page (`/enroll/:id`) is told about a training.
+ *
+ * An explicit list, never `*`: this endpoint answers with no session at all, so
+ * every column it hands out is a deliberate decision. What is here is what a
+ * visitor needs in order to decide and to pay — which shape it is, when and
+ * where, who to ring, and the 报名费 with the instructions and QR to settle it.
+ */
+const PUBLIC_TRAINING_SELECT =
+  'id,name,kind,is_enrollable,total_sessions,starts_on,ends_on,start_time,location,pic,pic_contact,fee,payment_instructions,payment_qr_url';
+
+type PublicTraining = {
+  id: string;
+  name: string;
+  kind: string;
+  is_enrollable: boolean;
+  total_sessions: number;
+  starts_on: string | null;
+  ends_on: string | null;
+  start_time: string | null;
+  location: string | null;
+  pic: string | null;
+  pic_contact: string | null;
+  fee: string | number | null;
+  payment_instructions: string | null;
+  payment_qr_url: string | null;
+};
+
+/** Does this training charge? `numeric` comes back as a string from PostgREST. */
+function isPaid(fee: string | number | null | undefined): boolean {
+  return fee !== null && fee !== undefined && Number(fee) > 0;
+}
+
+/**
+ * Normalize a 培训&活动 create/update payload.
+ *
+ * What the server owns rather than trusting the client with (rule G2):
+ *  - `kind` must be one the app actually ships. The table's CHECK would refuse
+ *    anything else too, but a constraint name is not an answer anybody can act
+ *    on — and a stale client must not be able to park a row on a third shape.
+ *  - an activity is ONE occasion, so its `total_sessions` is 1 whatever was
+ *    sent, and it ends on the day it starts. That is the invariant the single
+ *    auto-created session stands on.
+ *  - `fee` is money: a blank field means FREE (null), and a negative number is
+ *    a typo rather than a discount. The table's CHECK says the same; this says
+ *    it in words.
+ *  - the free-text fields are trimmed, and an empty one is stored as null, so
+ *    "has a PIC" is one question rather than two.
+ */
+function trainingWrite(dto: Record<string, unknown>): Record<string, unknown> {
+  const patch = { ...dto };
+  if (patch.kind !== undefined) {
+    if (!isTrainingKind(patch.kind))
+      throw new HttpError(400, `Unknown kind: ${String(patch.kind)} — expected course or activity`);
+    if (patch.kind === TrainingKind.Activity) {
+      patch.total_sessions = 1;
+      // One occasion: the same day twice, so "has it finished?" stays one
+      // question for both shapes and there is no second date to edit.
+      if (patch.starts_on !== undefined) patch.ends_on = patch.starts_on;
+    }
+  }
+  if ('fee' in patch) {
+    const raw = patch.fee;
+    if (raw === null || raw === undefined || String(raw).trim() === '') patch.fee = null;
+    else {
+      const amount = Number(raw);
+      if (!Number.isFinite(amount) || amount < 0)
+        throw new HttpError(400, 'The sign-up fee must be a number of 0 or more');
+      patch.fee = amount;
+    }
+  }
+  for (const key of ['pic', 'pic_contact', 'location', 'payment_instructions', 'payment_qr_url', 'start_time'] as const) {
+    if (key in patch) {
+      const value = String(patch[key] ?? '').trim();
+      patch[key] = value === '' ? null : value;
+    }
+  }
+  return patch;
+}
+
+/**
+ * An ACTIVITY is one occasion, and that occasion IS exactly one
+ * `training_sessions` row — the single column its roll call ticks.
+ *
+ * Called when an activity is created and when a course is converted into one,
+ * so the invariant lives in a single place rather than being re-derived at each
+ * write. Sessions beyond the first are deleted, which takes their attendance
+ * with them (`training_attendance.session_id` is `on delete cascade`); a
+ * conversion that would destroy anything is confirmed in the UI first (G3).
+ */
+async function ensureSingleSession(db: ReturnType<typeof getDb>, trainingId: string) {
+  const sessions = unwrap<Array<{ id: string; session_number: number }>>(
+    await db
+      .from('training_sessions')
+      .select('id,session_number')
+      .eq('training_id', trainingId)
+      .order('session_number'),
+  );
+  if (sessions.length === 0) {
+    unwrap(
+      await db
+        .from('training_sessions')
+        .insert({ training_id: trainingId, session_number: 1 })
+        .select('id')
+        .single(),
+    );
+    return;
+  }
+  const extra = sessions.slice(1).map((s) => s.id);
+  if (extra.length > 0)
+    unwrap(await db.from('training_sessions').delete().in('id', extra).select('id'));
+}
+
+/* -------------------------------------------------------------------------
+ * Uploads
+ *
+ * Four surfaces put a file in a public bucket — a member's photo, the church
+ * logo, a training's payment QR and a payment receipt — and they all go the
+ * same way (rule G4): validate the file HERE, write it with the service role,
+ * store the resulting public URL on the row. Only the rule differs, because
+ * only the rule should: a receipt may be a PDF, an avatar may not.
+ * ---------------------------------------------------------------------- */
+
+type UploadRule = {
+  maxBytes: number;
+  accepts: (contentType: string) => boolean;
+  typeError: string;
+  sizeError: string;
+};
+
+/** Avatars, the church logo, a payment QR — an image, 5MB at most. */
+const IMAGE_UPLOAD: UploadRule = {
+  maxBytes: 5 * 1024 * 1024,
+  accepts: (type) => type.startsWith('image/'),
+  typeError: 'Only image files are supported',
+  sizeError: 'The image must be 5MB or smaller',
+};
+
+/**
+ * A payment receipt: a photo of a transfer, or the PDF a banking app produces.
+ *
+ * An explicit list rather than `image/*` — this is the one upload path with NO
+ * session behind it, so it accepts exactly the formats a receipt actually comes
+ * in. `image/svg+xml` is deliberately absent: an SVG is a script that renders,
+ * and these objects are served from a public bucket.
+ */
+const SLIP_TYPES = [
+  'image/jpeg',
+  'image/pjpeg',
+  'image/png',
+  'image/webp',
+  'image/gif',
+  'image/heic',
+  'image/heif',
+  'application/pdf',
+];
+const SLIP_UPLOAD: UploadRule = {
+  maxBytes: 5 * 1024 * 1024,
+  accepts: (type) => SLIP_TYPES.includes(type),
+  typeError:
+    'The receipt must be a photo (JPG, PNG, WEBP, GIF or HEIC) or a PDF',
+  sizeError: 'The receipt must be 5MB or smaller',
+};
+
+/**
+ * A photo of a person sent by a STRANGER — the public /join form.
+ *
+ * Deliberately NOT `IMAGE_UPLOAD`: that one accepts any `image/*`, which
+ * includes `image/svg+xml`, and an SVG is a script that renders. The other
+ * three upload surfaces are behind a session; this one is not, and its objects
+ * are served from a public bucket. So it takes the same explicit list a receipt
+ * does, minus the PDF — a PDF is not a photograph of a face.
+ */
+const PHOTO_UPLOAD: UploadRule = {
+  maxBytes: 5 * 1024 * 1024,
+  accepts: (type) => SLIP_TYPES.includes(type) && type !== 'application/pdf',
+  typeError: 'The photo must be a JPG, PNG, WEBP, GIF or HEIC image',
+  sizeError: 'The photo must be 5MB or smaller',
+};
+
+/**
+ * The uploaded file, or a 400 that says what was wrong in words a person can
+ * act on. Both checks happen BEFORE the bytes are read, so an oversized upload
+ * is refused rather than buffered.
+ */
+function checkedFile(value: FormDataEntryValue | File | null, rule: UploadRule): File {
+  if (!(value instanceof File) || value.size === 0) throw new HttpError(400, 'No file uploaded');
+  if (!rule.accepts((value.type || '').toLowerCase())) throw new HttpError(400, rule.typeError);
+  if (value.size > rule.maxBytes) throw new HttpError(400, rule.sizeError);
+  return value;
+}
+
+/** A safe extension for the stored object — never the uploaded name itself. */
+function fileExt(file: File, fallback: string): string {
+  return (file.name.split('.').pop() || fallback).toLowerCase().replace(/[^a-z0-9]/g, '') || fallback;
+}
+
+/** Write a validated file into a public bucket and return its public URL. */
+async function storeFile(
+  db: ReturnType<typeof getDb>,
+  bucket: string,
+  path: string,
+  file: File,
+): Promise<string> {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const up = await db.storage
+    .from(bucket)
+    .upload(path, bytes, { contentType: file.type || 'application/octet-stream', upsert: true });
+  if (up.error) throw new HttpError(500, up.error.message);
+  return db.storage.from(bucket).getPublicUrl(path).data.publicUrl;
+}
+
 async function namelist(db: ReturnType<typeof getDb>, trainingId: string) {
   const enrollments = unwrap(
     await db
       .from('training_enrollments')
-      .select('id, member:members(id,full_name,church_role,group_position)')
+      .select(`id, member:members(${MEMBER_BRIEF})`)
       .eq('training_id', trainingId)
       .in('status', ['approved', 'in_progress', 'completed'])
       .order('id'),
@@ -1153,7 +2299,7 @@ async function authRoute(
  */
 const SELF_MEMBER_FIELDS = [
   'full_name',
-  'chinese_name',
+  'english_name',
   'email',
   'phone',
   'gender',
@@ -1313,5 +2459,11 @@ async function run(method: string, req: Request, ctx: Ctx): Promise<Response> {
 
 export const GET = (req: Request, ctx: Ctx) => run('GET', req, ctx);
 export const POST = (req: Request, ctx: Ctx) => run('POST', req, ctx);
+// PUT exists for the roll-call sheet's one-cell write: the row behind a cell
+// is created, updated or removed by the same call, so the client never has to
+// know which — nor which of the two tables it lands in. It goes through the
+// same gate as every other method — a `readonly` account is refused by the
+// `method !== 'GET'` branch in dispatch().
+export const PUT = (req: Request, ctx: Ctx) => run('PUT', req, ctx);
 export const PATCH = (req: Request, ctx: Ctx) => run('PATCH', req, ctx);
 export const DELETE = (req: Request, ctx: Ctx) => run('DELETE', req, ctx);

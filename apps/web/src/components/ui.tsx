@@ -6,12 +6,16 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useId,
+  useMemo,
   useRef,
   useState,
 } from 'react';
 import { initialOf, roleDot, roleKey, roleTagStyle } from '@/lib/labels';
+import { comboboxFilter, nextActiveIndex, type ComboOption } from '@/lib/combobox';
 import { useHallScope } from '@/lib/hall';
-import { useT } from '@/lib/i18n';
+import type { ColumnTickState } from '@/lib/sheet';
+import { useLang, useT } from '@/lib/i18n';
 
 /* -------------------------------------------------------------------------
  * State helpers
@@ -254,6 +258,22 @@ export function Empty({ children }: { children: ReactNode }) {
   return <div className="empty">{children}</div>;
 }
 
+/**
+ * What a page owned by a switched-off add-on module shows. The nav entry is
+ * already gone, so this is what a bookmark or a pasted link lands on — a
+ * stated reason rather than a crash or a blank list. The API refuses the same
+ * paths regardless (rule G2); this is only the explanation.
+ */
+export function ModuleDisabled({ name }: { name: string }) {
+  const t = useT();
+  return (
+    <Empty>
+      <div style={{ fontWeight: 600, marginBottom: 6 }}>{t('module.off.title', { name })}</div>
+      <div style={{ fontSize: 13 }}>{t('module.off.body')}</div>
+    </Empty>
+  );
+}
+
 /* -------------------------------------------------------------------------
  * Avatar, badges
  * ---------------------------------------------------------------------- */
@@ -273,6 +293,125 @@ export function Avatar({
     return <img className={cls} src={url} alt={name ?? ''} style={{ objectFit: 'cover' }} />;
   }
   return <div className={cls}>{initialOf(name)}</div>;
+}
+
+/**
+ * A person's name — the ONE way any of them is drawn (rule G4).
+ *
+ * A member is two names (migration 0018): the Chinese name the church files
+ * them under, and an English name that is often the only one half the
+ * congregation knows. Both belong on screen wherever a person is listed, so
+ * this renders the Chinese name and, on its own line beneath it, the English
+ * one — smaller and muted, because the second line is the aid to recognition
+ * and not the identity. An English name is nullable, and when there is none
+ * nothing extra is drawn: the row stays exactly as tall as it used to be.
+ *
+ * It is a two-line block rather than "陈约翰 (John Tan)" on one line because an
+ * English name is routinely three times the width of the Chinese one, and every
+ * list this appears in already has a name column competing with real content.
+ *
+ * `member` may be null — an enrolment whose member row was deleted, an account
+ * with nobody linked — and then the caller's `fallback` stands in, so no call
+ * site has to write its own `?? '—'` around this.
+ */
+export function MemberName({
+  member,
+  fallback = '—',
+  style,
+}: {
+  member: { full_name: string; english_name?: string | null } | null | undefined;
+  fallback?: ReactNode;
+  /** Typography only (a tile's smaller name); never geometry. */
+  style?: React.CSSProperties;
+}) {
+  if (!member) return <>{fallback}</>;
+  return (
+    <span className="member-name" style={style}>
+      <strong>{member.full_name}</strong>
+      {member.english_name && <span className="member-name-en">{member.english_name}</span>}
+    </span>
+  );
+}
+
+/**
+ * Pick a photo of a person — the ONE control that does it (rule G4).
+ *
+ * Two forms take one: the add-member modal on /members and the public /join
+ * page. They differ in what happens NEXT (the first uploads to
+ * `/members/:id/avatar` once the row exists, the second sends the file with the
+ * registration itself), which is why this component only ever holds the chosen
+ * `File` and hands it back — it never uploads anything.
+ *
+ * On a phone `accept="image/*"` alone opens the OS sheet with BOTH "Take
+ * Photo" and "Photo Library", which is exactly what was asked for. There is
+ * DELIBERATELY no `capture` attribute: adding it forces the camera and removes
+ * the gallery choice entirely — the opposite of the requirement. Do not "fix"
+ * this by adding it.
+ *
+ * The preview is a blob URL, revoked when the choice changes or the form
+ * closes, so a person who picked the wrong photo sees that before they save
+ * rather than on the member's profile afterwards.
+ */
+export function PhotoPicker({
+  file,
+  onChange,
+  name,
+  currentUrl,
+}: {
+  file: File | null;
+  onChange: (file: File | null) => void;
+  /** Whose photo this is, for the avatar placeholder's initial. */
+  name?: string | null;
+  /** A photo already on the record; the preview falls back to it. */
+  currentUrl?: string | null;
+}) {
+  const t = useT();
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [preview, setPreview] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!file) {
+      setPreview(null);
+      return;
+    }
+    const url = URL.createObjectURL(file);
+    setPreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [file]);
+
+  const shown = preview ?? currentUrl ?? null;
+  return (
+    <div className="flex items-center gap-12 flex-wrap">
+      <Avatar name={name} url={shown} size="lg" />
+      <div className="flex items-center gap-8 flex-wrap">
+        <button type="button" className="btn ghost sm" onClick={() => inputRef.current?.click()}>
+          {shown ? t('photo.change') : t('photo.choose')}
+        </button>
+        {file && (
+          <button
+            type="button"
+            className="btn ghost sm"
+            onClick={() => {
+              onChange(null);
+              // Clear the input too, or picking the SAME file again fires no
+              // change event and the photo silently stays removed.
+              if (inputRef.current) inputRef.current.value = '';
+            }}
+          >
+            {t('photo.remove')}
+          </button>
+        )}
+        <input
+          ref={inputRef}
+          type="file"
+          accept="image/*"
+          aria-label={t('photo.choose')}
+          onChange={(e) => onChange(e.target.files?.[0] ?? null)}
+          style={{ display: 'none' }}
+        />
+      </div>
+    </div>
+  );
 }
 
 export function Badge({
@@ -356,6 +495,46 @@ export function ProgressBar({
       </div>
       <span className="pct">{label ?? `${p}%`}</span>
     </div>
+  );
+}
+
+/* -------------------------------------------------------------------------
+ * Theme swatch — one round chip, cut on the diagonal
+ * ---------------------------------------------------------------------- */
+
+/**
+ * A theme is two colours (the rail and the brand), and this is how a theme is
+ * SHOWN: a circle split down the diagonal, rail on one side, brand on the
+ * other — the shape every theme picker uses. One component for the preset list
+ * and for the live preview of a custom pair, so the two can never draw the
+ * same theme differently (rule G4).
+ *
+ * The colours arrive inline because they are data — a church's own pair, or a
+ * catalogue entry's — never a palette decision; the geometry is all in
+ * `.theme-swatch` in globals.css. Decorative by default: the name beside it
+ * carries the meaning, so it is hidden from assistive tech unless the caller
+ * gives it a `title`.
+ */
+export function ThemeSwatch({
+  rail,
+  brand,
+  large,
+  title,
+}: {
+  rail: string;
+  brand: string;
+  large?: boolean;
+  title?: string;
+}) {
+  return (
+    <span
+      className={`theme-swatch ${large ? 'lg' : ''}`}
+      style={{ ['--sw-rail' as string]: rail, ['--sw-brand' as string]: brand }}
+      title={title}
+      role={title ? 'img' : undefined}
+      aria-label={title}
+      aria-hidden={title ? undefined : true}
+    />
   );
 }
 
@@ -446,18 +625,6 @@ export function ChevronLeftIcon({ size = 18 }: { size?: number }) {
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
       strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M15 6l-6 6 6 6" />
-    </svg>
-  );
-}
-
-export function RepeatIcon({ size = 16 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
-      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M17 2l4 4-4 4" />
-      <path d="M3 11V9a4 4 0 0 1 4-4h14" />
-      <path d="M7 22l-4-4 4-4" />
-      <path d="M21 13v2a4 4 0 0 1-4 4H3" />
     </svg>
   );
 }
@@ -674,6 +841,230 @@ export function HallSelect({
   );
 }
 
+/* -------------------------------------------------------------------------
+ * Combobox — the one "pick one out of many" control
+ * ---------------------------------------------------------------------- */
+
+export type { ComboOption };
+
+/**
+ * A `<select>` you can type into. EVERY member picker in the app is one of
+ * these (rule G4): a native `<select>` makes you scroll a list that is only
+ * going to get longer, and on a phone it is a system wheel with no search at
+ * all — which is exactly the complaint this answers.
+ *
+ * What it is, mechanically: a real `<input role="combobox">` over a
+ * `role="listbox"` of `role="option"` rows, wired with `aria-expanded` and
+ * `aria-activedescendant` so the highlighted row is announced without a mouse
+ * ever being involved. ↑/↓ move, Enter picks, Esc closes and puts the typed
+ * text back to the selected label, Tab leaves. The list is filtered by
+ * `comboboxFilter` (`lib/combobox.ts`, unit-tested there).
+ *
+ * Geometry comes from the shared control classes — the input is a plain
+ * `input`, so it is sized by `--control-h` (or `--control-h-sm` with
+ * `size="sm"`) like every other single-line control, and it draws the same
+ * chevron a `<select>` does (rule G9). Nothing here sets a height.
+ */
+export function Combobox({
+  value,
+  onChange,
+  options,
+  placeholder,
+  disabled,
+  clearable = true,
+  size,
+  className,
+  style,
+  ariaLabel,
+}: {
+  /** The selected option's value; '' = nothing chosen. */
+  value: string;
+  onChange: (value: string) => void;
+  options: readonly ComboOption[];
+  placeholder?: string;
+  disabled?: boolean;
+  /** Offer the ✕ that puts the field back to "nothing chosen". Default true. */
+  clearable?: boolean;
+  size?: 'sm';
+  className?: string;
+  style?: React.CSSProperties;
+  ariaLabel?: string;
+}) {
+  const t = useT();
+  const id = useId();
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [active, setActive] = useState(-1);
+  const boxRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const listRef = useRef<HTMLUListElement>(null);
+
+  const selected = options.find((o) => o.value === value) ?? null;
+  const selectedLabel = selected
+    ? selected.hint
+      ? `${selected.label} (${selected.hint})`
+      : selected.label
+    : '';
+  // Closed, the field READS as the selection; open, it is the search box. One
+  // input doing both is what keeps it a single control rather than a field
+  // plus a popover with its own search box inside it.
+  const shown = open ? query : selectedLabel;
+  const matches = useMemo(
+    () => (open ? comboboxFilter(options, query) : [...options]),
+    [open, options, query],
+  );
+
+  const close = useCallback(() => {
+    setOpen(false);
+    setQuery('');
+    setActive(-1);
+  }, []);
+
+  // Clicking anywhere else commits nothing and closes — the same as Esc. A
+  // blur handler alone would fire before the option's own click lands.
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent | TouchEvent) => {
+      if (!boxRef.current?.contains(e.target as Node)) close();
+    };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('touchstart', onDown);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('touchstart', onDown);
+    };
+  }, [open, close]);
+
+  // Keep the highlighted row inside the scroll box, so ↓ through 400 members
+  // does not walk off the bottom of a list that never moves.
+  useEffect(() => {
+    if (!open || active < 0) return;
+    listRef.current?.children[active]?.scrollIntoView({ block: 'nearest' });
+  }, [open, active]);
+
+  const pick = (option: ComboOption) => {
+    onChange(option.value);
+    close();
+    inputRef.current?.focus();
+  };
+
+  const optionId = (i: number) => `${id}-o${i}`;
+
+  const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (!open) {
+        setOpen(true);
+        setActive(e.key === 'ArrowDown' ? 0 : options.length - 1);
+        return;
+      }
+      setActive((i) => nextActiveIndex(i, matches.length, e.key === 'ArrowDown' ? 1 : -1));
+      return;
+    }
+    if (e.key === 'Enter') {
+      if (open && active >= 0 && matches[active]) {
+        // Only swallow the key when it actually picked something — otherwise a
+        // form's own Enter-to-submit still works.
+        e.preventDefault();
+        pick(matches[active]);
+      }
+      return;
+    }
+    if (e.key === 'Escape') {
+      if (open) {
+        e.preventDefault();
+        close();
+      }
+      return;
+    }
+    if (e.key === 'Tab') close();
+  };
+
+  return (
+    <div
+      className={`combo${size === 'sm' ? ' sm' : ''}${className ? ` ${className}` : ''}`}
+      style={style}
+      ref={boxRef}
+    >
+      <input
+        ref={inputRef}
+        className={size === 'sm' ? 'sm' : undefined}
+        type="text"
+        role="combobox"
+        aria-expanded={open}
+        aria-controls={`${id}-list`}
+        aria-autocomplete="list"
+        aria-activedescendant={open && active >= 0 ? optionId(active) : undefined}
+        aria-label={ariaLabel}
+        autoComplete="off"
+        disabled={disabled}
+        // Opening the field clears it back to a search box, so the greyed text
+        // becomes what is currently chosen — the selection is never lost from
+        // sight just because the list was opened to change it.
+        placeholder={open && selectedLabel ? selectedLabel : placeholder}
+        value={shown}
+        onChange={(e) => {
+          setQuery(e.target.value);
+          setOpen(true);
+          setActive(0);
+        }}
+        onFocus={() => setOpen(true)}
+        onClick={() => setOpen(true)}
+        onKeyDown={onKeyDown}
+      />
+      {clearable && !!value && !disabled && (
+        <button
+          type="button"
+          className="combo-clear"
+          title={t('combo.clear')}
+          aria-label={t('combo.clear')}
+          // Keep focus on the input, so clearing does not bounce focus to the
+          // button and back (which would re-fire onFocus and reopen the list).
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => {
+            onChange('');
+            close();
+            inputRef.current?.focus();
+          }}
+        >
+          ✕
+        </button>
+      )}
+      {open && (
+        <ul className="combo-list" id={`${id}-list`} role="listbox" ref={listRef}>
+          {matches.map((o, i) => (
+            <li
+              key={o.value}
+              id={optionId(i)}
+              role="option"
+              aria-selected={o.value === value}
+              className={`combo-option${i === active ? ' active' : ''}`}
+              // mousedown, not click: the input would blur first otherwise and
+              // the list would already be gone by the time click fired.
+              onMouseDown={(e) => {
+                e.preventDefault();
+                pick(o);
+              }}
+              onMouseEnter={() => setActive(i)}
+            >
+              {/* Label over its second line, hint beside them — the same
+                  two-line shape `<MemberName />` draws in the lists this
+                  picker chooses from, so a person looks the same wherever
+                  they appear. */}
+              <span className="combo-label">
+                {o.label}
+                {o.sub && <span className="faint combo-sub">{o.sub}</span>}
+              </span>
+              {o.hint && <span className="faint combo-hint">{o.hint}</span>}
+            </li>
+          ))}
+          {matches.length === 0 && <li className="combo-empty">{t('combo.noMatch')}</li>}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 /**
  * Free-form tag entry: type a tag + Enter/comma to add it as a removable
  * chip. Reuses the existing `.chip` filter-chip look (no new CSS). Optional
@@ -750,6 +1141,240 @@ export function TagsInput({
         </datalist>
       )}
     </div>
+  );
+}
+
+/* -------------------------------------------------------------------------
+ * Attendance sheets
+ *
+ * Two pages draw a roll-call grid — the 聚会点名 sheet on /events and a life
+ * group's weekly sheet on /groups/[id]. Their shapes genuinely differ (a
+ * Sunday column split in two beside a meeting's single tick, versus one column
+ * per group meeting), so they are not one component; but the pieces they DO
+ * share live here rather than being typed out twice (rule G4).
+ * ---------------------------------------------------------------------- */
+
+/**
+ * The year + month pair a sheet is read by. Month names follow the interface
+ * language instead of a hardcoded list, and are formatted in UTC so the label
+ * cannot slide a month under a different `TZ` (rule G6a).
+ *
+ * `years` lets a caller widen the list beyond "this year and last" — a sheet
+ * that already holds records for 2023 has to be able to show them.
+ */
+export function MonthPicker({
+  year,
+  month,
+  years,
+  onChange,
+}: {
+  year: number;
+  month: number;
+  years?: number[];
+  onChange: (next: { year: number; month: number }) => void;
+}) {
+  const lang = useLang();
+  const t = useT();
+  const options = [...new Set([...(years ?? []), year])].sort((a, b) => b - a);
+  const monthName = (m: number) =>
+    new Intl.DateTimeFormat(lang, { month: 'long', timeZone: 'UTC' }).format(
+      new Date(Date.UTC(2000, m - 1, 1)),
+    );
+  return (
+    <>
+      <select
+        value={year}
+        onChange={(e) => onChange({ year: Number(e.target.value), month })}
+        title={t('sheet.year')}
+        aria-label={t('sheet.year')}
+        style={{ width: 'auto' }}
+      >
+        {options.map((y) => (
+          <option key={y} value={y}>{y}</option>
+        ))}
+      </select>
+      <select
+        value={month}
+        onChange={(e) => onChange({ year, month: Number(e.target.value) })}
+        title={t('sheet.month')}
+        aria-label={t('sheet.month')}
+        style={{ width: 'auto' }}
+      >
+        {Array.from({ length: 12 }, (_, i) => i + 1).map((mo) => (
+          <option key={mo} value={mo}>{monthName(mo)}</option>
+        ))}
+      </select>
+    </>
+  );
+}
+
+/**
+ * One option of a `<Segmented />`. `tone` is an optional active class
+ * (`on-good` / `on-warn` / `on-crit`) for a picker whose choices carry a
+ * meaning; leaving it out gets the neutral `on`.
+ */
+export type SegmentedOption<T extends string> = {
+  value: T;
+  label: string;
+  tone?: 'on-good' | 'on-warn' | 'on-crit';
+};
+
+/**
+ * The one segmented control (rule G4): a row of mutually exclusive buttons,
+ * optionally with a tone per option for choices that carry a meaning. Today
+ * the mentor's daily form picks 已完成 / 未完成 with it.
+ *
+ * Keyed by the STORED code, never by a label (rule G8): `value` is compared
+ * against `option.value`, so switching interface language cannot change which
+ * segment reads as selected.
+ */
+export function Segmented<T extends string>({
+  value,
+  options,
+  onChange,
+  label,
+  block,
+}: {
+  /** The selected code; null / undefined = nothing chosen yet. */
+  value: T | null | undefined;
+  options: readonly SegmentedOption<T>[];
+  onChange: (value: T) => void;
+  /** Accessible name for the group — what these segments choose between. */
+  label: string;
+  /** Stretch to the full width of the row. */
+  block?: boolean;
+}) {
+  return (
+    <div className={`seg${block ? ' block' : ''}`} role="group" aria-label={label}>
+      {options.map((o) => {
+        const active = o.value === value;
+        return (
+          <button
+            key={o.value}
+            type="button"
+            className={active ? o.tone ?? 'on' : ''}
+            aria-pressed={active}
+            onClick={() => onChange(o.value)}
+          >
+            {o.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
+ * One tick on a sheet. A read-only account sees the state and cannot change it
+ * — the server refuses the write regardless, this is the UI's half (rule G2).
+ */
+export function SheetTick({
+  checked,
+  onToggle,
+  disabled,
+  title,
+}: {
+  checked: boolean;
+  onToggle: () => void;
+  disabled?: boolean;
+  title: string;
+}) {
+  return (
+    <input
+      type="checkbox"
+      checked={checked}
+      onChange={onToggle}
+      disabled={disabled}
+      title={title}
+      aria-label={title}
+      style={{ width: 18, height: 18, cursor: disabled ? 'default' : 'pointer', accentColor: 'var(--brand)' }}
+    />
+  );
+}
+
+/**
+ * The check-all that sits in a sheet column's own header, under its date.
+ *
+ * Both roll-call sheets have one (rule G4): 十三个人 × 两个勾 × 五个主日 is 130
+ * taps for a Sunday where everybody came, and 全员到齐 is the normal case.
+ *
+ * It is a real checkbox in the INDETERMINATE state, not a button, because the
+ * column has three states and only two outcomes: everybody ticked reads as
+ * checked and clears the column; nobody or somebody reads as unchecked or mixed
+ * and fills it. Mixed is drawn honestly rather than rounded — the browser
+ * already announces `indeterminate` as "mixed" to a screen reader, which is the
+ * whole reason to use the native control instead of a glyph.
+ *
+ * Clearing a column destroys records, so the CALLER puts that behind the shared
+ * confirmation (rule G3); this component only reports the press.
+ */
+export function SheetTickAll({
+  state,
+  onToggle,
+  disabled,
+  title,
+}: {
+  state: ColumnTickState;
+  onToggle: () => void;
+  disabled?: boolean;
+  title: string;
+}) {
+  const ref = useRef<HTMLInputElement>(null);
+  // `indeterminate` is a property, never an attribute — React cannot set it
+  // from JSX, so it is written on the node after every render.
+  useEffect(() => {
+    if (ref.current) ref.current.indeterminate = state === 'some';
+  }, [state]);
+  return (
+    <input
+      ref={ref}
+      type="checkbox"
+      className="sheet-tick-all"
+      checked={state === 'all'}
+      onChange={onToggle}
+      disabled={disabled}
+      title={title}
+      aria-label={title}
+    />
+  );
+}
+
+/**
+ * The totals row at the FOOT of a roll-call sheet: for each occasion, how many
+ * PEOPLE were there.
+ *
+ * A roll call answers "how many came on that Sunday", not "how many Sundays did
+ * this person come to" — the number belongs under its own column, so it is a
+ * `<tfoot>` and not a trailing column. All three sheets (崇拜与祷告会, a life
+ * group's own meetings, a 培训&活动 namelist) draw it from here rather than
+ * writing their own, so the label, the number formatting and the summary rule
+ * above it are decided in ONE place (rule G4).
+ *
+ * `span` is how many leading cells the sheet has before its first tick column —
+ * one for the two attendance sheets (the name), two for the namelist (name +
+ * role). The caller passes counts it has ALREADY derived for the column
+ * headers' check-all state, never a second walk over the rows (rule G5).
+ *
+ * A sheet with nobody on it renders no table at all, so there is no footer to
+ * draw either; the callers keep it that way.
+ */
+export function SheetTotals({
+  span = 1,
+  counts,
+}: {
+  span?: number;
+  counts: { key: string; value: number }[];
+}) {
+  const t = useT();
+  return (
+    <tfoot>
+      <tr>
+        <th scope="row" colSpan={span}>{t('sheet.totalPeople')}</th>
+        {counts.map((c) => (
+          <td key={c.key}>{c.value}</td>
+        ))}
+      </tr>
+    </tfoot>
   );
 }
 

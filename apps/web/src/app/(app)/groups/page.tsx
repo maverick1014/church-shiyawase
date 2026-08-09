@@ -12,6 +12,7 @@ import {
   ExportButton,
   Field,
   HallSelect,
+  MemberName,
   Modal,
   PageBar,
   RowChevron,
@@ -78,7 +79,14 @@ export default function GroupsPage() {
           .filter(Boolean)
           .join(' '),
         scheduleLocation: g.location ?? '',
-        leaderName: leader?.full_name ?? null,
+        // The leader twice over, derived once here rather than looked up again
+        // per view (rule G5): the ROW itself, so the table cell can draw both
+        // names the way every other list does, and both names flattened into
+        // one string for the places that can only take text — search (so a
+        // leader is found by either name), sorting, the export column and the
+        // phone tile's one-line summary.
+        leader: leader ?? null,
+        leaderName: leader ? `${leader.full_name} ${leader.english_name ?? ''}`.trim() : null,
         memberCount: inGroup.length,
         newMemberCount,
         status: groupHealthStatus(inGroup.length, newMemberCount),
@@ -95,11 +103,13 @@ export default function GroupsPage() {
   }, [groups.data]);
 
   const filteredRows = useMemo(() => {
-    const term = q.trim();
+    // Lowercased on both sides: a leader is looked for as "grace" as often as
+    // "Grace", now that the string being searched carries an English name.
+    const term = q.trim().toLowerCase();
     return rows.filter((g) => {
       if (tagFilter !== 'all' && !g.tags.includes(tagFilter)) return false;
       if (weekdayFilter !== 'all' && g.meetingDay !== weekdayFilter) return false;
-      if (term && !`${g.name}${g.leaderName ?? ''}${g.schedule}`.includes(term)) return false;
+      if (term && !`${g.name}${g.leaderName ?? ''}${g.schedule}`.toLowerCase().includes(term)) return false;
       return true;
     });
   }, [rows, q, tagFilter, weekdayFilter]);
@@ -217,7 +227,7 @@ export default function GroupsPage() {
                       </td>
                       {showHall && <td className="muted">{g.hallName ?? '—'}</td>}
                       <td>
-                        {g.leaderName ? <strong>{g.leaderName}</strong> : <span className="faint">{t('common.vacant')}</span>}
+                        {g.leader ? <MemberName member={g.leader} /> : <span className="faint">{t('common.vacant')}</span>}
                       </td>
                       <td className="muted tnum">{g.memberCount}</td>
                       <td className="muted tnum">{g.newMemberCount}</td>

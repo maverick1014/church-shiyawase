@@ -1,15 +1,58 @@
 /* ==========================================================================
    TOG · 主恩堂教会管理系统 — design system
-   Crimson + charcoal on warm white. Light, mobile-first.
-   Derived from the church logo (charcoal globe + crimson cross-arrow).
+   A church's two colours on warm white. Light, mobile-first.
+   The default pair is the church logo's (charcoal globe + crimson cross-arrow).
+   ==========================================================================
+
+   THE THEME IS TWO COLOURS: --rail (the sidebar) and --brand (the accent).
+   They are the only two a church chooses (教会设置 → 主题颜色, stored on the
+   church record by migration 0017 and applied to <html> at runtime by
+   lib/theme.ts). The values below are the DEFAULTS — today's palette — so a
+   church that has never chosen looks exactly as it always did, and so does the
+   first paint of a page whose record has not arrived yet.
+
+   Everything the design system needs from those two is DERIVED with
+   color-mix() rather than stored: one source per colour, so a shade can never
+   drift apart from the colour it is a shade of, and a new theme is genuinely
+   two values rather than eight.
+
+   What is NOT part of the theme, and must not become derived:
+     --good / --warn / --crit (+ their soft tints) — "absent" and "overdue"
+       carry a meaning of their own; they must not turn into the brand colour
+       because a church picked a red one.
+     --paper / --surface / --surface-2 / --border / --ink / --muted / --faint —
+       the warm neutrals the whole light theme is built on.
    ========================================================================== */
 
 :root {
+  /* ---- the two chosen colours ------------------------------------------ */
   --brand: #a51f24;
-  --brand-2: #7f171b;
-  --brand-soft: #f6e3e3;
-  --accent: #33302f;
-  --accent-soft: #eae7e5;
+  --rail: #201d1b;
+
+  /* ---- derived from --brand -------------------------------------------- */
+  /* A shade down, for gradients and link hover. */
+  --brand-2: color-mix(in srgb, var(--brand) 78%, #000);
+  /* A tint, for brand-coloured badges, focus rings and soft backgrounds. */
+  --brand-soft: color-mix(in srgb, var(--brand) 12%, #fff);
+
+  /* ---- derived from --rail --------------------------------------------- */
+  /* The secondary emphasis colour: the rail, a hair lighter, for use on a
+     light surface (.btn.accent, .b-accent, a selected day cell). */
+  --accent: color-mix(in srgb, var(--rail) 92%, #fff);
+  --accent-soft: color-mix(in srgb, var(--rail) 10%, #fff);
+  /* The sidebar's own foregrounds. These used to be four hardcoded light
+     greys, which silently assumed the rail would always be near-black — pick a
+     pale rail and the navigation disappeared. They are mixes of white towards
+     the rail now, so they follow whatever colour the church chose, and the API
+     refuses a rail too pale to carry them (MIN_RAIL_CONTRAST in
+     packages/shared). Brightest first. */
+  --rail-ink: #fff;
+  --rail-text: color-mix(in srgb, #fff 88%, var(--rail));
+  --rail-muted: color-mix(in srgb, #fff 74%, var(--rail));
+  --rail-faint: color-mix(in srgb, #fff 62%, var(--rail));
+  --rail-dim: color-mix(in srgb, #fff 50%, var(--rail));
+
+  /* ---- independent ----------------------------------------------------- */
   --paper: #f6f3f2;
   --surface: #ffffff;
   --surface-2: #faf7f6;
@@ -17,7 +60,6 @@
   --ink: #232120;
   --muted: #6f6a68;
   --faint: #a49e9b;
-  --rail: #201d1b;
   --good: #2f8f5b;
   --good-soft: #dff0e6;
   --warn: #c9871f;
@@ -126,7 +168,7 @@ button {
   width: 244px;
   flex-shrink: 0;
   background: var(--rail);
-  color: #e7e2df;
+  color: var(--rail-text);
   position: sticky;
   top: 0;
   height: 100vh;
@@ -158,7 +200,7 @@ button {
   font-family: var(--font-serif);
   font-size: 18px;
   font-weight: 600;
-  color: #fff;
+  color: var(--rail-ink);
   letter-spacing: 0.5px;
 }
 .brand-name small {
@@ -166,7 +208,7 @@ button {
   font-family: var(--font-sans);
   font-size: 10px;
   font-weight: 500;
-  color: #a49b96;
+  color: var(--rail-faint);
   letter-spacing: 1.5px;
   margin-top: 2px;
 }
@@ -174,7 +216,7 @@ button {
 .nav-section {
   font-size: 10.5px;
   letter-spacing: 2px;
-  color: #8a807b;
+  color: var(--rail-dim);
   padding: 14px 12px 6px;
   text-transform: uppercase;
 }
@@ -188,7 +230,7 @@ button {
   font-weight: 500;
   margin-bottom: 2px;
   cursor: pointer;
-  color: #cabfbb;
+  color: var(--rail-muted);
   transition: background 0.15s, color 0.15s;
 }
 .nav-link .ico {
@@ -197,7 +239,7 @@ button {
 }
 .nav-link:hover {
   background: rgba(255, 255, 255, 0.05);
-  color: #fff;
+  color: var(--rail-ink);
 }
 .nav-link.active {
   background: var(--brand);
@@ -225,12 +267,12 @@ button {
 }
 .nav-user .who {
   font-size: 13px;
-  color: #fff;
+  color: var(--rail-ink);
   font-weight: 500;
 }
 .nav-user .who small {
   display: block;
-  color: #a49b96;
+  color: var(--rail-faint);
   font-size: 11px;
   font-weight: 400;
 }
@@ -304,10 +346,24 @@ button {
   flex-shrink: 0;
 }
 
+/* The content column fills the shell, exactly like the header above it.
+ *
+ * It used to stop at 1180px — and, with no auto margin, stop on the LEFT, so
+ * every page on a wide screen had the topbar's border running the full width
+ * with a band of empty paper under its right-hand end. The cap is a reading
+ * measure, and nothing here is prose: these pages are tables, roll-call sheets
+ * whose columns are however many occasions a month had, and card grids that
+ * simply fit one more card per row. A page that genuinely wants a narrow
+ * measure asks for it with `.page-narrow` below. */
 .content {
   padding: 26px 34px 70px;
-  max-width: 1180px;
   width: 100%;
+}
+/* Single-column FORM pages (账户详情, 教会设置). A text input stretched across a
+   27" monitor is not more usable, so these keep a measure — as a class, not as
+   an inline width on the page (rules G4/G9). */
+.page-narrow {
+  max-width: 720px;
 }
 
 /* The drawer's congregation switcher — the phone counterpart of the one at the
@@ -478,6 +534,70 @@ tbody tr:last-child td {
 .tnum {
   font-variant-numeric: tabular-nums;
 }
+
+/* A person is TWO names (migration 0018): the Chinese name the church files
+   them under, and the English name half the congregation actually knows them
+   by. `<MemberName />` is the only thing that draws them, and this is the whole
+   of its look — the Chinese name in the row's own weight, the English one on
+   its own line beneath it, smaller and muted so it reads as an aid to
+   recognition rather than as a second field. A column block, so it sits inside
+   a table cell, a mobile tile and a flex row of badges without any of them
+   needing to know there are two lines. */
+.member-name {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+  line-height: 1.3;
+}
+.member-name-en {
+  font-size: 11.5px;
+  font-weight: 400;
+  color: var(--muted);
+  line-height: 1.25;
+}
+
+/* A roll-call sheet is a name column followed by however many occasions the
+   month happened to have, so it is the one table whose width is not up to it.
+   Auto layout hands the leftover space out proportionally, and once the tick
+   columns outnumber the room the name column is what gives — a Chinese name
+   has no word boundary to wrap on, so it breaks one glyph per line ("曾 / 勇 /
+   勒") and the row grows three lines tall. Pin the name column to a real
+   minimum and let it refuse to wrap: when the ticks no longer fit beside it the
+   table scrolls sideways inside its own .table-wrap, which is the behaviour
+   every wide table in this app already has.
+
+   The same nowrap covers the English name on the second line (0018), which is
+   the longer of the two and the one that would otherwise wrap: the cell is
+   sized by whichever name is wider and the sheet scrolls, so a row is two lines
+   tall and never three. The floor is a little wider than one Chinese name for
+   the same reason. */
+.sheet-table th:first-child,
+.sheet-table td:first-child {
+  min-width: 120px;
+  white-space: nowrap;
+}
+/* The totals row at the FOOT of a roll-call sheet (`SheetTotals`): for each
+   occasion, how many people were there. It is a summary of the rows above it,
+   not another row of them, so it is ruled off with a heavier line and carries
+   no bottom border of its own — the card's edge is already there. Tabular
+   figures so the numbers line up under their own tick columns, exactly like
+   `.tnum` everywhere else. */
+.sheet-table tfoot th,
+.sheet-table tfoot td {
+  border-top: 2px solid var(--border);
+  border-bottom: none;
+  font-weight: 600;
+  font-size: 12.5px;
+  color: var(--ink);
+  text-align: center;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.sheet-table tfoot th:first-child {
+  text-align: left;
+  color: var(--muted);
+}
 th.sortable {
   cursor: pointer;
   user-select: none;
@@ -638,13 +758,17 @@ th.sortable:hover {
   background: var(--accent);
   color: var(--surface);
 }
+/* The secondary button. Filled with the warm off-white rather than left
+   transparent: on a white card a transparent button was a rectangle of border
+   with nothing in it, which reads as a disabled field more than as something to
+   press. The fill gives it a body, and the hover then has somewhere to go. */
 .btn.ghost {
-  background: transparent;
+  background: var(--surface-2);
   color: var(--ink);
   border-color: var(--border);
 }
 .btn.ghost:hover {
-  background: var(--surface-2);
+  background: var(--accent-soft);
   filter: none;
 }
 .btn.good {
@@ -898,6 +1022,62 @@ input[type='checkbox']:focus,
 input[type='radio']:focus {
   box-shadow: none;
 }
+/* A file input is the one single-line control whose CONTENT is itself a
+   control: the browser draws a "Choose file" button inside it, sized from the
+   system font. Left alone inside our --control-h box that button sits hard
+   against the top edge and reads like a different design language from the
+   fields around it — which is exactly what the public sign-up form's payment
+   receipt picker sits next to. So pin the text to the same height token and
+   dress the inner button like a small ghost button (G9). It lives here with
+   the other shared control rules — never patched on one page. */
+input[type='file'] {
+  padding: 0 10px;
+  line-height: calc(var(--control-h) - 2px);
+  cursor: pointer;
+}
+input[type='file']::file-selector-button {
+  height: var(--control-h-sm);
+  margin-right: 10px;
+  padding: 0 11px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface-2);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+input[type='file']::file-selector-button:hover {
+  border-color: var(--brand);
+  color: var(--brand);
+}
+
+/* A colour input is the other control whose CONTENT the browser draws: a
+   swatch inside a UA-styled box, with its own padding and (on WebKit) its own
+   border. Left alone it sits a few pixels off the field beside it, which is
+   exactly what the theme picker's two colour fields would do next to their
+   Save button. Same treatment as the date fields below: drop the native box,
+   size it by the shared token, and let the swatch fill what is left (G9). */
+input[type='color'] {
+  padding: 4px;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+  min-height: var(--control-h);
+}
+input[type='color']::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+input[type='color']::-webkit-color-swatch {
+  border: none;
+  border-radius: 5px;
+}
+input[type='color']::-moz-color-swatch {
+  border: none;
+  border-radius: 5px;
+}
+
 /* An empty date/datetime input shows a "dd/mm/yyyy"-style pattern by default
    (this is the browser's internal segment display, not the `placeholder`
    attribute — `:placeholder-shown` does not match it). `.date-empty` is added
@@ -1011,6 +1191,152 @@ textarea {
 .pw-toggle:focus {
   outline: none;
   box-shadow: none;
+}
+
+/* ==========================================================================
+   Combobox — the type-to-search picker every member field uses
+   ==========================================================================
+   Geometry is untouched: the control IS a plain `input`, so `--control-h` (or
+   `--control-h-sm` under `.combo.sm`) already sizes it exactly like the
+   `<select>` or the `.btn` beside it (G9). Nothing below sets a height. The
+   chevron is the same data-URI a `<select>` draws, so a picker that can be
+   typed into still reads as a picker; the ✕ sits to its left, where the
+   password field puts its own inline button. */
+.combo {
+  position: relative;
+}
+.combo input {
+  /* room for the ✕ (when a value is chosen) plus the chevron */
+  padding-right: 56px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%237c8894' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  background-size: 12px 12px;
+  text-overflow: ellipsis;
+}
+.combo.sm input.sm {
+  /* Specificity, deliberately: the shared `input.sm:not(…):not(…)` rule above
+     re-declares `padding` wholesale, so a lighter selector here would lose the
+     room the ✕ and the chevron need. */
+  padding-right: 48px;
+  background-position: right 9px center;
+  background-size: 10px 10px;
+}
+.combo-clear {
+  position: absolute;
+  top: 0;
+  right: 26px;
+  height: 100%;
+  width: 24px;
+  display: grid;
+  place-items: center;
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--muted);
+}
+.combo-clear:hover {
+  color: var(--ink);
+}
+.combo.sm .combo-clear {
+  right: 22px;
+}
+/* The options. Absolute inside `.combo`, so it is the field it belongs to that
+   positions it — including inside the 铁三角, whose seats are only positioned
+   at wide container widths. It scrolls at ~7 rows: a church with 400 members
+   must not open a list taller than the phone. */
+.combo-list {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  max-height: 244px;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  text-align: left;
+}
+.combo-option {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  padding: 7px 9px;
+  border-radius: 7px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.combo-option.active {
+  background: var(--brand-soft);
+}
+.combo-option[aria-selected='true'] {
+  font-weight: 600;
+}
+/* An option is its label over its second line (a member's English name), with
+   the hint beside them — the same shape `.member-name` gives every list, so the
+   person you pick looks like the person you saw. */
+.combo-label {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.combo-sub {
+  font-size: 11px;
+  line-height: 1.25;
+}
+.combo-hint {
+  font-size: 11.5px;
+}
+.combo-empty {
+  padding: 9px;
+  font-size: 12.5px;
+  color: var(--muted);
+  text-align: center;
+}
+
+/* The check-all in a roll-call column's header. Smaller than the row ticks it
+   commands, so a header reads as a header and not as one more member. */
+input.sheet-tick-all {
+  /* `input[type='checkbox']` above sets `width: auto`; matching its
+     specificity (and coming later) is what pins this one to a real size. */
+  width: 15px;
+  height: 15px;
+  margin-top: 3px;
+  cursor: pointer;
+  accent-color: var(--brand);
+}
+input.sheet-tick-all:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+/* A detail page's Cancel / Save row, pinned to the foot of the viewport so it
+   is reachable without scrolling a long form back down. It is `sticky`, not
+   `fixed`: it stays in the document, so it can never cover the last row of
+   content — the content ends above it, and `bottom: 0` only holds it there
+   while there is still page underneath. The safe-area inset keeps it clear of
+   the home indicator on a phone. */
+.detail-footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 16px;
+  padding: 12px 0 calc(12px + env(safe-area-inset-bottom, 0px));
+  background: var(--paper);
+  border-top: 1px solid var(--border);
 }
 
 .hint {
@@ -1139,7 +1465,11 @@ textarea {
   border: 1px dashed var(--border);
 }
 
-/* Segmented control (attendance) ------------------------------------------ */
+/* Segmented control (<Segmented /> in components/ui.tsx) -------------------
+   One row of mutually exclusive buttons, one tone class per option for the
+   choices that carry a meaning (the mentor form's 已完成 / 未完成). Sized by
+   the shared control tokens — a segmented control that invented its own height
+   would sit a few pixels off the <select> beside it (G9). */
 .seg {
   display: inline-flex;
   border: 1px solid var(--border);
@@ -1149,7 +1479,8 @@ textarea {
 .seg button {
   border: none;
   border-right: 1px solid var(--border);
-  padding: 6px 14px;
+  min-height: var(--control-h-sm);
+  padding: 0 14px;
   font-size: 12.5px;
   font-weight: 600;
   background: var(--surface);
@@ -1157,6 +1488,12 @@ textarea {
 }
 .seg button:last-child {
   border-right: none;
+}
+/* The neutral "this one is selected" state, for a strip that has no
+   good/warn/crit meaning to colour by. */
+.seg button.on {
+  background: var(--brand-soft);
+  color: var(--brand);
 }
 .seg button.on-good {
   background: var(--good-soft);
@@ -1204,6 +1541,81 @@ textarea {
 }
 .switch.on .knob {
   transform: translateX(18px);
+}
+
+/* Theme swatch (<ThemeSwatch /> in components/ui.tsx) -----------------------
+   One round chip cut on the diagonal: the rail on one side, the brand on the
+   other — the shape a theme picker is expected to have. Drawn ONCE here and
+   used for every preset in the catalogue and for the live preview of a custom
+   pair, so the two can never disagree about what a theme looks like.
+
+   The two colours are the only thing a caller sets, through --sw-rail /
+   --sw-brand: they are DATA (a church's chosen pair), not palette decisions,
+   which is why they arrive inline rather than as more tokens. The hairline
+   between them is a translucent white so it reads on any pair. */
+.theme-swatch {
+  --sw-rail: var(--rail);
+  --sw-brand: var(--brand);
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: linear-gradient(
+    135deg,
+    var(--sw-rail) 0 calc(50% - 0.75px),
+    rgba(255, 255, 255, 0.9) calc(50% - 0.75px) calc(50% + 0.75px),
+    var(--sw-brand) calc(50% + 0.75px) 100%
+  );
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.16);
+}
+.theme-swatch.lg {
+  width: 42px;
+  height: 42px;
+}
+
+/* One choosable theme: its swatch, its name, and a ✓ when it is the one in
+   use. The tick is the point — a "selected" state told only by a colour is no
+   state at all on a page whose whole subject is colour. */
+.theme-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.theme-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  min-height: var(--control-h);
+  padding: 0 14px 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.theme-option:hover {
+  border-color: var(--brand);
+  color: var(--ink);
+}
+.theme-option.on {
+  border-color: var(--ink);
+  box-shadow: 0 0 0 1px var(--ink);
+  color: var(--ink);
+}
+.theme-option:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+/* Holds the tick's width whether or not this option is the chosen one, so
+   picking another does not re-flow the row. */
+.theme-option .theme-check {
+  width: 11px;
+  font-size: 11px;
+  line-height: 1;
+  text-align: center;
+  flex-shrink: 0;
 }
 
 /* ==========================================================================

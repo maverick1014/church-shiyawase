@@ -249,8 +249,8 @@ async function main() {
    * rejection or a CI timeout therefore skips BOTH the per-module cleanup and
    * the sweep at the end of main(), and the fixtures stay in the church's live
    * database — which is not hypothetical: one crashed run left a group, an
-   * event, a recurring rule, a course, a pair and four members behind, and
-   * they had to be deleted by hand.
+   * event, a course, a pair and four members behind, and they had to be
+   * deleted by hand.
    *
    * So sweep on the way out as well. Registered here, right after `disposable`,
    * because from this point on the script can create rows.
@@ -261,12 +261,85 @@ async function main() {
       stream(`  ↳ ${why}: ${gone ? 'deleted' : 'COULD NOT DELETE'} leftover ${f.label} (${f.path})`);
     }
   };
+  /**
+   * Settings this run took over and must hand back — the church's add-on module
+   * states and the account's interface language. Deleting a fixture is not
+   * enough: those two are switches on the LIVE church, and a run that dies
+   * holding one leaves real users with a module switched off or an interface in
+   * a language nobody chose.
+   *
+   * Each entry re-reads the current value and only writes when it differs, so
+   * running one twice is harmless — which is what lets the normal path keep its
+   * own explicit restores while the crash path below drains the same list.
+   */
+  const restorers = [];
+  const restoreLater = (label, run) => restorers.push({ label, run });
+  const runRestorers = async (why, stream = console.log) => {
+    for (const r of restorers.splice(0).reverse()) {
+      const ok = await r.run().then(() => true).catch(() => false);
+      stream(`  ↳ ${why}: ${ok ? 'restored' : 'COULD NOT RESTORE'} ${r.label}`);
+    }
+  };
+
+  /**
+   * The last word on test data: delete EVERY ZZ_UITEST_… row in the church,
+   * not just the ones this run registered.
+   *
+   * `sweep` above can only remove what this process created. Anything left by
+   * an earlier run — one that was killed before its handlers fired, one whose
+   * delete was refused, one from a build that predates the sweep — is invisible
+   * to it and simply accumulates in the church's live database, which is what
+   * the owner found. This asks the API what is actually there and removes
+   * whatever carries the fixture prefix, whoever made it.
+   *
+   * Order matters and is the reverse of how a fixture is built: a pair holds
+   * two members, a training holds its enrolments, a group holds its roster. So
+   * pairs first, then the things that only reference members, then the members,
+   * then the groups they sat in.
+   *
+   * It returns what it could NOT delete, because residue that cannot be removed
+   * has to be loud rather than logged — see the check in main()'s finally.
+   */
+  const PREFIX = 'ZZ_UITEST';
+  const purgeResidue = async (stream = console.log) => {
+    const stuck = [];
+    const list = (path) => apiGet(path).catch(() => []);
+    const kill = async (label, path) => {
+      if (await apiDelete(path)) stream(`  ↳ purge: deleted stray ${label} (${path})`);
+      else stuck.push(`${label} (${path})`);
+    };
+    const named = (rows, field) =>
+      (Array.isArray(rows) ? rows : []).filter((r) => String(r?.[field] ?? '').startsWith(PREFIX));
+
+    // A pair has no name of its own — it is stray when either person on it is.
+    for (const p of (await list('/discipleship/pairs')).filter?.(
+      (x) =>
+        String(x?.mentor?.full_name ?? '').startsWith(PREFIX) ||
+        String(x?.trainee?.full_name ?? '').startsWith(PREFIX),
+    ) ?? []) {
+      await kill('pair', `/discipleship/pairs/${p.id}`);
+    }
+    for (const t of named(await list('/trainings'), 'name')) await kill('training', `/trainings/${t.id}`);
+    for (const e of named(await list('/events'), 'title')) await kill('meeting', `/events/${e.id}`);
+    for (const m of named(await list('/members'), 'full_name')) await kill('member', `/members/${m.id}`);
+    for (const g of named(await list('/groups'), 'name')) await kill('group', `/groups/${g.id}`);
+    return stuck;
+  };
+
   const dieCleanly = async (why, err) => {
     if (err) console.error(`UI E2E ${why}:`, err);
     if (leftovers.length) {
       console.error(`\n${leftovers.length} fixture(s) still live after ${why} — removing them.`);
       await sweep(why, console.error).catch(() => {});
     }
+    if (restorers.length) {
+      console.error(`${restorers.length} live setting(s) still held after ${why} — handing them back.`);
+      await runRestorers(why, console.error).catch(() => {});
+    }
+    // And the same total purge the normal path ends with: a crash is exactly
+    // when a fixture goes missing from the list (a module that died between
+    // creating a row and registering it), so the by-name pass matters most here.
+    await purgeResidue(console.error).catch(() => {});
     process.exit(1);
   };
   process.on('uncaughtException', (e) => void dieCleanly('uncaught exception', e));
@@ -274,6 +347,27 @@ async function main() {
   for (const sig of ['SIGINT', 'SIGTERM']) {
     process.on(sig, () => void dieCleanly(sig));
   }
+
+  // Today in MALAYSIA — the zone every sheet is read in. The runner may be in
+  // UTC (or anywhere), so taking the month from `new Date()` would open the
+  // wrong sheet for the first 8 hours of a new month (rule G6a).
+  const KL_TODAY = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kuala_Lumpur',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+  const [SHEET_YEAR, SHEET_MONTH] = KL_TODAY.split('-');
+
+  /**
+   * One member's cells on this month's roll-call sheet, straight from the API —
+   * keyed by column (`sunday:YYYY-MM-DD` / `meeting:<id>`), which is what the
+   * page ticks and therefore what a tick has to show up as.
+   */
+  const sheetCellsOf = async (memberId) => {
+    const sheet = await apiGet(`/attendance/sheet?year=${SHEET_YEAR}&month=${Number(SHEET_MONTH)}`);
+    return sheet.rows.find((r) => r.member?.id === memberId)?.cells ?? {};
+  };
 
   // Members and groups carry a NOT NULL hall. A hall-scoped account would have
   // one forced on server-side, but this login is 全堂权限, so it must name one.
@@ -317,15 +411,20 @@ async function main() {
     };
   };
 
-  /** A throwaway event starting now, so it lands in the page's "Today" section. */
+  /**
+   * A throwaway hand-added meeting, starting now so it lands in the month the
+   * 崇拜与祷告会 page opens on — where it is a dated COLUMN on the roll-call
+   * sheet. Sundays are no longer events at all (the calendar supplies them), so
+   * this is a plain `meeting` — the shape someone actually adds.
+   */
   const makeEvent = async () => {
     const row = await apiPost('/events', {
-      title: fixtureName('EVENT'),
-      event_type: 'service',
+      title: fixtureName('MEETING'),
+      event_type: 'meeting',
       starts_at: new Date().toISOString(),
       hall_id: await someHallId(),
     });
-    return { id: row.id, name: row.title, remove: disposable(`event ${row.title}`, `/events/${row.id}`) };
+    return { id: row.id, name: row.title, remove: disposable(`meeting ${row.title}`, `/events/${row.id}`) };
   };
 
   /**
@@ -357,25 +456,75 @@ async function main() {
   };
 
   /**
-   * A throwaway 循环聚会 rule — PAUSED on purpose. An active rule tops up the
-   * events calendar on every GET /events, and the occurrences it generates
-   * deliberately outlive it (they carry attendance), so an active fixture could
-   * not be cleaned up afterwards. Paused, it still renders its own row on
-   * /events/recurring and writes nothing else.
+   * A throwaway PAID course with one sign-up carrying a payment receipt
+   * (migration 0016) — what the admin has to be able to open BEFORE approving.
+   *
+   * The receipt is uploaded through the PUBLIC sign-up path, exactly as a
+   * visitor's would be, because that is the path that stores it; the sign-up
+   * therefore needs a member whose full name matches exactly one row, which is
+   * why it brings its own.
    */
-  const makeRecurringRule = async () => {
-    const row = await apiPost('/recurring-events', {
-      title: fixtureName('RECURRING'),
-      event_type: 'prayer',
-      weekday: 'wednesday',
-      start_time: '20:00:00',
+  const makePaidTraining = async () => {
+    const row = await apiPost('/trainings', {
+      name: fixtureName('PAID'),
+      total_sessions: 1,
+      is_enrollable: true,
+      fee: 30,
+      payment_instructions: 'ZZ_UITEST Maybank 5123 4567 8901',
+      pic: 'ZZ_UITEST PIC',
+      pic_contact: '012-000 0000',
       hall_id: await someHallId(),
-      active: false,
     });
+    const removeTraining = disposable(`paid training ${row.name}`, `/trainings/${row.id}`);
+    const payer = await makeMember('PAYER');
+    // A 1×1 PNG standing in for a photo of a bank transfer.
+    const receipt = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+      'base64',
+    );
+    const signUp = await ctx.request.post(`${BASE}/api/trainings/enroll/${row.id}`, {
+      multipart: {
+        full_name: payer.name,
+        slip: { name: 'receipt.png', mimeType: 'image/png', buffer: receipt },
+      },
+    });
+    const outcome = await signUp.json().catch(() => null);
+    if (outcome?.status !== 'ok')
+      throw new Error(`paid sign-up fixture failed: ${signUp.status()} ${JSON.stringify(outcome)}`);
     return {
       id: row.id,
-      name: row.title,
-      remove: disposable(`recurring rule ${row.title}`, `/recurring-events/${row.id}`),
+      name: row.name,
+      payer,
+      remove: async () => { await removeTraining(); await payer.remove(); },
+    };
+  };
+
+  /**
+   * A throwaway ACTIVITY — the other shape in the same catalog (`kind`,
+   * migration 0014): one occasion, one sign-up, one column to tick. Its single
+   * session is created by the API with it, so nothing is added here; the
+   * approved sign-up is what puts a row on its roll call. It carries a time and
+   * a meeting point too (0016), which live on the training row itself.
+   */
+  const makeActivity = async () => {
+    const row = await apiPost('/trainings', {
+      name: fixtureName('ACTIVITY'),
+      kind: 'activity',
+      is_enrollable: true,
+      starts_on: KL_TODAY,
+      ends_on: KL_TODAY,
+      start_time: '09:30',
+      location: 'ZZ_UITEST car park',
+      hall_id: await someHallId(),
+    });
+    const removeActivity = disposable(`activity ${row.name}`, `/trainings/${row.id}`);
+    const goer = await makeMember('GOER');
+    await apiPost(`/trainings/${row.id}/enroll`, { member_id: goer.id, status: 'approved' });
+    return {
+      id: row.id,
+      name: row.name,
+      goer,
+      remove: async () => { await removeActivity(); await goer.remove(); },
     };
   };
 
@@ -408,19 +557,16 @@ async function main() {
   const makeSample = async () => {
     const group = await makeRosteredGroup();
     const event = await makeEvent();
-    const recurring = await makeRecurringRule();
     const training = await makeTraining();
     const pair = await makePair();
     return {
       group,
       event,
-      recurring,
       training,
       pair,
       remove: async () => {
         await pair.remove();
         await training.remove();
-        await recurring.remove();
         await event.remove();
         await group.remove();
       },
@@ -461,10 +607,16 @@ async function main() {
     if (!loggedIn) throw new Error('login failed — aborting remaining checks');
     const sidebar = await page.locator('.sidebar').innerText();
     check(
-      'sidebar lists every module + Users (super admin only)',
-      ['Members', 'Life Groups', 'Events & Attendance', 'Trainings', 'Forty Days', 'Users']
+      'sidebar lists every module + Users and Church settings (super admin only)',
+      ['Members', 'Life Groups', 'Services', 'Trainings & Activities', 'Forty Days', 'Users', 'Church settings']
         .every((label) => sidebar.includes(label)),
     );
+    // The brand at the top of the sidebar is the CHURCH's own name, read from
+    // its record — not a translated string and not a hardcoded one.
+    const churchRecord = await apiGet('/church');
+    check('the sidebar brand shows the church record’s name',
+      sidebar.includes(churchRecord.short_name || churchRecord.name),
+      churchRecord.short_name || churchRecord.name);
     await shot('01-dashboard');
 
     /* -- member directory ------------------------------------------------- */
@@ -490,6 +642,34 @@ async function main() {
     // Export is icon-only now, so identify it by its accessible name.
     check('the export button is present', (await page.locator('button[aria-label*="Export"]').count()) > 0);
     await filters.first().selectOption('all');
+    await w(300);
+
+    /* A person is TWO names (migration 0018) and every list draws both: the
+       Chinese name with the English one under it, on its own line. The fixture
+       brings its own English name — the church's real members may or may not
+       have one, and "the church happens to have somebody bilingual" is not
+       something a test may depend on. Searching for the Chinese name also
+       proves the row is reachable at all. */
+    const bilingual = await makeMember('BINAME', { english_name: 'E2E English Name' });
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.locator('.mtile').first().waitFor({ timeout: 20000 });
+    await page.fill('input[placeholder*="Search"]', bilingual.name);
+    await w(600);
+    const nameTile = page.locator('.mtile').first();
+    const nameTileText = (await nameTile.count()) ? await nameTile.innerText() : '';
+    check('a member row shows the Chinese name with the English one under it',
+      nameTileText.includes(bilingual.name) &&
+        nameTileText.includes('E2E English Name') &&
+        (await nameTile.locator('.member-name-en').count()) > 0,
+      nameTileText.replace(/\n/g, ' ⏎ ').slice(0, 120));
+    // …and the search itself matches EITHER name.
+    await page.fill('input[placeholder*="Search"]', 'e2e english name');
+    await w(600);
+    check('the search box finds a member by their English name',
+      (await page.locator('.mtile').count()) === 1 &&
+        (await page.locator('.mtile').first().innerText()).includes(bilingual.name));
+    await bilingual.remove();
+    await page.fill('input[placeholder*="Search"]', '');
     await w(300);
     // Group filter = second filter select; drive its first real option (index 1).
     const groupVal = await filters.nth(1).locator('option').nth(1).getAttribute('value');
@@ -540,7 +720,13 @@ async function main() {
       await page.waitForURL(/\/groups\/[0-9a-f-]+/, { timeout: 15000 });
       await page.locator('text=Leadership trio').first().waitFor({ timeout: 15000 });
       check('group detail shows the leadership trio', true);
-      check('the leadership assignment dropdowns are present', (await page.locator('select.sm').count()) > 0);
+      // Every member picker is a type-to-search combobox now, never a native
+      // <select>: on a phone a <select> is a system wheel with no search at
+      // all, and the church's member list only gets longer.
+      const trioPick = page.locator('.trio-pick input[role=combobox]');
+      check('the three leadership seats are type-to-search comboboxes',
+        (await trioPick.count()) === 3 && (await page.locator('select.trio-pick').count()) === 0,
+        `${await trioPick.count()} comboboxes`);
       check('the year / month selects are present', (await page.locator('select').count()) >= 2);
       await page.locator('th:has-text("Week")').first().waitFor({ timeout: 20000 });
       check('weekly attendance renders a column per Sunday', (await page.locator('th:has-text("Week")').count()) > 0,
@@ -549,43 +735,342 @@ async function main() {
       check('the roster lists the member who is in this group',
         (await page.locator(`td:has-text("${fxGroup.member.name}")`).count()) > 0);
       await shot('04-group-detail');
+
+      // The group's roll call is the group's OWN meetings and nothing else:
+      // the 小组 / 会前 / 主日 tabs are gone, because a member's Sunday is one
+      // fact taken once, on 崇拜与祷告会. So there must be no segmented control
+      // anywhere on this page — neither in the card nor in the page bar.
+      check('the roll-call card offers no roll-call tabs any more',
+        (await page.locator('.seg').count()) === 0, `${await page.locator('.seg').count()} segmented control(s)`);
+
+      // Its toolbar is the month picker's two selects on the left and the
+      // export button LAST, in the right corner — the same halves a page bar
+      // has (rule G7a). A spacer sits between them, so the shape is four
+      // children and the assertion is about the ORDER and the last one, not
+      // about a fixed count of controls.
+      const sheetCard = page.locator('.card', { has: page.locator('th:has-text("Week")') });
+      const toolbar = sheetCard.locator('.flex.gap-8.mb-14').first();
+      await toolbar.waitFor({ timeout: 20000 });
+      const toolbarShape = await toolbar.evaluate((el) =>
+        [...el.children].map((c) => c.tagName.toLowerCase() + (c.getAttribute('aria-label') ? `[${c.getAttribute('aria-label')}]` : '')),
+      );
+      check('the export button is the last control in the card’s toolbar',
+        toolbarShape.length >= 3 && toolbarShape[0].startsWith('select') && toolbarShape[1].startsWith('select') &&
+          toolbarShape[toolbarShape.length - 1].startsWith('button'),
+        toolbarShape.join(' | '));
+      check('…and it is an export button, not something else',
+        (await sheetCard.locator('button[aria-label*="Export"]').count()) === 1);
+
+      // Ticking a week writes the group's own roll call, and unticking it puts
+      // it back — the card is a sheet like every other one.
+      const groupRow = sheetCard.locator('tr', { has: page.locator(`td:has-text("${fxGroup.member.name}")`) });
+      await groupRow.first().waitFor({ timeout: 20000 });
+      check('the sheet lists this group’s member exactly once',
+        (await groupRow.count()) === 1, `${await groupRow.count()} row(s)`);
+      const weekTick = groupRow.locator('input[type=checkbox]').first();
+      // click, not check(): the tick is optimistic and the row re-renders from
+      // the server, so the checkbox's own state is not the fact worth
+      // asserting — what the API returns is.
+      await weekTick.click();
+      await w(1500);
+      const groupSheet = await apiGet(`/groups/${fxGroup.id}/attendance`);
+      const marked = (groupSheet.rows || [])
+        .find((r) => r.member?.id === fxGroup.member.id)?.cells
+        ?.some((c) => c.status === 'present');
+      check('ticking a week records the group’s own meeting', marked === true, JSON.stringify(groupSheet.meetings || []));
+      await weekTick.click();
+      await w(1500);
+      const groupAfter = await apiGet(`/groups/${fxGroup.id}/attendance`);
+      const stillMarked = (groupAfter.rows || [])
+        .find((r) => r.member?.id === fxGroup.member.id)?.cells
+        ?.some((c) => c.status === 'present');
+      check('unticking it takes the mark off again', stillMarked !== true);
+
+      /* -- the column check-all (全员到齐) ------------------------------- */
+      // Marking a roster one person at a time is what this shortcut exists to
+      // stop. Safe to drive here: the group, its roster and its meetings were
+      // all created by this run.
+      const presentIn = (sheet) =>
+        (sheet.rows || []).filter((r) => (r.cells || []).some((c) => c.status === 'present')).length;
+      const weekAll = sheetCard.locator('thead input.sheet-tick-all');
+      const weekCount = await page.locator('th:has-text("Week")').count();
+      check('every week column carries a check-all in its header',
+        (await weekAll.count()) === weekCount, `${await weekAll.count()} of ${weekCount}`);
+      const firstAll = weekAll.first();
+      check('…which reads as empty while nobody is ticked',
+        !(await firstAll.isChecked()) && (await firstAll.evaluate((el) => el.indeterminate)) === false);
+
+      await firstAll.click();
+      await w(1800);
+      check('filling a whole column needs no confirmation — nothing is lost',
+        (await page.locator('.modal-backdrop').count()) === 0);
+      const filled = await apiGet(`/groups/${fxGroup.id}/attendance`);
+      check('the header check-all marks the whole roster',
+        presentIn(filled) === (filled.rows || []).length && (filled.rows || []).length > 0,
+        `${presentIn(filled)} of ${(filled.rows || []).length}`);
+      check('…and the header then reads as fully ticked', await firstAll.isChecked());
+
+      // Clearing throws real marks away, so it must ask first and say how many
+      // (rule G3).
+      await firstAll.click();
+      await page.locator('.modal-backdrop').last().waitFor({ timeout: 8000 });
+      const clearCopy = await page.locator('.modal-backdrop').last().innerText();
+      check('clearing a whole column asks first, names the column and warns it is final',
+        /Week\s*\d/.test(clearCopy) && /cannot be undone/i.test(clearCopy),
+        clearCopy.replace(/\s+/g, ' ').slice(0, 140));
+      await page.locator('.modal-backdrop').last().locator('button:has-text("Clear column")').last().click();
+      await w(1800);
+      const emptied = await apiGet(`/groups/${fxGroup.id}/attendance`);
+      check('confirming clears every mark in that column', presentIn(emptied) === 0,
+        `${presentIn(emptied)} still present`);
+
+      /* -- the member combobox: type, filter, pick ----------------------- */
+      // Driven on the leadership seat, whose options are this group's own
+      // members — so the person typed for and the person picked are both
+      // fixtures this run created.
+      const seat = trioPick.first();
+      await seat.click();
+      await page.locator('.combo-list').first().waitFor({ timeout: 8000 });
+      check('clicking a member picker opens its option list',
+        (await page.locator('.combo-list .combo-option').count()) > 0,
+        `${await page.locator('.combo-list .combo-option').count()} options`);
+      await seat.fill('ZZ_NOBODY_BY_THIS_NAME');
+      await w(400);
+      check('a query nobody matches says so instead of showing a stale list',
+        (await page.locator('.combo-empty').count()) === 1 &&
+          (await page.locator('.combo-list .combo-option').count()) === 0);
+      await seat.fill(fxGroup.member.name);
+      await w(400);
+      const narrowed = await page.locator('.combo-list .combo-option').count();
+      check('typing part of a name narrows the list to that member', narrowed === 1, `${narrowed} options`);
+      await page.locator('.combo-list .combo-option').first().click();
+      await w(1800);
+      const assigned = await apiGet(`/groups/${fxGroup.id}`);
+      check('picking an option saves that member, not the typed text',
+        (assigned.members || []).find((m) => m.id === fxGroup.member.id)?.group_position === 'leader',
+        JSON.stringify((assigned.members || []).map((m) => m.group_position)));
+      check('…and the field then reads back the member it saved',
+        (await seat.inputValue()).includes(fxGroup.member.name),
+        await seat.inputValue());
+      check('the option list closes once something is picked',
+        (await page.locator('.combo-list').count()) === 0);
     } finally {
       await fxGroup.remove();
     }
 
-    /* -- events & attendance ---------------------------------------------- */
-    // Roll call and the edit dialog both need an event to open. The calendar is
-    // empty in the live database, so this module supplies one and works on it
-    // by name — never on "whatever sorts first".
-    mod('events & attendance');
-    const fxEvent = await makeEvent();
+    /* -- services · one roll-call sheet ------------------------------------ */
+    // The page is ONE sheet: members down the left, and across the top the
+    // month's Sundays (two ticks each, 会前 / 主日) with every hand-added
+    // meeting sorted into place among them (one tick, 到场). Nothing creates a
+    // Sunday, so this module needs only a member to put on the sheet and one
+    // meeting to give it a meeting column.
+    //
+    // No congregation has to be picked any more: on 全部堂会 the sheet simply
+    // lists every member, which is what this runs as.
+    mod('services · roll-call sheet · meetings');
+    const fxSheetMember = await makeMember('SUNDAY');
+    const fxMeeting = await makeEvent();
+    /** That member's cells on the live sheet, straight from the API. */
+    const sheetCells = () => sheetCellsOf(fxSheetMember.id);
     try {
       await page.goto(`${BASE}/events`, { waitUntil: 'domcontentloaded' });
-      const eventCard = page.locator('.card', { hasText: fxEvent.name });
-      await eventCard.first().waitFor({ timeout: 20000 });
-      check('a created event appears on the events page', (await eventCard.count()) === 1);
-      await eventCard.locator('button:visible:has-text("Roll call")').first().click();
+      await page.locator('.page-bar').first().waitFor({ state: 'attached', timeout: 20000 });
+
+      const memberCell = page.locator(`td:has-text("${fxSheetMember.name}")`);
+      await memberCell.first().waitFor({ timeout: 20000 });
+      check('on 全部堂会 the sheet lists every congregation’s members, without asking for one',
+        (await memberCell.count()) === 1 &&
+          !/choose a congregation/i.test(await page.locator('.content').innerText()));
+      // One column group per Sunday, each split in two — and a month holds four
+      // Sundays at the very least. (There is no trailing totals group any more:
+      // the headcount per occasion is a <tfoot> row, checked below.)
+      const preHeads = await page.locator('th:has-text("Pre-service")').count();
+      check('every Sunday gets a 会前 / 主日 pair of columns', preHeads >= 4, `${preHeads} headers`);
+      // The sheet totals DOWN a column, not across a row: how many people came
+      // to that occasion, in the foot of the table.
+      const foot = page.locator('.sheet-table tfoot tr');
+      check('the sheet totals each occasion in a footer row, not per person',
+        (await foot.count()) === 1 &&
+          /People present/i.test(await foot.first().innerText()));
+      check('…and no row ends in a per-person tally column',
+        (await page.locator('.sheet-table thead th:has-text("Total")').count()) === 0);
+      check('the sheet is ticked with check boxes, like the life-group sheet',
+        (await page.locator('input[type=checkbox]').count()) > 0);
+
+      // The meeting is a COLUMN on the same grid, not a second card — with one
+      // tick, because one occasion has one thing to record. That is its
+      // header's own colspan: counting "Attended" headers across the sheet
+      // instead would answer a different question, because the month may
+      // legitimately hold other meetings than this run's, each with a column
+      // of its own.
+      const meetingHead = page.locator('th', { hasText: fxMeeting.name });
+      await meetingHead.first().waitFor({ timeout: 20000 });
+      check('a hand-added meeting is a dated column on the same sheet',
+        (await meetingHead.count()) === 1);
+      const meetingSpan = await meetingHead.first().getAttribute('colspan');
+      check('…carrying exactly one tick, not an invented 会前 as well',
+        meetingSpan === '1', `colspan=${meetingSpan}`);
+      check('the meetings no longer have a card of their own',
+        (await page.locator('.meeting-row').count()) === 0);
+
+      // Tick → the cell is stored; untick → the row is GONE, not stored as two
+      // falses ("no row" already means "not recorded"). Each tick names its own
+      // column in its title, which is how the meeting's cell is found among the
+      // Sundays' without counting columns.
+      const sheetRow = page.locator('tr', { has: page.locator(`td:has-text("${fxSheetMember.name}")`) });
+      const firstTick = sheetRow.locator('input[type=checkbox]').first();
+      // click, not check(): the tick is optimistic and the row re-renders from
+      // the server, so the checkbox's own state is not the fact worth
+      // asserting — the row in the sheet is, and that is what the next check
+      // reads back through the API. Same reasoning as the group sheet above.
+      await firstTick.click();
+      await w(1500);
+      const ticked = await sheetCells();
+      check('ticking a Sunday cell records it under a sunday column',
+        Object.entries(ticked).some(([key, c]) => key.startsWith('sunday:') && c.pre_service),
+        JSON.stringify(ticked));
+      await firstTick.click();
+      await w(1500);
+      const cleared = await sheetCells();
+      check('unticking it leaves no row behind', Object.keys(cleared).length === 0, JSON.stringify(cleared));
+
+      const meetingTick = sheetRow.locator(`input[title*="${fxMeeting.name}"]`);
+      check('the meeting’s column is ticked in the same row', (await meetingTick.count()) === 1);
+      await meetingTick.first().click();
+      await w(1500);
+      const came = await sheetCells();
+      check('ticking the meeting writes the OTHER table, on the same grid',
+        came[`meeting:${fxMeeting.id}`]?.attended === true, JSON.stringify(came));
+      await meetingTick.first().click();
+      await w(1500);
+      const wentBack = await sheetCells();
+      check('unticking the meeting leaves no row behind either',
+        !wentBack[`meeting:${fxMeeting.id}`], JSON.stringify(wentBack));
+
+      /* -- the column check-all (全员到齐) ------------------------------- */
+      // Deliberately driven on THIS RUN'S OWN MEETING column and never on a
+      // Sunday one. The Sundays on this sheet hold the congregation's real
+      // attendance, and clearing one of those columns would delete records the
+      // church actually entered. The fixture meeting holds nothing but what
+      // this run writes, and deleting it below takes every tick with it.
+      const meetingAll = page.locator(`input.sheet-tick-all[aria-label*="${fxMeeting.name}"]`);
+      check('a column carries its check-all in the header, under the date',
+        (await meetingAll.count()) === 1);
+      check('…reading as empty while nobody is ticked',
+        !(await meetingAll.isChecked()) && (await meetingAll.evaluate((el) => el.indeterminate)) === false);
+      // One check-all per sub-column, which is exactly one per tick in a
+      // member's row: two per Sunday (会前 / 主日 filled separately) plus one
+      // per meeting. Comparing the two counts states that without having to
+      // know how many meetings this month happens to hold.
+      const sundayAlls = await page.locator('input.sheet-tick-all').count();
+      const rowTicks = await sheetRow.locator('input[type=checkbox]').count();
+      check('every sub-column gets its own — a Sunday’s two ticks are filled separately',
+        sundayAlls === rowTicks && rowTicks > (await page.locator('th:has-text("Pre-service")').count()),
+        `${sundayAlls} check-alls vs ${rowTicks} ticks in a row`);
+
+      // One person ticked out of the whole sheet is the in-between state, and
+      // it has to be reported honestly rather than rounded to on or off.
+      await meetingTick.first().click();
+      await w(1500);
+      check('one member ticked shows the header as indeterminate, not as checked',
+        (await meetingAll.evaluate((el) => el.indeterminate)) === true &&
+          !(await meetingAll.isChecked()));
+
+      // Filling the column is ONE request for the whole sheet, not one per
+      // member — the reason the write takes a list at all.
+      let columnPuts = 0;
+      const countPut = (r) => {
+        if (r.method() === 'PUT' && r.url().includes('/api/attendance/sheet')) columnPuts++;
+      };
+      page.on('request', countPut);
+      await meetingAll.click();
+      await w(2500);
+      page.off('request', countPut);
+      check('filling a whole column is ONE request, not one per member',
+        columnPuts === 1, `${columnPuts} PUT(s)`);
+      check('…and needs no confirmation, because nothing is lost',
+        (await page.locator('.modal-backdrop').count()) === 0);
+      const wholeSheet = await apiGet(`/attendance/sheet?year=${SHEET_YEAR}&month=${Number(SHEET_MONTH)}`);
+      const onColumn = (wholeSheet.rows || []).filter(
+        (r) => r.cells?.[`meeting:${fxMeeting.id}`]?.attended === true,
+      ).length;
+      check('every member on the sheet is marked by that one call',
+        onColumn === (wholeSheet.rows || []).length && onColumn > 0,
+        `${onColumn} of ${(wholeSheet.rows || []).length}`);
+      check('…and the header now reads as fully ticked', await meetingAll.isChecked());
+
+      // Clearing throws real records away, so it asks first and says how many.
+      await meetingAll.click();
+      await page.locator('.modal-backdrop').last().waitFor({ timeout: 8000 });
+      const clearCopy = await page.locator('.modal-backdrop').last().innerText();
+      check('clearing a whole column asks first, names it and counts what goes',
+        clearCopy.includes(fxMeeting.name) && new RegExp(`${onColumn}\\s+ticks`).test(clearCopy) &&
+          /cannot be undone/i.test(clearCopy),
+        clearCopy.replace(/\s+/g, ' ').slice(0, 160));
+      // Backing out must leave the column exactly as it was.
+      await page.locator('.modal-backdrop').last().locator('button:has-text("Cancel")').last().click();
+      await w(1200);
+      check('backing out of that confirmation changes nothing',
+        (await sheetCells())[`meeting:${fxMeeting.id}`]?.attended === true);
+
+      await meetingAll.click();
+      await page.locator('.modal-backdrop').last().waitFor({ timeout: 8000 });
+      await page.locator('.modal-backdrop').last().locator('button:has-text("Clear column")').last().click();
+      await w(2500);
+      const clearedSheet = await apiGet(`/attendance/sheet?year=${SHEET_YEAR}&month=${Number(SHEET_MONTH)}`);
+      check('confirming leaves no row behind anywhere in that column',
+        (clearedSheet.rows || []).every((r) => !r.cells?.[`meeting:${fxMeeting.id}`]));
+
+      // The meeting's own name in the header is where it is edited from.
+      await meetingHead.locator(`button:has-text("${fxMeeting.name}")`).first().click();
       await page.locator('.modal').waitFor({ timeout: 8000 });
-      check('roll call opens the attendance modal', true);
-      await page.locator('.modal .icon-btn, .modal button:has-text("Close")').first().click();
-      await w(300);
-      await eventCard.locator('button:visible:has-text("Edit")').first().click();
-      await page.locator('.modal').waitFor({ timeout: 8000 });
-      check('the event edit modal opens', true);
-      check('the edit modal opens on that event',
-        (await page.locator('.modal input').first().inputValue()) === fxEvent.name);
+      check('the edit modal opens on that meeting',
+        (await page.locator('.modal input').first().inputValue()) === fxMeeting.name);
+      // A hand-added meeting needs a name and a date, nothing else: no type,
+      // no location. Two inputs (+ the congregation select) and no more.
+      check('a meeting asks only for a name and a date',
+        (await page.locator('.modal input').count()) === 2,
+        `${await page.locator('.modal input').count()} inputs`);
+
+      // The sheet is the widest thing in the app. It has to scroll inside its
+      // own card — the page body must never scroll sideways on a phone.
       await page.locator('.modal button:has-text("Cancel")').first().click();
+      await w(300);
+      const over = await page.evaluate(
+        () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      );
+      check('the wide sheet scrolls inside its card, not the page', over <= 1, `+${over}px`);
       await shot('05-events');
+
+      // Deleting a meeting throws its ticks away with it, so it asks first and
+      // names what it is deleting (rule G3).
+      await meetingHead.locator(`button:has-text("${fxMeeting.name}")`).first().click();
+      await page.locator('.modal').waitFor({ timeout: 8000 });
+      await page.locator('.modal button:has-text("Delete meeting")').first().click();
+      await page.locator('.modal-backdrop').last().waitFor({ timeout: 8000 });
+      const meetingConfirm = await page.locator('.modal-backdrop').last().innerText();
+      check('deleting a meeting asks first, and names it',
+        meetingConfirm.includes(fxMeeting.name) && /attendance/i.test(meetingConfirm),
+        meetingConfirm.replace(/\s+/g, ' ').slice(0, 140));
+      await page.locator('.modal-backdrop').last().locator('button:has-text("Delete")').last().click();
+      await w(1800);
+      const goneFromSheet = (await page.locator('th', { hasText: fxMeeting.name }).count()) === 0;
+      check('the deleted meeting’s column leaves the sheet', goneFromSheet);
+      // Deleted through the UI — take it off the sweep list so the run does not
+      // report a leftover it already cleaned up.
+      if (goneFromSheet) forget(`/events/${fxMeeting.id}`);
     } finally {
-      await fxEvent.remove();
+      await fxMeeting.remove();
+      await fxSheetMember.remove();
     }
 
     /* -- trainings -------------------------------------------------------- */
     // The catalog is empty in the live database, so the course opened here is
     // one this module creates — with a session and a pending enrolee, which is
     // what makes the detail page's two panels worth asserting on at all.
-    mod('trainings · detail');
+    mod('trainings & activities · catalog · detail');
     const fxTraining = await makeTraining();
+    const fxActivity = await makeActivity();
     try {
       await page.goto(`${BASE}/trainings`, { waitUntil: 'domcontentloaded' });
       const courseTitle = page.locator('.card h3', { hasText: fxTraining.name });
@@ -598,11 +1083,177 @@ async function main() {
       check('the session list shows this course\'s session',
         (await page.locator(`strong:has-text("${fxTraining.sessionTitle}")`).count()) > 0);
       check('training detail shows the attendance sheet', (await page.locator('text=Attendance sheet').count()) > 0);
+      // The sign-up link button copies AND says so. Through `navigator.clipboard`
+      // alone, a browser without the async API ran no callback at all: no copy
+      // and no message, which reads as a dead button. Either outcome is now a
+      // toast, so a toast is what this asserts.
+      const linkBtn = page.locator('button:has-text("Sign-up link")');
+      if (await linkBtn.count()) {
+        await linkBtn.first().click();
+        const toasted = await page.locator('.toast').first().waitFor({ timeout: 5000 }).then(() => true, () => false);
+        check('the sign-up link button answers the tap, copied or not', toasted);
+      }
       check('a pending enrolee is offered for approval',
         (await page.locator('.enrol-row button:has-text("Approve")').count()) > 0);
       await shot('06-training-detail');
+
+      // The page is 培训&活动 now: the same catalog holds one-off activities
+      // (兄弟团爬山), so it offers both create paths — and lists both shapes
+      // together, with no filter to hide half of them behind.
+      await page.goto(`${BASE}/trainings`, { waitUntil: 'domcontentloaded' });
+      await page.locator('.page-bar').first().waitFor({ state: 'attached', timeout: 20000 });
+      check('the catalog offers both “Add training” and “Add activity”',
+        (await page.locator('button:visible:has-text("Add training")').count()) > 0 &&
+          (await page.locator('button:visible:has-text("Add activity")').count()) > 0);
+      const activityCard = page.locator('.card h3', { hasText: fxActivity.name });
+      await activityCard.first().waitFor({ timeout: 20000 });
+      check('a created activity appears in the same catalog', (await activityCard.count()) === 1);
+      check('…beside the trainings, with no shape filter between them',
+        (await page.locator('.card h3', { hasText: fxTraining.name }).count()) === 1 &&
+          (await page.locator('.page-bar-filters select').count()) === 0);
+
+      // An activity is ONE occasion: no session list to manage, and its roll
+      // call is a single column of "came".
+      await activityCard.first().click();
+      await page.waitForURL(/\/trainings\/[0-9a-f-]+/, { timeout: 15000 });
+      await page.locator('text=Attendance sheet').first().waitFor({ timeout: 20000 });
+      check('an activity has no session list to manage',
+        (await page.locator('.card-head h3:has-text("Sessions")').count()) === 0);
+      check('its roll call is one “Came” column',
+        (await page.locator('th:has-text("Came")').count()) === 1);
+      check('the person who signed up is on the roll call',
+        (await page.locator(`strong:has-text("${fxActivity.goer.name}")`).count()) > 0);
+      const activityBody = await page.locator('.content').innerText();
+      check('the page calls it an activity, not a training',
+        /Activity/.test(activityBody) && !/Edit training/.test(activityBody),
+        activityBody.replace(/\s+/g, ' ').slice(0, 120));
+      // An activity is one occasion with a TIME and a PLACE (0016), and both
+      // live on the training row — so both read off the header line, and the
+      // form has one field for each rather than a session to open.
+      check('an activity shows its time and its meeting point',
+        /09:30/.test(activityBody) && /ZZ_UITEST car park/.test(activityBody),
+        activityBody.replace(/\s+/g, ' ').slice(0, 200));
+      await shot('06b-activity-detail');
     } finally {
+      await fxActivity.remove();
       await fxTraining.remove();
+    }
+
+    /* -- 报名费: the fee fields, and the receipt behind an approval -------- */
+    // The fee is what turns a sign-up form into a payment: it must stay out of
+    // the way when there is none, and when there IS one the admin has to be
+    // able to open the receipt from the row where they approve — not from
+    // another page. Both halves are asserted here, on a paid course this run
+    // created and signs up for itself.
+    mod('trainings & activities · 报名费 · payment receipt');
+    const fxPaid = await makePaidTraining();
+    // A FREE course to compare against — the fee block and the receipt field
+    // must be absent, not merely empty.
+    const fxTrainingFree = await makeTraining();
+    try {
+      await page.goto(`${BASE}/trainings/${fxPaid.id}`, { waitUntil: 'domcontentloaded' });
+      await page.locator('.card-head h3:has-text("Sign-up fee")').first().waitFor({ timeout: 20000 });
+      const paidBody = await page.locator('.content').innerText();
+      check('a paid course shows the fee and how to pay it',
+        /RM\s*30\.00/.test(paidBody) && /ZZ_UITEST Maybank/.test(paidBody),
+        paidBody.replace(/\s+/g, ' ').slice(0, 200));
+      check('…and the PIC with a number to ring',
+        /ZZ_UITEST PIC/.test(paidBody) && /012-000 0000/.test(paidBody));
+
+      // The receipt opens from the review row, beside Approve.
+      const payerRow = page.locator('.enrol-row', { hasText: fxPaid.payer.name });
+      await payerRow.first().waitFor({ timeout: 20000 });
+      const slipLink = payerRow.locator('a:has-text("Receipt")');
+      check('the pending sign-up offers its receipt where the approval is made',
+        (await slipLink.count()) === 1);
+      const slipHref = await slipLink.first().getAttribute('href');
+      check('…as a real link the admin can open in a new tab',
+        !!slipHref && /^https?:\/\//.test(slipHref) &&
+          (await slipLink.first().getAttribute('target')) === '_blank',
+        String(slipHref).slice(0, 80));
+      check('…and it is next to the Approve button, not on another page',
+        (await payerRow.locator('button:has-text("Approve")').count()) === 1);
+      await shot('06c-paid-training');
+
+      // The public page a payer sees: the amount, how to pay, and a REQUIRED
+      // receipt with the copy that tells them to pay first.
+      await page.goto(`${BASE}/enroll/${fxPaid.id}`, { waitUntil: 'domcontentloaded' });
+      await page.locator('input[type=file]').first().waitFor({ timeout: 20000 });
+      const publicBody = await page.locator('.card').first().innerText();
+      check('the public sign-up page states the fee and how to pay it',
+        /RM\s*30\.00/.test(publicBody) && /ZZ_UITEST Maybank/.test(publicBody),
+        publicBody.replace(/\s+/g, ' ').slice(0, 200));
+      check('…with a line telling people to pay first and upload the receipt',
+        /pay the fee first/i.test(publicBody) && /before approving/i.test(publicBody),
+        publicBody.replace(/\s+/g, ' ').slice(0, 240));
+      check('…and a receipt field that takes a photo or a PDF',
+        (await page.locator('input[type=file]').first().getAttribute('accept'))?.includes('pdf') === true);
+      // The button waits for the receipt: a name alone is not a paid sign-up.
+      await page.locator('input[placeholder]').first().fill('ZZ_UITEST nobody');
+      await w(300);
+      check('the submit button stays disabled until a receipt is attached',
+        await page.locator('button:has-text("Submit enrolment")').first().isDisabled());
+
+      // …and a FREE one asks for none of it, which is the other half.
+      await page.goto(`${BASE}/enroll/${fxTrainingFree.id}`, { waitUntil: 'domcontentloaded' });
+      await page.locator('input[placeholder]').first().waitFor({ timeout: 20000 });
+      const freeBody = await page.locator('.card').first().innerText();
+      check('a free sign-up page shows no fee block and asks for no receipt',
+        !/Sign-up fee/i.test(freeBody) && (await page.locator('input[type=file]').count()) === 0,
+        freeBody.replace(/\s+/g, ' ').slice(0, 160));
+      await shot('06d-public-paid');
+    } finally {
+      await fxPaid.remove();
+      await fxTrainingFree.remove();
+    }
+
+    /* -- members · import + the public registration link ------------------- */
+    // Two doorways onto the same roll: a spreadsheet the office uploads, and a
+    // link a stranger fills in. Neither may create a second copy of somebody
+    // who is already on the roll — that rule lives in `lib/members-import.ts`
+    // and is unit-tested there, so what this asserts is that both doorways
+    // EXIST and open, which no unit test can see.
+    mod('members · import · public registration link');
+    try {
+      await page.goto(`${BASE}/members`, { waitUntil: 'domcontentloaded' });
+      await page.locator('.page-bar').first().waitFor({ state: 'attached', timeout: 20000 });
+      check('the members page offers an import',
+        (await page.locator('button:visible:has-text("Import")').count()) === 1);
+      check('…and a registration link to hand out',
+        (await page.locator('button:visible:has-text("Registration link")').count()) === 1);
+      await page.locator('button:visible:has-text("Import")').first().click();
+      await page.locator('.modal-backdrop').last().waitFor({ timeout: 8000 });
+      const importCopy = await page.locator('.modal-backdrop').last().innerText();
+      check('the import asks for a file and offers the template that names the columns',
+        /template/i.test(importCopy) &&
+          (await page.locator('.modal-backdrop').last().locator('input[type=file]').count()) === 1,
+        importCopy.replace(/\s+/g, ' ').slice(0, 140));
+      check('…and writes nothing on the way in — no apply button before a file',
+        (await page.locator('.modal-backdrop').last().locator('button:has-text("Import"):not(:disabled)').count()) === 0);
+      await page.keyboard.press('Escape');
+      await w(400);
+
+      // The public form itself: no session, no shell, and it must render for
+      // somebody who has never signed in — which is the whole point of it.
+      const anon = await browser.newContext({ viewport: { width: 402, height: 874 } });
+      try {
+        const anonPage = await anon.newPage();
+        await anonPage.goto(`${BASE}/join`, { waitUntil: 'domcontentloaded' });
+        await anonPage.locator('input').first().waitFor({ timeout: 20000 });
+        const joinBody = await anonPage.locator('body').innerText();
+        check('the registration link opens with no session at all',
+          /Register as a member/i.test(joinBody) && (await anonPage.locator('.sidebar').count()) === 0,
+          joinBody.replace(/\s+/g, ' ').slice(0, 140));
+        check('…and takes a photo from the camera OR the gallery, never forcing one',
+          (await anonPage.locator('input[type=file][accept*="image"]').count()) === 1 &&
+            (await anonPage.locator('input[type=file][capture]').count()) === 0);
+        check('…and says it will update rather than duplicate somebody already on the roll',
+          /updates your details/i.test(joinBody));
+      } finally {
+        await anon.close();
+      }
+    } catch (e) {
+      check('the run aborted', false, e.message.split('\n')[0]);
     }
 
     /* -- forty days ------------------------------------------------------- */
@@ -635,93 +1286,36 @@ async function main() {
       await fxPair.remove();
     }
 
-    /* -- forty days · modules --------------------------------------------- */
-    // A 守望模块 (discipleship_programs row) is the definition a pair hangs
-    // off — its name and how many days the pair follows. It had no UI at all,
-    // so when the church's single row was deleted during a data cleanup the
-    // whole feature went dark and only raw SQL could bring it back. This
-    // module drives the create → see → edit → delete cycle through the
-    // dialogs, on a throwaway module of its own: the church's real one is only
-    // ever read, never edited and never deleted (deleting a module cascades to
-    // every pair under it and all of their daily records).
-    mod('forty days · module management');
-    const moduleName = fixtureName('MODULE');
-    /** `{ path, remove }` once the module exists; null until then. */
-    let fxModule = null;
-    const openModules = async () => {
-      await page.locator('button:visible:has-text("Modules")').first().click();
-      await page.locator('.modal').waitFor({ timeout: 8000 });
-    };
-    /** The list dialog's row for one module — Edit / Delete live on it. */
-    const moduleRow = () => page.locator('.modal .flex.items-center', { hasText: moduleName });
-    try {
-      await page.goto(`${BASE}/discipleship`, { waitUntil: 'domcontentloaded' });
-      const modulesBtn = page.locator('button:visible:has-text("Modules")');
-      await modulesBtn.first().waitFor({ timeout: 20000 });
-      check('the forty-days page offers a module manager', (await modulesBtn.count()) > 0);
-
-      await openModules();
-      check('the module dialog offers a create button',
-        (await page.locator('.modal button:has-text("New module")').count()) > 0);
-      await page.locator('.modal button:has-text("New module")').first().click();
-      await page.locator('.modal input').first().waitFor({ timeout: 8000 });
-      await page.locator('.modal input').first().fill(moduleName);
-      // name · description · total days — the length is the third field.
-      await page.locator('.modal input').nth(2).fill('9');
-      await page.locator('.modal button:has-text("Save")').first().click();
-      await w(1500);
-      check('creating a module adds it to the module list', (await moduleRow().count()) === 1);
-
-      // Register it for cleanup the moment the server confirms it exists, so a
-      // failure below can never leave a stray module on the live database.
-      const created = (await apiGet('/discipleship/programs')).find((p) => p.name === moduleName);
-      check('the created module is stored with the length that was typed',
-        !!created && created.total_days === 9, String(created?.total_days));
-      if (created) {
-        const path = `/discipleship/programs/${created.id}`;
-        fxModule = { path, remove: disposable(`discipleship module ${moduleName}`, path) };
-      }
-
-      // Close the dialog: with two or more modules the page grows a selector,
-      // and it belongs in the filters half of the page bar, never the actions.
-      await page.locator('.modal button:has-text("Close")').first().click();
-      await w(600);
-      const selectorOptions = await page.locator('.page-bar-filters select option').allInnerTexts();
-      check('a second module makes the page bar offer a module selector',
-        selectorOptions.includes(moduleName), selectorOptions.join(' | ').slice(0, 120));
-      check('the selector is not mixed into the action row',
-        (await page.locator('.page-bar-actions select').count()) === 0);
-
-      // Edit: change the length and confirm the change actually persisted.
-      await openModules();
-      await moduleRow().locator('button:has-text("Edit")').first().click();
-      await page.locator('.modal input').first().waitFor({ timeout: 8000 });
-      check('the edit form opens on that module',
-        (await page.locator('.modal input').first().inputValue()) === moduleName);
-      await page.locator('.modal input').nth(2).fill('15');
-      await page.locator('.modal button:has-text("Save")').first().click();
-      await w(1500);
-      const edited = (await apiGet('/discipleship/programs')).find((p) => p.name === moduleName);
-      check('editing a module saves its new length', edited?.total_days === 15, String(edited?.total_days));
-
-      // Delete: the confirmation must spell out what goes with it (rule G3).
-      await moduleRow().locator('button:has-text("Delete")').first().click();
-      await page.locator('.modal-backdrop').last().waitFor({ timeout: 8000 });
-      const confirmText = await page.locator('.modal-backdrop').last().innerText();
-      check('deleting a module asks first, and says what it destroys',
-        confirmText.includes(moduleName) && /cannot be undone/i.test(confirmText),
-        confirmText.replace(/\s+/g, ' ').slice(0, 140));
-      await page.locator('.modal-backdrop').last().locator('button:has-text("Delete")').last().click();
-      await w(1500);
-      const afterDelete = await apiGet('/discipleship/programs');
-      const gone = !afterDelete.some((p) => p.name === moduleName);
-      check('deleting a module removes it', gone);
-      // Deleted through the UI — take it off the sweep list so the run does not
-      // report a leftover it already cleaned up.
-      if (gone && fxModule) { forget(fxModule.path); fxModule = null; }
-      check('the church’s own module is untouched', afterDelete.length >= 1, `${afterDelete.length} left`);
-    } finally {
-      if (fxModule) await fxModule.remove();
+    /* -- forty days · the module is read, never managed -------------------- */
+    // There WAS a 守望模块 manager here — a Modules button over a list dialog
+    // with an edit form and a per-row delete, driven through a throwaway
+    // module of its own. It was a misreading of what the church meant by
+    // "module" and it is gone, along with the PATCH/DELETE routes behind it.
+    // What is asserted now is that it is gone from BOTH halves: no button in
+    // the UI, and no route on the server (rule G2 — hiding a control is not
+    // removing a capability). The church's own module is only ever read, so
+    // this module creates no fixture and has nothing to clean up.
+    mod('forty days · no module manager');
+    await page.goto(`${BASE}/discipleship`, { waitUntil: 'domcontentloaded' });
+    await page.locator('.chip', { hasText: 'Active' }).first().waitFor({ timeout: 20000 });
+    check('the page offers no module manager button',
+      (await page.locator('button:visible:has-text("Modules")').count()) === 0);
+    const liveModules = await apiGet('/discipleship/programs');
+    check('the church still has its module, and it is readable',
+      Array.isArray(liveModules) && liveModules.length >= 1, `${liveModules?.length} module(s)`);
+    if (liveModules?.[0]?.id) {
+      const moduleId = liveModules[0].id;
+      const patched = await ctx.request.patch(`${BASE}/api/discipleship/programs/${moduleId}`, {
+        data: { total_days: 999 },
+      });
+      check('editing a module by hand is refused — the route is gone',
+        patched.status() === 404, `status ${patched.status()}`);
+      const deleted = await ctx.request.delete(`${BASE}/api/discipleship/programs/${moduleId}`);
+      check('deleting one by hand is refused too', deleted.status() === 404, `status ${deleted.status()}`);
+      const afterModules = await apiGet('/discipleship/programs');
+      check('…and the church’s module survived both attempts',
+        afterModules.find((p) => p.id === moduleId)?.total_days === liveModules[0].total_days,
+        String(afterModules.find((p) => p.id === moduleId)?.total_days));
     }
 
     /* -- user management -------------------------------------------------- */
@@ -751,7 +1345,271 @@ async function main() {
     // be given a login without a detour to the member page.
     check('the account detail exposes an editable login email',
       (await page.locator('.card input[type=email]:not([disabled])').count()) > 0);
+
+    // Cancel / Save is pinned to the foot of the viewport instead of sitting
+    // at the bottom of a long form, so it is reachable from anywhere on the
+    // page. Sticky, not fixed — measured at the TOP of the page, where a
+    // non-sticky row would be far below the fold.
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await w(400);
+    const footer = page.locator('.detail-footer');
+    check('the account form has one pinned Cancel / Save row', (await footer.count()) === 1);
+    const footerBox = await footer.first().evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      return {
+        position: getComputedStyle(el).position,
+        top: Math.round(r.top),
+        bottom: Math.round(r.bottom),
+        viewport: window.innerHeight,
+        scrollable: document.documentElement.scrollHeight > window.innerHeight,
+      };
+    });
+    check('…which is sticky and on screen from the top of the form',
+      footerBox.position === 'sticky' && footerBox.scrollable &&
+        footerBox.top >= 0 && footerBox.bottom <= footerBox.viewport + 1,
+      JSON.stringify(footerBox));
+    // It stays in the flow, so it can never sit on top of the last row of
+    // content: scrolled to the very bottom, nothing overlaps it.
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+    await w(400);
+    const covers = await footer.first().evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      const hit = document.elementFromPoint(r.left + r.width / 2, r.top - 6);
+      return !!hit && el.contains(hit);
+    });
+    check('…and never covers the last row of content', covers === false);
     await shot('08-settings');
+
+    // The linked-member picker on the create form is the same shared
+    // combobox, not a native <select> (rule G4).
+    await page.goto(`${BASE}/settings`, { waitUntil: 'domcontentloaded' });
+    await page.locator('button:visible:has-text("New account")').first().waitFor({ timeout: 20000 });
+    await page.locator('button:visible:has-text("New account")').first().click();
+    await page.locator('.modal').waitFor({ timeout: 8000 });
+    check('the new-account form picks its member with a searchable combobox',
+      (await page.locator('.modal input[role=combobox]').count()) === 1);
+    // Two labels used to carry parenthetical asides the form no longer needs.
+    const newAccountCopy = await page.locator('.modal').innerText();
+    check('its labels are plain, without the explanations in brackets',
+      !/members with an account are hidden/i.test(newAccountCopy) &&
+        !/saved to the member profile/i.test(newAccountCopy),
+      newAccountCopy.replace(/\s+/g, ' ').slice(0, 160));
+    await page.locator('.modal button:has-text("Cancel")').first().click();
+    await w(300);
+    check('the new-account form closes again', (await page.locator('.modal').count()) === 0);
+
+    /* -- church settings · add-on module catalog -------------------------- */
+    // 四十天守望 is an ADD-ON, not a core module: a church may not run it. The
+    // catalog on /church is where that is decided, and the thing worth
+    // asserting is that switching it off actually reaches the whole app — the
+    // nav entry goes, the page says why, and the API refuses.
+    //
+    // This writes to the church's LIVE settings, so the original state is read
+    // first and restored in the `finally` whatever happens: a failed check
+    // must never leave a module switched off for real users.
+    mod('church settings · add-on modules');
+    const moduleStatesBefore = await apiGet('/church/modules');
+    const discBefore = moduleStatesBefore.find((m) => m.key === 'discipleship');
+    // The `finally` below covers a failed check; this covers the process dying
+    // outright, which runs no `finally` at all.
+    if (discBefore) {
+      restoreLater(`the discipleship module to enabled=${discBefore.enabled}`, async () => {
+        const now = await ctx.request.get(`${BASE}/api/church/modules`).then((r) => r.json());
+        const current = now?.find?.((m) => m.key === 'discipleship');
+        if (current && current.enabled === discBefore.enabled) return;
+        const r = await ctx.request.patch(`${BASE}/api/church/modules/discipleship`, {
+          data: { enabled: discBefore.enabled },
+        });
+        if (!r.ok()) throw new Error(`restore failed: ${r.status()}`);
+      });
+    }
+    /** The row in the catalog for one module — its switch lives on it. */
+    const catalogRow = (name) => page.locator('.card .flex-between', { hasText: name });
+
+    // The church's two theme colours, read before anything is clicked and put
+    // back in the `finally` below — the same treatment as the module switch,
+    // and for the same reason: this is the live church's own branding, on
+    // every screen including the sign-in page.
+    const themeBefore = {
+      preset: churchRecord.theme_preset ?? null,
+      rail: churchRecord.theme_rail,
+      brand: churchRecord.theme_brand,
+    };
+    /** Restore/choose a theme: by preset key when it had one, else the pair. */
+    const themeBody = (t) =>
+      t.preset ? { theme_preset: t.preset } : { theme_preset: null, theme_rail: t.rail, theme_brand: t.brand };
+    /** Is the live record back on the colours this run found? */
+    const themeIsRestored = async () => {
+      const now = await ctx.request.get(`${BASE}/api/church`).then((r) => r.json());
+      return now.theme_rail === themeBefore.rail && now.theme_brand === themeBefore.brand;
+    };
+    // …and once more for the path that runs no `finally` at all (a crash).
+    if (themeBefore.rail) {
+      restoreLater(`the church theme to ${themeBefore.preset ?? `${themeBefore.rail}/${themeBefore.brand}`}`, async () => {
+        if (await themeIsRestored()) return;
+        const r = await ctx.request.patch(`${BASE}/api/church`, { data: themeBody(themeBefore) });
+        if (!r.ok()) throw new Error(`restore failed: ${r.status()}`);
+      });
+    }
+    /** `#rrggbb` as the browser reports a computed colour. */
+    const asRgb = (hex) => {
+      const n = parseInt(String(hex).slice(1), 16);
+      return `rgb(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255})`;
+    };
+    const sidebarBg = () =>
+      page.evaluate(() => getComputedStyle(document.querySelector('.sidebar')).backgroundColor);
+    try {
+      await page.goto(`${BASE}/church`, { waitUntil: 'domcontentloaded' });
+      await page.locator('button:has-text("Save church profile")').first().waitFor({ timeout: 20000 });
+      const churchBody = await page.locator('.content').innerText();
+      check('church settings shows the church profile and the module catalog',
+        churchBody.includes('Church profile') && churchBody.includes('Add-on modules'));
+      // Skip file inputs: the logo picker is an invisible <input type=file>
+      // that sits ABOVE the name field in the DOM, so "the card's first input"
+      // is the file picker and its value is always empty.
+      const churchName = page.locator('.card input:not([type=file])').first();
+      check('the church name field is filled from the record',
+        (await churchName.inputValue()) === churchRecord.name,
+        `field=${await churchName.inputValue()} record=${churchRecord.name}`);
+
+      /* -- the theme: two colours, chosen here, applied everywhere ---------- */
+      // The theme is the church's branding, not a personal preference, so it
+      // is stored on the church record and shows on every screen — the
+      // sidebar's own colour above all. What is worth asserting is exactly
+      // that: pick a preset, and the rail IS a different colour, without a
+      // reload. Restored below, like the module switch: these are the colours
+      // real users see.
+      check('church settings offers the theme picker',
+        churchBody.includes('Theme colours') && (await page.locator('.theme-option').count()) > 1,
+        `${await page.locator('.theme-option').count()} presets`);
+      check('the sidebar is painted in the church’s stored rail colour',
+        (await sidebarBg()) === asRgb(themeBefore.rail),
+        `sidebar=${await sidebarBg()} record=${themeBefore.rail}`);
+      // Any chip that is not the one in use — `:not(.on)` guarantees a
+      // different preset, and every preset ships a different pair.
+      await page.locator('.theme-option:not(.on)').first().click();
+      await w(1500);
+      const themeAfter = await apiGet('/church');
+      check('picking a preset stores its pair on the church record',
+        themeAfter.theme_preset && themeAfter.theme_preset !== themeBefore.preset &&
+          themeAfter.theme_rail !== themeBefore.rail,
+        `${themeAfter.theme_preset} ${themeAfter.theme_rail}/${themeAfter.theme_brand}`);
+      check('…and the sidebar repaints under the picker, with no reload',
+        (await sidebarBg()) === asRgb(themeAfter.theme_rail),
+        `sidebar=${await sidebarBg()} record=${themeAfter.theme_rail}`);
+      check('the chosen preset is the one marked in use, with a tick as well as a colour',
+        (await page.locator('.theme-option.on').count()) === 1 &&
+          (await page.locator('.theme-option.on').innerText()).includes('✓'),
+        (await page.locator('.theme-option.on').innerText().catch(() => '—')).replace(/\s+/g, ' '));
+      await shot('08b-theme');
+      // Put the church's own colours back, and prove they came back — the
+      // `restoreLater` above only covers a run that dies before this point.
+      const themeRestored = await ctx.request.patch(`${BASE}/api/church`, { data: themeBody(themeBefore) });
+      check('the church theme was restored', themeRestored.ok(), `status ${themeRestored.status()}`);
+      await page.goto(`${BASE}/church`, { waitUntil: 'domcontentloaded' });
+      await page.locator('.theme-option').first().waitFor({ timeout: 20000 });
+      await w(800);
+      check('…and the sidebar is the church’s own colour again',
+        (await sidebarBg()) === asRgb(themeBefore.rail),
+        `sidebar=${await sidebarBg()} record=${themeBefore.rail}`);
+
+      // The catalog is its own fetch and sits below the theme card, which is
+      // all the navigation above waited for — so wait for the row itself
+      // rather than counting whatever has arrived by now.
+      await catalogRow('Forty Days').locator('.switch').first()
+        .waitFor({ timeout: 20000 }).catch(() => {});
+      check('the catalog lists the Forty Days add-on with a switch',
+        (await catalogRow('Forty Days').locator('.switch').count()) === 1);
+
+      check('the catalog reports the module’s stored state',
+        typeof discBefore?.enabled === 'boolean', JSON.stringify(discBefore));
+      // The toggle cycle starts from ON. A church that has genuinely switched
+      // it off is not a failure — say so and leave its setting alone.
+      if (!discBefore?.enabled) check('module already off — toggle cycle skipped', true);
+      if (discBefore?.enabled) {
+        // Turning one off removes a whole section for everyone, so it asks
+        // first and the message has to say what goes and what is kept (G3).
+        await catalogRow('Forty Days').locator('.switch').first().click();
+        await page.locator('.modal-backdrop').last().waitFor({ timeout: 8000 });
+        const confirmCopy = await page.locator('.modal-backdrop').last().innerText();
+        check('switching a module off asks first, and says what disappears',
+          confirmCopy.includes('Forty Days') && /sidebar/i.test(confirmCopy),
+          confirmCopy.replace(/\s+/g, ' ').slice(0, 140));
+        check('…and promises the existing pairs and progress are kept',
+          /nothing is deleted/i.test(confirmCopy) && /progress/i.test(confirmCopy),
+          confirmCopy.replace(/\s+/g, ' ').slice(0, 200));
+        await page.locator('.modal-backdrop').last().locator('button:has-text("Turn off module")').last().click();
+        await w(1500);
+
+        const offStates = await apiGet('/church/modules');
+        check('confirming stores the module as off',
+          offStates.find((m) => m.key === 'discipleship')?.enabled === false,
+          JSON.stringify(offStates));
+        // The server is the authority: the path has to stop answering, not
+        // just stop being linked (rule G2).
+        const blocked = await ctx.request.get(`${BASE}/api/discipleship/programs`);
+        check('a disabled module’s API path is refused', blocked.status() === 404, `status ${blocked.status()}`);
+
+        await page.goto(`${BASE}/members`, { waitUntil: 'domcontentloaded' });
+        await page.locator('.mtile').first().waitFor({ timeout: 20000 });
+        check('the nav loses the disabled module’s entry',
+          !(await page.locator('.sidebar').innerText()).includes('Forty Days'));
+
+        await page.goto(`${BASE}/discipleship`, { waitUntil: 'domcontentloaded' });
+        await page.locator('.empty').first().waitFor({ timeout: 20000 });
+        const offPage = await page.locator('.content').innerText();
+        check('going straight to its URL explains it is not enabled',
+          /not enabled/i.test(offPage) && !/error/i.test(offPage),
+          offPage.replace(/\s+/g, ' ').slice(0, 120));
+
+        // Back on again — turning a module ON takes nothing away, so it needs
+        // no confirmation, and the whole section has to come back.
+        await page.goto(`${BASE}/church`, { waitUntil: 'domcontentloaded' });
+        await catalogRow('Forty Days').locator('.switch').first().waitFor({ timeout: 20000 });
+        await catalogRow('Forty Days').locator('.switch').first().click();
+        await w(1500);
+        check('turning it back on needs no confirmation',
+          (await page.locator('.modal-backdrop').count()) === 0);
+        const onStates = await apiGet('/church/modules');
+        check('the module is stored as on again',
+          onStates.find((m) => m.key === 'discipleship')?.enabled === true,
+          JSON.stringify(onStates));
+        await page.goto(`${BASE}/discipleship`, { waitUntil: 'domcontentloaded' });
+        await page.locator('h1').first().waitFor({ timeout: 20000 });
+        await w(1200);
+        check('the nav entry and the page come back',
+          (await page.locator('.sidebar').innerText()).includes('Forty Days') &&
+            !/not enabled/i.test(await page.locator('.content').innerText()));
+      }
+      await shot('08a-church');
+    } finally {
+      // Belt and braces: whatever happened above, the church is left running
+      // exactly the modules it was running before this ran — and wearing
+      // exactly the colours it was wearing.
+      if (themeBefore.rail && !(await themeIsRestored().catch(() => true))) {
+        const restored = await ctx.request
+          .patch(`${BASE}/api/church`, { data: themeBody(themeBefore) })
+          .then((r) => r.ok())
+          .catch(() => false);
+        console.log(`  ↳ cleanup: ${restored ? 'restored' : 'COULD NOT RESTORE'} the church theme (${themeBefore.preset ?? `${themeBefore.rail}/${themeBefore.brand}`})`);
+        check('the church theme was left as it was found', restored, themeBefore.preset ?? themeBefore.rail);
+      }
+      if (discBefore) {
+        const now = await ctx.request
+          .get(`${BASE}/api/church/modules`)
+          .then((r) => r.json())
+          .catch(() => null);
+        const current = now?.find?.((m) => m.key === 'discipleship');
+        if (!current || current.enabled !== discBefore.enabled) {
+          const restored = await ctx.request
+            .patch(`${BASE}/api/church/modules/discipleship`, { data: { enabled: discBefore.enabled } })
+            .then((r) => r.ok())
+            .catch(() => false);
+          console.log(`  ↳ cleanup: ${restored ? 'restored' : 'COULD NOT RESTORE'} the discipleship module to enabled=${discBefore.enabled}`);
+          check('the add-on module was left as it was found', restored, `enabled=${discBefore.enabled}`);
+        }
+      }
+    }
 
     /* -- my profile ------------------------------------------------------- */
     // The account block at the foot of the sidebar is a link straight to this
@@ -908,7 +1766,7 @@ async function main() {
     mod('no horizontal overflow at phone width');
     const fxSample = await makeSample();
     try {
-      const DETAIL_PAGES = [...LIST_PAGES, '/events/recurring'];
+      const DETAIL_PAGES = [...LIST_PAGES];
       const overflowing = [];
       for (const path of DETAIL_PAGES) {
         await page.goto(`${BASE}${path}`, { waitUntil: 'domcontentloaded' });
@@ -948,6 +1806,15 @@ async function main() {
     const me = await meRes.json();
     accountId = me.id;
     originalLanguage = me.language;
+    // Same reasoning as the module switch: the `finally` handles a failed
+    // check, this handles the process being killed mid-switch.
+    restoreLater(`the account language to ${originalLanguage}`, async () => {
+      if (!originalLanguage) return; // the run already put it back
+      const r = await ctx.request.patch(`${BASE}/api/accounts/${accountId}`, {
+        data: { language: originalLanguage },
+      });
+      if (!r.ok()) throw new Error(`restore failed: ${r.status()}`);
+    });
     check('/api/auth/me reports the account language', typeof me.language === 'string', String(me.language));
 
     const setLang = (lang) =>
@@ -1030,11 +1897,23 @@ async function main() {
     // a group outlives the member that sits on its roster.
     await sweep('cleanup');
     leftovers.length = 0;
+    // The explicit restores above already ran on this path, so drain the
+    // crash-path list without acting on it — leaving entries behind would make
+    // a later exit hand back settings that are already correct.
+    restorers.length = 0;
     // API-fallback cleanup: if the throwaway member survived, delete it.
     if (createdMemberId) {
       await ctx.request.delete(`${BASE}/api/members/${createdMemberId}`).catch(() => {});
       console.log(`  ↳ cleanup: deleted leftover test member ${createdMemberId}`);
     }
+    // The last word, pass or fail: ask the API what ZZ_UITEST_… rows are
+    // actually in the church and delete all of them — including any an earlier
+    // run left behind. Residue that survives even this is reported as a FAILED
+    // CHECK rather than a log line: a run that leaves data in the church's live
+    // database has not passed, whatever its assertions said.
+    mod('cleanup · the church is left as it was found');
+    const stuck = await purgeResidue().catch((e) => [`purge itself failed: ${e.message}`]);
+    check('the run leaves no test data behind', stuck.length === 0, stuck.join('; '));
     await browser.close();
     if (server) server.close();
   }

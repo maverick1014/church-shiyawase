@@ -100,6 +100,7 @@ const pages = [
   ['trainings', '/trainings'],
   ['discipleship', '/discipleship'],
   ['settings', '/settings'],
+  ['church', '/church'],
 ];
 for (const [name, path] of pages) {
   await page.goto(`${BASE}${path}`, { waitUntil: 'domcontentloaded' });

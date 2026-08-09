@@ -1,7 +1,6 @@
 import {
   AccountRole,
   AccountStatus,
-  AttendanceStatus,
   ChurchRole,
   DisplayRole,
   DISPLAY_ROLE_ORDER,
@@ -11,10 +10,13 @@ import {
   GroupPosition,
   MemberStatus,
   PairStatus,
+  TrainingKind,
   Weekday,
   displayRole,
 } from '@tog/shared';
 import type { MessageKey } from './i18n/en';
+import type { ImportIssue } from './members-import';
+import type { SheetTickName } from './types';
 import { churchParts } from './time';
 
 const pad2 = (n: number) => String(n).padStart(2, '0');
@@ -114,6 +116,18 @@ export function weekdayKey(day: Weekday | string): MessageKey {
   return `weekday.${day}` as MessageKey;
 }
 
+/**
+ * The JavaScript day number (0 = Sunday) for a stored weekday.
+ *
+ * WEEKDAY_OPTIONS is already in that order, so the lookup is the list itself
+ * rather than a second table that could drift from it. An unrecognised value
+ * falls back to Sunday, which is what a group with no meeting day shows.
+ */
+export function weekdayIndex(day: Weekday | string | null): number {
+  const i = WEEKDAY_OPTIONS.indexOf(day as Weekday);
+  return i < 0 ? 0 : i;
+}
+
 /** Postgres `time` comes back as "HH:MM:SS" — trim to "HH:MM" for display. */
 export function formatMeetingTime(time: string | null): string {
   return time ? time.slice(0, 5) : '';
@@ -210,6 +224,26 @@ export function genderKey(gender: string): MessageKey {
   return `gender.${gender}` as MessageKey;
 }
 
+/**
+ * Why an imported row will not be applied. The code is decided in
+ * `lib/members-import.ts` (which the server runs too); the wording is a
+ * dictionary key, like every other enum label (rule G8).
+ */
+export function importIssueKey(issue: ImportIssue): MessageKey {
+  return `import.issue.${issue}` as MessageKey;
+}
+
+/** What an imported row will do — the badge on every preview line. */
+export function importActionKey(action: 'create' | 'update' | 'skip'): MessageKey {
+  return `import.action.${action}` as MessageKey;
+}
+
+export function importActionClass(action: 'create' | 'update' | 'skip'): string {
+  if (action === 'create') return 'b-good';
+  if (action === 'update') return 'b-warn';
+  return 'b-gray';
+}
+
 /* -------------------------------------------------------------------------
  * Events & attendance
  * ---------------------------------------------------------------------- */
@@ -234,45 +268,98 @@ export function eventBadgeClass(type: string): string {
   return 'b-gray';
 }
 
-export const ATTENDANCE_OPTIONS: AttendanceStatus[] = [
-  AttendanceStatus.Present,
-  AttendanceStatus.Excused,
-  AttendanceStatus.Absent,
-];
-
 export function attendanceKey(status: string): MessageKey {
   return `attendance.${status}` as MessageKey;
 }
 
+/**
+ * Message key for one tick on the 聚会点名 sheet. A Sunday carries 会前 and
+ * 主日; a hand-added meeting carries the single 到场, because one occasion has
+ * one thing to record.
+ */
+export function sheetTickKey(tick: SheetTickName): MessageKey {
+  switch (tick) {
+    case 'pre_service':
+      return 'events.col.preService';
+    case 'service':
+      return 'events.col.service';
+    default:
+      return 'events.col.attended';
+  }
+}
+
 /* -------------------------------------------------------------------------
- * Trainings & enrollment
+ * 培训&活动 — the catalog, enrollment & the two shapes
  * ---------------------------------------------------------------------- */
 
 /**
- * Category is a free-text column, so the three seeded values are stored as the
- * original Chinese words. They are mapped to a dictionary key for display; any
- * other value a church types in is shown verbatim.
+ * Message key for a `kind` (课程 / 活动). Keyed by the stored code, so the
+ * catalog's filter and the page's branches survive a language switch.
  */
-const TRAINING_CATEGORY_KEYS: Record<string, MessageKey> = {
-  门徒: 'trainingCategory.discipleship',
-  栽培: 'trainingCategory.nurture',
-  事奉: 'trainingCategory.service',
-};
-
-export const TRAINING_CATEGORIES = Object.keys(TRAINING_CATEGORY_KEYS);
-
-export function trainingCategoryLabel(
-  category: string | null,
-  t: (key: MessageKey) => string,
-): string {
-  if (!category) return '';
-  const key = TRAINING_CATEGORY_KEYS[category];
-  return key ? t(key) : category;
+export function trainingKindKey(kind: TrainingKind | string): MessageKey {
+  return `trainingKind.${kind}` as MessageKey;
 }
 
-/** Training-category tag — the design uses the accent tone for all categories. */
-export function categoryBadgeClass(_cat: string | null): string {
-  return 'b-accent';
+/** The wording a page uses per shape: an activity never says "course". */
+export function isActivity(row: { kind?: TrainingKind | string | null } | null | undefined): boolean {
+  return row?.kind === TrainingKind.Activity;
+}
+
+/** Badge tone for a kind — so the two shapes are told apart at a glance. */
+export function trainingKindClass(kind: TrainingKind | string): string {
+  return kind === TrainingKind.Activity ? 'b-warn' : 'b-brand';
+}
+
+/**
+ * The one "who and when" line a 培训&活动 row shows — on the catalog card, on
+ * the detail header and on the public sign-up page, which is why it is built
+ * here once rather than three times (rules G4/G5).
+ *
+ * Each piece is a translated fragment or a bare date/time/place (data, not
+ * copy); the caller joins them with ` · `. Empty pieces are dropped, so a
+ * course with no location does not read "… ·  · …".
+ *
+ * The two shapes differ only in what they have to say: a COURSE runs over N
+ * sessions between two dates; an ACTIVITY happens once, at a time, somewhere.
+ */
+export function trainingMeta(
+  row: {
+    kind: TrainingKind | string;
+    pic: string | null;
+    pic_contact: string | null;
+    total_sessions: number;
+    starts_on: string | null;
+    ends_on: string | null;
+    start_time: string | null;
+    location: string | null;
+  },
+  t: (key: MessageKey, vars?: Record<string, string | number>) => string,
+): string[] {
+  const parts: string[] = [];
+  parts.push(t('trainings.pic', { name: row.pic || t('common.pending') }));
+  if (row.pic_contact) parts.push(t('trainings.picContact', { contact: row.pic_contact }));
+  if (row.kind === TrainingKind.Activity) {
+    // Date and time are one fact about one occasion, so they read as one:
+    // "2026-09-12 09:00". A bare `time` is a Malaysian wall-clock reading.
+    const when = [formatDate(row.starts_on), formatMeetingTime(row.start_time)]
+      .filter((s) => s && s !== '—')
+      .join(' ');
+    if (when) parts.push(t('trainings.activityWhen', { when }));
+    if (row.location) parts.push(t('trainings.atPlace', { place: row.location }));
+  } else {
+    parts.push(t('trainings.sessions', { n: row.total_sessions }));
+    parts.push(t('trainings.dateRange', { from: formatDate(row.starts_on), to: formatDate(row.ends_on) }));
+  }
+  return parts;
+}
+
+/**
+ * 报名费 — is there one? `numeric` arrives as a string from PostgREST, and a
+ * blank field is stored as null, so "free" is one question asked in one place
+ * (the server asks the same one before demanding a receipt).
+ */
+export function hasFee(fee: string | number | null | undefined): boolean {
+  return fee !== null && fee !== undefined && String(fee).trim() !== '' && Number(fee) > 0;
 }
 
 export function enrollmentStatusKey(status: string): MessageKey {

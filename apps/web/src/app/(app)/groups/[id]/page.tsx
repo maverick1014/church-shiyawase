@@ -6,7 +6,7 @@ import { useFetch } from '@/lib/hooks';
 import { useSortableRows } from '@/lib/sort';
 import { api } from '@/lib/api';
 import { usePageChrome, useMe } from '@/components/AppShell';
-import { BackButton, ErrorBanner, ExportButton, Field, HallSelect, RoleBadge, SkeletonCard, SkeletonScreen, SkeletonTable, SortTh, TagsInput, useConfirm, useToast } from '@/components/ui';
+import { BackButton, Combobox, ErrorBanner, ExportButton, Field, HallSelect, MemberName, MonthPicker, RoleBadge, SheetTick, SheetTickAll, SheetTotals, SkeletonCard, SkeletonScreen, SkeletonTable, SortTh, TagsInput, useConfirm, useToast } from '@/components/ui';
 import { can } from '@/lib/perms';
 import { exportMatrix } from '@/lib/export';
 import { GroupAttendanceResponse, GroupDetail, GroupRow, MemberRow } from '@/lib/types';
@@ -16,11 +16,13 @@ import {
   roleDot,
   roleTagStyle,
   positionKey,
+  weekdayIndex,
   weekdayKey,
   WEEKDAY_OPTIONS,
 } from '@/lib/labels';
-import { churchParts } from '@/lib/time';
-import { useLang, useT } from '@/lib/i18n';
+import { columnTickState, type ColumnTickState } from '@/lib/sheet';
+import { churchParts, weekdayDatesOfMonth } from '@/lib/time';
+import { useT } from '@/lib/i18n';
 import { AttendanceStatus, GroupPosition, LEADERSHIP_POSITIONS, Weekday } from '@tog/shared';
 
 export default function GroupDetailPage() {
@@ -251,17 +253,27 @@ function GroupPanel({
           {t(positionKey(pos))}
         </span>
         {perms.write ? (
-          <select
-            className="sm trio-pick"
+          // Type-to-search like every other member field (rule G4): a large
+          // group's roster is no nicer to scroll here than anywhere else.
+          <Combobox
+            size="sm"
+            className="trio-pick"
             value={holder?.id ?? ''}
-            onChange={(e) => assignLeadership(pos, e.target.value)}
-          >
-            <option value="">{t('common.vacant')}</option>
-            {groupMembers.map((m) => (
-              <option key={m.id} value={m.id}>{m.full_name}</option>
-            ))}
-          </select>
+            onChange={(id) => assignLeadership(pos, id)}
+            options={groupMembers.map((m) => ({
+              value: m.id,
+              label: m.full_name,
+              sub: m.english_name,
+            }))}
+            placeholder={t('common.vacant')}
+            ariaLabel={t(positionKey(pos))}
+          />
         ) : (
+          // One line on purpose: a seat of the 铁三角 is a fixed box in the
+          // triangle's grid, and the picker that replaces it for an account
+          // that may write is a single-line control — a two-line name here
+          // would make the three corners three different heights. The roster
+          // table below carries both names for everybody in the group.
           <strong className={`trio-name${holder ? '' : ' vacant'}`}>
             {holder?.full_name ?? t('common.vacant')}
           </strong>
@@ -276,7 +288,7 @@ function GroupPanel({
 
       {/* Roll-call first: once a group is set up, marking attendance is what
           leaders open this page for. Profile + roster follow below. */}
-      <WeeklyAttendance groupId={group.id} />
+      <WeeklyAttendance group={group} />
 
       <div className="grid mt-16" style={{ gridTemplateColumns: '360px 1fr', gap: 16, alignItems: 'start' }} data-glayout>
         {/* Left — group info + leadership trio */}
@@ -361,17 +373,19 @@ function GroupPanel({
           </div>
           {perms.write && (
             <div className="flex gap-8 mb-14">
-              <select value={addSel} onChange={(e) => setAddSel(e.target.value)} style={{ flex: 1 }}>
-                <option value="">{t('group.addMemberPlaceholder')}</option>
-                {unassigned.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {t('group.memberOption', {
-                      name: m.full_name,
-                      group: m.group ? ` (${m.group.name})` : '',
-                    })}
-                  </option>
-                ))}
-              </select>
+              <Combobox
+                value={addSel}
+                onChange={setAddSel}
+                options={unassigned.map((m) => ({
+                  value: m.id,
+                  label: m.full_name,
+                  sub: m.english_name,
+                  hint: m.group?.name,
+                }))}
+                placeholder={t('group.addMemberPlaceholder')}
+                ariaLabel={t('group.addMember')}
+                style={{ flex: 1 }}
+              />
               <button className="btn accent" onClick={addMember} disabled={!addSel}>{t('group.addMember')}</button>
             </div>
           )}
@@ -388,7 +402,7 @@ function GroupPanel({
                 {sortedGroupMembers.map((m) => (
                   <tr key={m.id}>
                     <td>
-                      <strong>{m.full_name}</strong>
+                      <MemberName member={m} />
                     </td>
                     <td>
                       <RoleBadge role={m.group_position ?? 'ungrouped'} />
@@ -416,34 +430,47 @@ function GroupPanel({
   );
 }
 
-/** The Sundays of a given month — the fixed weeks for that year/month combo. */
-function weeksOfMonth(year: number, month1to12: number) {
-  const out: { no: number; date: string; day: number }[] = [];
-  // Pure calendar arithmetic in UTC — these are date labels, not instants, so
-  // they must not depend on the runtime's zone the way the rest of the app's
-  // date handling no longer does (lib/time.ts).
-  const d = new Date(Date.UTC(year, month1to12 - 1, 1));
-  while (d.getUTCDay() !== 0) d.setUTCDate(d.getUTCDate() + 1); // first Sunday
-  let n = 1;
-  while (d.getUTCMonth() === month1to12 - 1) {
-    const date = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(
-      d.getUTCDate(),
-    ).padStart(2, '0')}`;
-    out.push({ no: n, date, day: d.getUTCDate() });
-    d.setUTCDate(d.getUTCDate() + 7);
-    n++;
-  }
-  return out;
+/**
+ * The columns of one month's sheet: the dates this group meets on, plus every
+ * date it has already been rolled on.
+ *
+ * Both halves matter. The generated half followed Sunday no matter what day the
+ * group actually met, so a Tuesday group was rolled against Sundays. The
+ * recorded half is what keeps a month that already has ticks from moving when
+ * someone later changes 聚会星期 — the meetings that happened are facts, and a
+ * new meeting day only decides where the *empty* columns fall.
+ */
+function weeksOfMonth(
+  year: number,
+  month1to12: number,
+  weekday: number,
+  recorded: string[] = [],
+): { no: number; date: string; day: number }[] {
+  // Which dates a month holds is shared with the Sunday sheet — one helper in
+  // lib/time.ts rather than the same walk twice (rule G4).
+  const dates = new Set<string>(weekdayDatesOfMonth(year, month1to12, weekday));
+  const prefix = `${year}-${String(month1to12).padStart(2, '0')}-`;
+  for (const r of recorded) if (r.startsWith(prefix)) dates.add(r);
+
+  return [...dates]
+    .sort()
+    .map((date, i) => ({ no: i + 1, date, day: Number(date.slice(8, 10)) }));
 }
 
-function WeeklyAttendance({ groupId }: { groupId: string }) {
+/**
+ * The group's roll-call card: the group's OWN meetings
+ * (`group_meetings` / `group_attendance`), one column per date it meets on
+ * plus every date it has already been rolled on.
+ *
+ * It is deliberately only that. A member's Sunday attendance is one fact taken
+ * once, on the 崇拜与祷告会 sheet — reading the same rows back here under a tab
+ * gave two places to look at the same thing and neither was the obvious one.
+ */
+function WeeklyAttendance({ group }: { group: GroupDetail }) {
   const t = useT();
-  const lang = useLang();
   const toast = useToast();
+  const confirm = useConfirm();
   const perms = can(useMe().role);
-  const { data, initialLoading, reload } = useFetch<GroupAttendanceResponse>(
-    `/groups/${groupId}/attendance`,
-  );
 
   // Which month "now" is defaults to Malaysia's calendar, not the runtime's —
   // on a UTC Worker the first 8 hours of a new month still read as the old one.
@@ -451,8 +478,23 @@ function WeeklyAttendance({ groupId }: { groupId: string }) {
   const [year, setYear] = useState(nowParts.year);
   const [month, setMonth] = useState(nowParts.month);
 
-  // Weeks are fixed by the year+month (each Sunday of that month) — not editable.
-  const weeks = useMemo(() => weeksOfMonth(year, month), [year, month]);
+  const { data, initialLoading, reload } = useFetch<GroupAttendanceResponse>(
+    `/groups/${group.id}/attendance`,
+  );
+
+  // The columns are the group's own meeting day for that month, plus any date
+  // it was already rolled on — so a month with ticks keeps its dates when
+  // someone changes 聚会星期 later, and only the empty columns move.
+  const weeks = useMemo(
+    () =>
+      weeksOfMonth(
+        year,
+        month,
+        weekdayIndex(group.meeting_day),
+        (data?.meetings ?? []).map((m) => m.meeting_date.slice(0, 10)),
+      ),
+    [year, month, group.meeting_day, data],
+  );
 
   // Year options: this year, last year, plus any year that already has records.
   const years = useMemo(() => {
@@ -485,29 +527,50 @@ function WeeklyAttendance({ groupId }: { groupId: string }) {
     return map;
   }, [data]);
 
-  const presentCount = (memberId: string) => {
-    const inner = statusByMemberDate.get(memberId);
-    return weeks.filter((w) => inner?.get(w.date) === AttendanceStatus.Present).length;
-  };
+  /**
+   * Each week's all / none / some state and how many people were there —
+   * derived once for the whole card (rule G5) and read three times: by the
+   * column's check-all, by its confirmation, and by the totals row at the foot
+   * of the sheet. The sheet's own question is "how many came that week", which
+   * is why that number sits under its column rather than at the end of a row.
+   */
+  const weekStates = useMemo(() => {
+    const map = new Map<string, { state: ColumnTickState; present: number }>();
+    for (const w of weeks) {
+      const flags = (data?.rows ?? []).map(
+        (r) => statusByMemberDate.get(r.member.id)?.get(w.date) === AttendanceStatus.Present,
+      );
+      map.set(w.date, { state: columnTickState(flags), present: flags.filter(Boolean).length });
+    }
+    return map;
+  }, [weeks, data, statusByMemberDate]);
 
+  const totals = useMemo(
+    () => weeks.map((w) => ({ key: w.date, value: weekStates.get(w.date)?.present ?? 0 })),
+    [weeks, weekStates],
+  );
+
+  // Only one column is sortable now that the per-member tally is gone, so the
+  // getter no longer has to ask which key it was called for.
   const { sorted: sortedAttendanceRows, sortKey: attSortKey, sortDir: attSortDir, toggleSort: toggleAttSort } =
-    useSortableRows(
-      data?.rows ?? [],
-      (r, key) => (key === 'count' ? presentCount(r.member.id) : r.member.full_name),
-      { key: 'name', dir: 'asc' },
-    );
+    useSortableRows(data?.rows ?? [], (r) => r.member.full_name, { key: 'name', dir: 'asc' });
+
+  /** The week's meeting row, created lazily the first time it is marked. */
+  const meetingFor = async (dateStr: string) => {
+    const existing = meetingIdByDate.get(dateStr);
+    if (existing) return existing;
+    const meeting = await api.post<{ id: string }>(`/groups/${group.id}/meetings`, {
+      meeting_date: dateStr,
+    });
+    return meeting.id;
+  };
 
   const toggle = async (dateStr: string, memberId: string, present: boolean) => {
     const next = present ? AttendanceStatus.Absent : AttendanceStatus.Present;
     try {
-      let mid = meetingIdByDate.get(dateStr);
-      if (!mid) {
-        // The week's meeting row is created lazily the first time it's marked.
-        const meeting = await api.post<{ id: string }>(`/groups/${groupId}/meetings`, {
-          meeting_date: dateStr,
-        });
-        mid = meeting.id;
-      }
+      const mid = await meetingFor(dateStr);
+      // A list of one — the same call the column shortcut below makes, so a
+      // single tick and 全员到齐 can never take different paths.
       await api.post(`/groups/meetings/${mid}/attendance`, {
         records: [{ member_id: memberId, status: next }],
       });
@@ -517,25 +580,60 @@ function WeeklyAttendance({ groupId }: { groupId: string }) {
     }
   };
 
-  // Month names follow the interface language rather than a hardcoded list.
-  const monthName = (m: number) =>
-    new Intl.DateTimeFormat(lang, { month: 'long' }).format(new Date(2000, m - 1, 1));
+  /**
+   * 全员到齐 for one week's column.
+   *
+   * Same two rules as the services sheet: clearing a column throws real records
+   * away, so it asks first and names how many marks go (rule G3); filling one
+   * asks nothing. One request either way — this endpoint has always taken a
+   * LIST of records, so the whole roster rides in the same call a single tick
+   * uses.
+   */
+  const toggleWeek = async (dateStr: string, weekLabel: string) => {
+    const roster = data?.rows ?? [];
+    if (roster.length === 0) return;
+    const here = weekStates.get(dateStr);
+    if (!here) return;
+    const next = here.state !== 'all';
+    if (!next) {
+      const ok = await confirm({
+        title: t('sheet.tickAll.title'),
+        message: t('sheet.tickAll.message', { column: weekLabel, n: here.present }),
+        confirmText: t('sheet.tickAll.confirm'),
+        danger: true,
+      });
+      if (!ok) return;
+    }
+    const status = next ? AttendanceStatus.Present : AttendanceStatus.Absent;
+    try {
+      const mid = await meetingFor(dateStr);
+      await api.post(`/groups/meetings/${mid}/attendance`, {
+        records: roster.map((r) => ({ member_id: r.member.id, status })),
+      });
+      reload();
+    } catch (e) {
+      toast((e as Error).message, 'error');
+      reload();
+    }
+  };
 
   const exportGrid = () => {
     if (!data) return;
     const headers = [
       t('members.col.member'),
       ...weeks.map((w) => `${t('group.week', { n: w.no })} (${t('group.dayOfMonth', { n: w.day })})`),
-      t('group.attended'),
     ];
-    const matrix = sortedAttendanceRows.map((r) => {
+    // Same shape as the screen: marks, then ONE totals row — how many people
+    // came each week, not how many weeks each person came.
+    const matrix: (string | number)[][] = sortedAttendanceRows.map((r) => {
       const inner = statusByMemberDate.get(r.member.id);
       const cells = weeks.map((w) => {
         const s = inner?.get(w.date);
         return s ? t(attendanceKey(s)) : '';
       });
-      return [r.member.full_name, ...cells, presentCount(r.member.id)];
+      return [r.member.full_name, ...cells];
     });
+    matrix.push([t('sheet.totalPeople'), ...totals.map((x) => x.value)]);
     exportMatrix(
       t('group.exportFile', { year, month: String(month).padStart(2, '0') }),
       t('group.attended'),
@@ -551,20 +649,29 @@ function WeeklyAttendance({ groupId }: { groupId: string }) {
           <h3>{t('group.weekly')}</h3>
           <div className="muted" style={{ fontSize: 12.5, marginTop: 2 }}>{t('group.weeklySub')}</div>
         </div>
-        <ExportButton onClick={exportGrid} disabled={!data} title={t('group.exportTitle')} />
       </div>
 
+      {/* The card's own toolbar: the month on the left, export in the right
+          corner — the same halves a PageBar has, so this row reads like every
+          list page's (rule G7a). This is the CARD's row; the page bar belongs
+          to the page.
+
+          The gap is a spacer rather than `justify-content: space-between`,
+          because MonthPicker is TWO selects: spreading the row would have put
+          the year at the left edge, the month floating in the middle and the
+          export at the right, instead of a month picker and an action. */}
       <div className="flex gap-8 mb-14 flex-wrap">
-        <select value={year} onChange={(e) => setYear(Number(e.target.value))} style={{ width: 'auto' }}>
-          {years.map((y) => (
-            <option key={y} value={y}>{y}</option>
-          ))}
-        </select>
-        <select value={month} onChange={(e) => setMonth(Number(e.target.value))} style={{ width: 'auto' }}>
-          {Array.from({ length: 12 }, (_, i) => i + 1).map((mo) => (
-            <option key={mo} value={mo}>{monthName(mo)}</option>
-          ))}
-        </select>
+        <MonthPicker
+          year={year}
+          month={month}
+          years={years}
+          onChange={(next) => {
+            setYear(next.year);
+            setMonth(next.month);
+          }}
+        />
+        <div className="grow" />
+        <ExportButton onClick={exportGrid} disabled={!data} title={t('group.exportTitle')} />
       </div>
 
       {initialLoading ? (
@@ -575,17 +682,35 @@ function WeeklyAttendance({ groupId }: { groupId: string }) {
         <div className="empty">{t('group.noMembers')}</div>
       ) : (
         <div className="table-wrap">
-          <table>
+          <table className="sheet-table">
             <thead>
               <tr>
                 <SortTh sortKey="name" activeKey={attSortKey} dir={attSortDir} onSort={toggleAttSort}>{t('members.col.member')}</SortTh>
-                {weeks.map((w) => (
-                  <th key={w.date} style={{ textAlign: 'center', whiteSpace: 'nowrap' }}>
-                    {t('group.week', { n: w.no })}
-                    <div className="faint" style={{ fontSize: 10.5, fontWeight: 400 }}>{t('group.dayOfMonth', { n: w.day })}</div>
-                  </th>
-                ))}
-                <SortTh sortKey="count" activeKey={attSortKey} dir={attSortDir} onSort={toggleAttSort} align="center">{t('group.attended')}</SortTh>
+                {/* Under the date: the week's own check-all. 全员到齐 is the
+                    normal case, and ticking a roster one person at a time is
+                    the thing this page is asked to stop making people do.
+                    Hidden from a read-only account (rule G2). */}
+                {weeks.map((w) => {
+                  const label = t('group.week', { n: w.no });
+                  const here = weekStates.get(w.date);
+                  return (
+                    <th key={w.date} style={{ textAlign: 'center', whiteSpace: 'nowrap' }}>
+                      {label}
+                      <div className="faint" style={{ fontSize: 10.5, fontWeight: 400 }}>{t('group.dayOfMonth', { n: w.day })}</div>
+                      {perms.write && (
+                        <SheetTickAll
+                          state={here?.state ?? 'none'}
+                          onToggle={() => toggleWeek(w.date, label)}
+                          disabled={(data?.rows ?? []).length === 0}
+                          title={t(
+                            here?.state === 'all' ? 'sheet.tickAll.uncheck' : 'sheet.tickAll.check',
+                            { column: label },
+                          )}
+                        />
+                      )}
+                    </th>
+                  );
+                })}
               </tr>
             </thead>
             <tbody>
@@ -593,29 +718,27 @@ function WeeklyAttendance({ groupId }: { groupId: string }) {
                 const inner = statusByMemberDate.get(r.member.id);
                 return (
                   <tr key={r.member.id}>
-                    <td><strong>{r.member.full_name}</strong></td>
+                    <td><MemberName member={r.member} /></td>
                     {weeks.map((w) => {
                       const present = inner?.get(w.date) === AttendanceStatus.Present;
                       return (
                         <td key={w.date} style={{ textAlign: 'center' }}>
-                          <input
-                            type="checkbox"
+                          <SheetTick
                             checked={present}
-                            onChange={() => toggle(w.date, r.member.id, present)}
+                            onToggle={() => toggle(w.date, r.member.id, present)}
                             disabled={!perms.write}
-                            style={{ width: 18, height: 18, cursor: perms.write ? 'pointer' : 'default', accentColor: 'var(--brand)' }}
                             title={present ? t('group.attended') : t('group.notAttended')}
                           />
                         </td>
                       );
                     })}
-                    <td style={{ textAlign: 'center', fontWeight: 600 }}>
-                      {presentCount(r.member.id)}
-                    </td>
                   </tr>
                 );
               })}
             </tbody>
+            {/* How many people came each week, under that week's own column —
+                the same footer the other two sheets draw (rule G4). */}
+            <SheetTotals counts={totals} />
           </table>
         </div>
       )}

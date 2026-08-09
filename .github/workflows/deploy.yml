@@ -12,11 +12,19 @@ name: Deploy web to Cloudflare Workers
 #   SUPABASE_URL
 #   SUPABASE_SERVICE_ROLE_KEY
 
+# WHEN THIS RUNS: on a push to main — i.e. when a branch is merged — and on a
+# manual dispatch, nothing else. It used to fire on every push to the feature
+# branches listed here, which meant a deploy (and the browser suite behind it)
+# for every single commit of a work-in-progress branch. Iterating on a branch is
+# not a release.
+#
+# The trade: the shared site now tracks main rather than the branch in flight,
+# so a change cannot be looked at on the live URL before it is merged. Deploy a
+# branch on purpose with `workflow_dispatch` when that is what you want.
 on:
   push:
     branches:
-      - claude/church-management-system-872rok
-      - claude/design-project-impl-r6iiu8
+      - main
     paths:
       - 'apps/web/**'
       - 'packages/shared/**'
