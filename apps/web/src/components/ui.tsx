@@ -1397,6 +1397,7 @@ export function SortTh({
   align,
   className,
   style,
+  rowSpan,
 }: {
   children: ReactNode;
   sortKey: string;
@@ -1407,10 +1408,13 @@ export function SortTh({
   /** Extra classes for the header cell. Widths are auto — don't set one. */
   className?: string;
   style?: React.CSSProperties;
+  /** For a sheet whose header is several rows deep — the name column spans them. */
+  rowSpan?: number;
 }) {
   const active = activeKey === sortKey;
   return (
     <th
+      rowSpan={rowSpan}
       className={`sortable ${className ?? ''}`}
       style={{ ...(align ? { textAlign: align } : undefined), ...style }}
       onClick={() => onSort(sortKey)}

@@ -150,6 +150,7 @@ async function main() {
 
   // ---- 聚会点名 (the roll-call sheet) ---------------------------------------
   await rollCallSheet(admin, halls, hallId);
+  await groupScopedSheet(admin, halls, hallId);
 
   // ---- Groups CRUD (+ weekly attendance) ----------------------------------
   const mkGrp = await req('POST', '/api/groups', { ...H, body: { name: `E2E小组-${Date.now()}`, hall_id: hallId } });
@@ -1147,6 +1148,147 @@ async function rollCallSheet(adminCookie, halls, hallId) {
       const del2 = await req('DELETE', `/api/members/${memberId2}`, H);
       ok('the second roll-call fixture member was deleted', del2.status === 200, `status ${del2.status}`);
     }
+  }
+}
+
+/**
+ * 聚会点名, asked for ONE life group — `GET /attendance/sheet?group_id=`, which
+ * is the Sunday half of the roll-call card on `/groups/:id`.
+ *
+ * The assertion that matters most is the third one: a Sunday ticked through the
+ * group page must be visible on the UNSCOPED sheet, because it is meant to be
+ * the same `sunday_attendance` row and not a second store. Two doors, one
+ * record — if that ever stopped holding, a group leader and the office would be
+ * looking at two different answers to one question.
+ *
+ * The rest: the parameter narrows the ROWS and nothing else (the columns stay
+ * the month's Sundays), an untick still leaves no row anywhere, and the
+ * parameter cannot be used to read a group in a congregation the account is not
+ * in — the hall rules come first, exactly as they do on every other read.
+ *
+ * Everything is fixture data in a far-future month, deleted in a `finally`.
+ */
+async function groupScopedSheet(adminCookie, halls, hallId) {
+  const H = { cookie: adminCookie };
+  if (!hallId) { ok('group-scoped sheet (skipped: no congregation)', true); return; }
+
+  // The same far-future month the sheet suite uses: January 2030, whose
+  // Sundays are the 6th, 13th, 20th and 27th.
+  const SUNDAY = 'sunday:2030-01-06';
+  const WHEN = 'year=2030&month=1';
+
+  const mkGroup = await req('POST', '/api/groups', {
+    ...H, body: { name: `E2E小组点名-${Date.now()}`, hall_id: hallId },
+  });
+  ok('group-sheet fixture group created', mkGroup.status === 200 && mkGroup.json?.id, `status ${mkGroup.status}`);
+  const groupId = mkGroup.json?.id;
+  if (!groupId) return;
+
+  const mkIn = await req('POST', '/api/members', {
+    ...H,
+    body: { full_name: `E2E组内-${Date.now()}`, church_role: 'member', status: 'active', hall_id: hallId, group_id: groupId },
+  });
+  const mkOut = await req('POST', '/api/members', {
+    ...H,
+    body: { full_name: `E2E组外-${Date.now()}`, church_role: 'member', status: 'active', hall_id: hallId },
+  });
+  ok('group-sheet fixture members created',
+    mkIn.status === 200 && mkIn.json?.id && mkOut.status === 200 && mkOut.json?.id,
+    `${mkIn.status} / ${mkOut.status}`);
+  const insider = mkIn.json?.id;
+  const outsider = mkOut.json?.id;
+
+  /** The insider's cells, on whichever sheet is asked for. */
+  const cellsOn = async (url) => {
+    const r = await req('GET', url, H);
+    return { res: r, cells: (r.json?.rows || []).find((x) => x.member?.id === insider)?.cells ?? null };
+  };
+
+  try {
+    const scoped = await req('GET', `/api/attendance/sheet?${WHEN}&group_id=${groupId}`, H);
+    ok('a group-scoped sheet GET → 200', scoped.status === 200, `status ${scoped.status} ${JSON.stringify(scoped.json).slice(0, 120)}`);
+    const ids = (scoped.json?.rows || []).map((r) => r.member?.id);
+    ok('…and its rows are that group’s roster, nobody else',
+      ids.includes(insider) && !ids.includes(outsider) && ids.length === 1,
+      `${ids.length} row(s)`);
+    ok('…while the columns stay the month’s Sundays',
+      (scoped.json?.columns || []).length === 4 &&
+        (scoped.json?.columns || []).every((c) => c.kind === 'sunday'),
+      JSON.stringify((scoped.json?.columns || []).map((c) => `${c.date}/${c.kind}`)));
+
+    // ---- the one that matters: two doors, ONE record ----------------------
+    const tick = await req('PUT', '/api/attendance/sheet', {
+      ...H, body: { column: SUNDAY, member_id: insider, pre_service: false, service: true },
+    });
+    ok('ticking 主日 from the group page → 200', tick.status === 200, `status ${tick.status} ${JSON.stringify(tick.json)}`);
+    const wide = await cellsOn(`/api/attendance/sheet?${WHEN}&hall_id=${hallId}`);
+    ok('a Sunday ticked on the group page is the SAME row the services sheet shows',
+      wide.cells?.[SUNDAY]?.service === true, JSON.stringify(wide.cells));
+    const back = await cellsOn(`/api/attendance/sheet?${WHEN}&group_id=${groupId}`);
+    ok('…and reads back the same way on the group’s own sheet',
+      back.cells?.[SUNDAY]?.service === true, JSON.stringify(back.cells));
+
+    const clear = await req('PUT', '/api/attendance/sheet', {
+      ...H, body: { column: SUNDAY, member_id: insider, pre_service: false, service: false },
+    });
+    ok('unticking it → 200', clear.status === 200, `status ${clear.status}`);
+    const gone = await cellsOn(`/api/attendance/sheet?${WHEN}&hall_id=${hallId}`);
+    ok('…and it leaves no row behind on either sheet', gone.cells && !gone.cells[SUNDAY], JSON.stringify(gone.cells));
+
+    // ---- the hall rule comes first ----------------------------------------
+    const otherHall = (halls || []).find((h) => h.id !== hallId);
+    if (!otherHall) {
+      ok('a hall-scoped account cannot read another congregation’s group (skipped: one congregation)', true);
+    } else {
+      // A login pinned to the OTHER congregation, on a fixture member of its
+      // own — nothing on a real person is touched, and both go in the finally.
+      const email = `e2e-groupsheet-${Date.now()}-${Math.floor(Math.random() * 1e4)}@grace.org`;
+      const stranger = await req('POST', '/api/members', {
+        ...H,
+        body: { full_name: `E2E外堂-${Date.now()}`, church_role: 'member', status: 'active', hall_id: otherHall.id, email },
+      });
+      const account = await req('POST', '/api/accounts', {
+        ...H,
+        body: { member_id: stranger.json?.id, account_role: 'coworker', hall_id: otherHall.id, password: 'e2ePass2026' },
+      });
+      ok('a congregation-scoped login was provisioned',
+        stranger.status === 200 && account.status === 200,
+        `${stranger.status} / ${account.status} ${JSON.stringify(account.json).slice(0, 120)}`);
+      try {
+        const cookie = await login(email, 'e2ePass2026');
+        ok('…and can sign in', !!cookie);
+        if (cookie) {
+          const across = await req('GET', `/api/attendance/sheet?${WHEN}&group_id=${groupId}`, { cookie });
+          ok('group_id cannot reach another congregation’s roster', across.status === 403,
+            `status ${across.status} ${JSON.stringify(across.json).slice(0, 120)}`);
+          const own = await req('GET', `/api/attendance/sheet?${WHEN}`, { cookie });
+          ok('…while its own congregation’s sheet still answers', own.status === 200, `status ${own.status}`);
+          ok('…and that sheet holds none of the other congregation’s members',
+            !(own.json?.rows || []).some((r) => r.member?.id === insider),
+            `${(own.json?.rows || []).length} rows`);
+        }
+      } finally {
+        // The account first: a member cannot go while a login holds it.
+        if (account.json?.id) {
+          const delAcc = await req('DELETE', `/api/accounts/${account.json.id}`, H);
+          ok('the congregation-scoped login was deleted', delAcc.status === 200, `status ${delAcc.status}`);
+        }
+        if (stranger.json?.id) {
+          const delStranger = await req('DELETE', `/api/members/${stranger.json.id}`, H);
+          ok('the other congregation’s fixture member was deleted', delStranger.status === 200, `status ${delStranger.status}`);
+        }
+      }
+    }
+  } finally {
+    // Members first: deleting the group would only unset their group_id and
+    // strand them (`group_id` is ON DELETE SET NULL).
+    for (const [what, id] of [['in-group', insider], ['ungrouped', outsider]]) {
+      if (!id) continue;
+      const del = await req('DELETE', `/api/members/${id}`, H);
+      ok(`the ${what} group-sheet fixture member was deleted`, del.status === 200, `status ${del.status}`);
+    }
+    const delGroup = await req('DELETE', `/api/groups/${groupId}`, H);
+    ok('the group-sheet fixture group was deleted', delGroup.status === 200, `status ${delGroup.status}`);
   }
 }
 

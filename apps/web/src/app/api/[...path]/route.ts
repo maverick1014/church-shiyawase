@@ -613,7 +613,16 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
       // `hallFilter` may be null — 全部堂会 lists every congregation's members
       // in one sheet. A tick still records WHICH congregation the person was
       // counted in; it is read off the member's own hall when it is written.
-      return json(await rollCallSheet(db, hallFilter, year, month));
+      //
+      // `group_id` narrows the ROWS to one life group, for the roll-call card
+      // on `/groups/:id` — the same Sundays, the same tables, the same write
+      // path, just fewer people. It is a READ of that group, so it goes through
+      // the same guard the group's own detail route uses (rule G2): the hall
+      // rules above still come first, and this parameter cannot be used to see
+      // another congregation's roster.
+      const groupId = q.get('group_id') || null;
+      if (groupId) await assertRowReadable('groups', groupId);
+      return json(await rollCallSheet(db, hallFilter, year, month, groupId));
     }
     // ONE cell, or one whole column, through the SAME call.
     //
@@ -1805,12 +1814,26 @@ async function upsertProgress(
  * one list, which is the simple thing to show when nobody has narrowed the
  * view. A tick is still filed under the member's own congregation (see the PUT
  * above), so what was recorded never loses its hall.
+ *
+ * `groupId` narrows it further, to one life group's roster: the Sunday half of
+ * that group's roll-call card. The columns are then the month's Sundays alone —
+ * the group's OWN meetings are its own half of that card, and a congregation
+ * meeting is not the group's to roll. Nothing else changes, and in particular
+ * NOT where a tick is stored: the group page quotes back the same column key
+ * and lands in the same `sunday_attendance` row the services sheet writes. Two
+ * doors, one record.
+ *
+ * The roster is read the way the group's own half reads it (`groupAttendance`
+ * below) rather than with the sheet's usual 在册 filter: the card is ONE table,
+ * so both halves have to be the same people or a row would mean two different
+ * things across it.
  */
 async function rollCallSheet(
   db: ReturnType<typeof getDb>,
   hallFilter: string | null,
   year: number,
   month: number,
+  groupId: string | null = null,
 ) {
   // The month as MALAYSIA reads it: [1st 00:00, the 1st of the next month).
   // `churchInstant` normalises month 13 into January, so December needs no
@@ -1818,27 +1841,30 @@ async function rollCallSheet(
   const monthStart = churchInstant(year, month, 1).toISOString();
   const monthEnd = churchInstant(year, month + 1, 1).toISOString();
 
-  let memberQuery = db
-    .from('members')
-    .select(MEMBER_BRIEF)
-    .eq('status', 'active')
-    .order('full_name');
+  let memberQuery = db.from('members').select(MEMBER_BRIEF).order('full_name');
+  if (groupId) memberQuery = memberQuery.eq('group_id', groupId);
+  else memberQuery = memberQuery.eq('status', 'active');
   if (hallFilter) memberQuery = memberQuery.eq('hall_id', hallFilter);
 
-  let meetingQuery = db
-    .from('events')
-    .select('id,title,starts_at,hall_id')
-    .gte('starts_at', monthStart)
-    .lt('starts_at', monthEnd)
-    .order('starts_at');
-  // A narrowed view sees that hall's meetings plus every 全堂开放 one — the
-  // same rule the events list itself follows.
-  if (hallFilter) meetingQuery = meetingQuery.or(`hall_id.eq.${hallFilter},hall_id.is.null`);
+  const readMeetings = async () => {
+    // A group's card carries the group's own occasions beside these Sundays,
+    // so the congregation's meetings have no column there.
+    if (groupId) return [] as SheetMeeting[];
+    let meetingQuery = db
+      .from('events')
+      .select('id,title,starts_at,hall_id')
+      .gte('starts_at', monthStart)
+      .lt('starts_at', monthEnd)
+      .order('starts_at');
+    // A narrowed view sees that hall's meetings plus every 全堂开放 one — the
+    // same rule the events list itself follows.
+    if (hallFilter) meetingQuery = meetingQuery.or(`hall_id.eq.${hallFilter},hall_id.is.null`);
+    return unwrap(await meetingQuery) as SheetMeeting[];
+  };
 
   // Independent reads, so they go together (rule G6).
-  const [memberRes, meetingRes] = await Promise.all([memberQuery, meetingQuery]);
+  const [memberRes, meetings] = await Promise.all([memberQuery, readMeetings()]);
   const members = unwrap(memberRes) as Array<{ id: string; full_name: string; english_name: string | null }>;
-  const meetings = unwrap(meetingRes) as SheetMeeting[];
 
   const columns = sheetColumns(year, month, meetings);
   const sundays = columns.filter((c) => c.kind === 'sunday').map((c) => c.date);

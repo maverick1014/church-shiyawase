@@ -1,7 +1,7 @@
 'use client';
 
 import { useParams, useRouter } from 'next/navigation';
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import { useFetch } from '@/lib/hooks';
 import { useSortableRows } from '@/lib/sort';
 import { api } from '@/lib/api';
@@ -9,18 +9,29 @@ import { usePageChrome, useMe } from '@/components/AppShell';
 import { BackButton, Combobox, ErrorBanner, ExportButton, Field, HallSelect, MemberName, MonthPicker, RoleBadge, SheetTick, SheetTickAll, SheetTotals, SkeletonCard, SkeletonScreen, SkeletonTable, SortTh, TagsInput, useConfirm, useToast } from '@/components/ui';
 import { can } from '@/lib/perms';
 import { exportMatrix } from '@/lib/export';
-import { GroupAttendanceResponse, GroupDetail, GroupRow, MemberRow } from '@/lib/types';
+import {
+  GroupAttendanceResponse,
+  GroupDetail,
+  GroupRow,
+  MemberRow,
+  RollCallSheet,
+  RollCallSheetRow,
+  SheetCell,
+  SheetColumn,
+  SheetTickName,
+} from '@/lib/types';
 import {
   attendanceKey,
   GROUP_POSITION_OPTIONS,
   roleDot,
   roleTagStyle,
   positionKey,
+  sheetTickKey,
   weekdayIndex,
   weekdayKey,
   WEEKDAY_OPTIONS,
 } from '@/lib/labels';
-import { columnTickState, type ColumnTickState } from '@/lib/sheet';
+import { columnTickState, sheetColumnStates, sheetColumnWrites, type ColumnTickState } from '@/lib/sheet';
 import { churchParts, weekdayDatesOfMonth } from '@/lib/time';
 import { useT } from '@/lib/i18n';
 import { AttendanceStatus, GroupPosition, LEADERSHIP_POSITIONS, Weekday } from '@tog/shared';
@@ -458,13 +469,17 @@ function weeksOfMonth(
 }
 
 /**
- * The group's roll-call card: the group's OWN meetings
- * (`group_meetings` / `group_attendance`), one column per date it meets on
- * plus every date it has already been rolled on.
+ * The group's roll-call card: ONE table with two blocks of columns — the
+ * month's Sundays first (会前 / 主日), then the group's OWN meetings
+ * (`group_meetings` / `group_attendance`), one column per date it meets on plus
+ * every date it has already been rolled on.
  *
- * It is deliberately only that. A member's Sunday attendance is one fact taken
- * once, on the 崇拜与祷告会 sheet — reading the same rows back here under a tab
- * gave two places to look at the same thing and neither was the obvious one.
+ * The Sunday half is not a second copy of anything. It is the SAME sheet
+ * 崇拜与祷告会 draws, asked for one group's roster
+ * (`GET /attendance/sheet?group_id=`), and a tick here quotes back the same
+ * column key, so it lands in the same `sunday_attendance` row — filed under the
+ * member's own congregation, server-side. Two doors, one record: whichever page
+ * a leader opens, they are looking at and writing the same fact.
  */
 function WeeklyAttendance({ group }: { group: GroupDetail }) {
   const t = useT();
@@ -481,6 +496,13 @@ function WeeklyAttendance({ group }: { group: GroupDetail }) {
   const { data, initialLoading, reload } = useFetch<GroupAttendanceResponse>(
     `/groups/${group.id}/attendance`,
   );
+  // The services sheet, narrowed to this group's roster. Its rows are the
+  // card's rows — one row is one person across BOTH halves of the table.
+  const sheet = useFetch<RollCallSheet>(
+    `/attendance/sheet?year=${year}&month=${month}&group_id=${group.id}`,
+  );
+  const sundays = useMemo(() => sheet.data?.columns ?? [], [sheet.data]);
+  const rows = useMemo(() => sheet.data?.rows ?? [], [sheet.data]);
 
   // The columns are the group's own meeting day for that month, plus any date
   // it was already rolled on — so a month with ticks keeps its dates when
@@ -533,27 +555,43 @@ function WeeklyAttendance({ group }: { group: GroupDetail }) {
    * column's check-all, by its confirmation, and by the totals row at the foot
    * of the sheet. The sheet's own question is "how many came that week", which
    * is why that number sits under its column rather than at the end of a row.
+   *
+   * Counted over the rows the table DRAWS, so the number under a column and the
+   * people the check-all writes are the same set.
    */
   const weekStates = useMemo(() => {
     const map = new Map<string, { state: ColumnTickState; present: number }>();
     for (const w of weeks) {
-      const flags = (data?.rows ?? []).map(
+      const flags = rows.map(
         (r) => statusByMemberDate.get(r.member.id)?.get(w.date) === AttendanceStatus.Present,
       );
       map.set(w.date, { state: columnTickState(flags), present: flags.filter(Boolean).length });
     }
     return map;
-  }, [weeks, data, statusByMemberDate]);
+  }, [weeks, rows, statusByMemberDate]);
 
+  /** The same question for the Sunday half — the shared helper both sheets use. */
+  const sundayStates = useMemo(() => sheetColumnStates(sundays, rows), [sundays, rows]);
+
+  // The footer reads left to right exactly as the header does: every Sunday's
+  // two ticks, then every week of the group's own.
   const totals = useMemo(
-    () => weeks.map((w) => ({ key: w.date, value: weekStates.get(w.date)?.present ?? 0 })),
-    [weeks, weekStates],
+    () => [
+      ...sundays.flatMap((c) =>
+        c.ticks.map((tick) => ({
+          key: `${c.key}|${tick}`,
+          value: sundayStates.get(`${c.key}|${tick}`)?.ticked ?? 0,
+        })),
+      ),
+      ...weeks.map((w) => ({ key: w.date, value: weekStates.get(w.date)?.present ?? 0 })),
+    ],
+    [sundays, sundayStates, weeks, weekStates],
   );
 
   // Only one column is sortable now that the per-member tally is gone, so the
   // getter no longer has to ask which key it was called for.
   const { sorted: sortedAttendanceRows, sortKey: attSortKey, sortDir: attSortDir, toggleSort: toggleAttSort } =
-    useSortableRows(data?.rows ?? [], (r) => r.member.full_name, { key: 'name', dir: 'asc' });
+    useSortableRows(rows, (r) => r.member.full_name, { key: 'name', dir: 'asc' });
 
   /** The week's meeting row, created lazily the first time it is marked. */
   const meetingFor = async (dateStr: string) => {
@@ -563,6 +601,63 @@ function WeeklyAttendance({ group }: { group: GroupDetail }) {
       meeting_date: dateStr,
     });
     return meeting.id;
+  };
+
+  /**
+   * One Sunday cell — down the SAME path the services sheet uses, with the
+   * column key the server handed out, so the server decides where it lands.
+   * The whole cell is sent, so the server never has to merge a partial one.
+   */
+  const toggleSunday = async (row: RollCallSheetRow, column: SheetColumn, tick: SheetTickName) => {
+    const current = row.cells[column.key] ?? {};
+    const next: SheetCell = {};
+    for (const name of column.ticks) next[name] = !!current[name];
+    next[tick] = !next[tick];
+    try {
+      await api.put('/attendance/sheet', {
+        column: column.key,
+        member_ids: [row.member.id],
+        ...next,
+      });
+      sheet.reload();
+    } catch (e) {
+      toast((e as Error).message, 'error');
+    }
+  };
+
+  /** What one Sunday sub-column is called in a title or a confirmation. */
+  const sundayLabel = (c: SheetColumn, tick: SheetTickName) =>
+    `${c.date.slice(5)} · ${t(sheetTickKey(tick))}`;
+
+  /**
+   * 全员到齐 for one Sunday sub-column — the services sheet's own shortcut,
+   * asked of this group's roster. Clearing throws real records away and asks
+   * first (rule G3); filling asks nothing.
+   */
+  const toggleSundayColumn = async (column: SheetColumn, tick: SheetTickName) => {
+    const here = sundayStates.get(`${column.key}|${tick}`);
+    if (!here || rows.length === 0) return;
+    const next = here.state !== 'all';
+    if (!next) {
+      const ok = await confirm({
+        title: t('sheet.tickAll.title'),
+        message: t('sheet.tickAll.message', { column: sundayLabel(column, tick), n: here.ticked }),
+        confirmText: t('sheet.tickAll.confirm'),
+        danger: true,
+      });
+      if (!ok) return;
+    }
+    try {
+      await Promise.all(
+        sheetColumnWrites(column, tick, next, rows).map((g) =>
+          api.put('/attendance/sheet', { column: column.key, member_ids: g.ids, ...g.cell }),
+        ),
+      );
+      sheet.reload();
+    } catch (e) {
+      toast((e as Error).message, 'error');
+      sheet.reload();
+    }
   };
 
   const toggle = async (dateStr: string, memberId: string, present: boolean) => {
@@ -590,7 +685,7 @@ function WeeklyAttendance({ group }: { group: GroupDetail }) {
    * uses.
    */
   const toggleWeek = async (dateStr: string, weekLabel: string) => {
-    const roster = data?.rows ?? [];
+    const roster = rows;
     if (roster.length === 0) return;
     const here = weekStates.get(dateStr);
     if (!here) return;
@@ -619,19 +714,24 @@ function WeeklyAttendance({ group }: { group: GroupDetail }) {
 
   const exportGrid = () => {
     if (!data) return;
+    // The same columns the card shows, in the same order — Sundays, then the
+    // group's own weeks — and the same totals row under them.
     const headers = [
       t('members.col.member'),
+      ...sundays.flatMap((c) => c.ticks.map((tick) => sundayLabel(c, tick))),
       ...weeks.map((w) => `${t('group.week', { n: w.no })} (${t('group.dayOfMonth', { n: w.day })})`),
     ];
-    // Same shape as the screen: marks, then ONE totals row — how many people
-    // came each week, not how many weeks each person came.
     const matrix: (string | number)[][] = sortedAttendanceRows.map((r) => {
       const inner = statusByMemberDate.get(r.member.id);
       const cells = weeks.map((w) => {
         const s = inner?.get(w.date);
         return s ? t(attendanceKey(s)) : '';
       });
-      return [r.member.full_name, ...cells];
+      return [
+        r.member.full_name,
+        ...sundays.flatMap((c) => c.ticks.map((tick) => (r.cells[c.key]?.[tick] ? '✓' : ''))),
+        ...cells,
+      ];
     });
     matrix.push([t('sheet.totalPeople'), ...totals.map((x) => x.value)]);
     exportMatrix(
@@ -674,34 +774,60 @@ function WeeklyAttendance({ group }: { group: GroupDetail }) {
         <ExportButton onClick={exportGrid} disabled={!data} title={t('group.exportTitle')} />
       </div>
 
-      {initialLoading ? (
+      {/* Said out loud, above the table: the left-hand block is the church's
+          own Sunday record, not a copy of it kept by this group. */}
+      <div className="faint mb-14" style={{ fontSize: 12 }}>{t('group.sheet.shared')}</div>
+
+      {/* An empty sheet and a sheet that failed to load are not the same
+          answer, so a failure says so instead of reading as "no members". */}
+      <ErrorBanner message={sheet.error} />
+
+      {initialLoading || sheet.initialLoading ? (
         <SkeletonScreen>
           <SkeletonTable rows={5} columns={6} bare />
         </SkeletonScreen>
-      ) : !data || data.rows.length === 0 ? (
+      ) : rows.length === 0 ? (
         <div className="empty">{t('group.noMembers')}</div>
       ) : (
         <div className="table-wrap">
           <table className="sheet-table">
             <thead>
+              {/* Which block a column belongs to is said in the header, not
+                  left to be worked out: a leader must never wonder whether the
+                  box they are ticking is a Sunday or the group's own night. */}
               <tr>
-                <SortTh sortKey="name" activeKey={attSortKey} dir={attSortDir} onSort={toggleAttSort}>{t('members.col.member')}</SortTh>
-                {/* Under the date: the week's own check-all. 全员到齐 is the
-                    normal case, and ticking a roster one person at a time is
-                    the thing this page is asked to stop making people do.
-                    Hidden from a read-only account (rule G2). */}
+                <SortTh sortKey="name" activeKey={attSortKey} dir={attSortDir} onSort={toggleAttSort} rowSpan={3}>{t('members.col.member')}</SortTh>
+                <th colSpan={sundays.reduce((n, c) => n + c.ticks.length, 0)} style={{ textAlign: 'center' }}>
+                  {t('group.sheet.sundays')}
+                </th>
+                {weeks.length > 0 && (
+                  <th colSpan={weeks.length} style={{ textAlign: 'center' }}>{t('group.sheet.own')}</th>
+                )}
+              </tr>
+              <tr>
+                {sundays.map((c) => (
+                  <th key={c.key} colSpan={c.ticks.length} className="tnum" style={{ textAlign: 'center' }}>
+                    {c.date.slice(5)}
+                  </th>
+                ))}
+                {/* The group's own week spans both remaining header rows — it
+                    has one tick, so there is no sub-column under it. Under the
+                    date: the week's own check-all. 全员到齐 is the normal case,
+                    and ticking a roster one person at a time is the thing this
+                    page is asked to stop making people do. Hidden from a
+                    read-only account (rule G2). */}
                 {weeks.map((w) => {
                   const label = t('group.week', { n: w.no });
                   const here = weekStates.get(w.date);
                   return (
-                    <th key={w.date} style={{ textAlign: 'center', whiteSpace: 'nowrap' }}>
+                    <th key={w.date} rowSpan={2} style={{ textAlign: 'center', whiteSpace: 'nowrap' }}>
                       {label}
                       <div className="faint" style={{ fontSize: 10.5, fontWeight: 400 }}>{t('group.dayOfMonth', { n: w.day })}</div>
                       {perms.write && (
                         <SheetTickAll
                           state={here?.state ?? 'none'}
                           onToggle={() => toggleWeek(w.date, label)}
-                          disabled={(data?.rows ?? []).length === 0}
+                          disabled={rows.length === 0}
                           title={t(
                             here?.state === 'all' ? 'sheet.tickAll.uncheck' : 'sheet.tickAll.check',
                             { column: label },
@@ -712,6 +838,33 @@ function WeeklyAttendance({ group }: { group: GroupDetail }) {
                   );
                 })}
               </tr>
+              <tr>
+                {/* A Sunday's two ticks are filled independently, so each gets
+                    its own check-all — the services sheet's own shape. */}
+                {sundays.map((c) => (
+                  <Fragment key={c.key}>
+                    {c.ticks.map((tick) => {
+                      const here = sundayStates.get(`${c.key}|${tick}`);
+                      return (
+                        <th key={tick} style={{ textAlign: 'center' }}>
+                          <div>{t(sheetTickKey(tick))}</div>
+                          {perms.write && (
+                            <SheetTickAll
+                              state={here?.state ?? 'none'}
+                              onToggle={() => toggleSundayColumn(c, tick)}
+                              disabled={rows.length === 0}
+                              title={t(
+                                here?.state === 'all' ? 'sheet.tickAll.uncheck' : 'sheet.tickAll.check',
+                                { column: sundayLabel(c, tick) },
+                              )}
+                            />
+                          )}
+                        </th>
+                      );
+                    })}
+                  </Fragment>
+                ))}
+              </tr>
             </thead>
             <tbody>
               {sortedAttendanceRows.map((r) => {
@@ -719,7 +872,22 @@ function WeeklyAttendance({ group }: { group: GroupDetail }) {
                 return (
                   <tr key={r.member.id}>
                     <td><MemberName member={r.member} /></td>
+                    {sundays.map((c) => (
+                      <Fragment key={c.key}>
+                        {c.ticks.map((tick) => (
+                          <td key={tick} style={{ textAlign: 'center' }}>
+                            <SheetTick
+                              checked={!!r.cells[c.key]?.[tick]}
+                              onToggle={() => toggleSunday(r, c, tick)}
+                              disabled={!perms.write}
+                              title={sundayLabel(c, tick)}
+                            />
+                          </td>
+                        ))}
+                      </Fragment>
+                    ))}
                     {weeks.map((w) => {
+                      const label = t('group.week', { n: w.no });
                       const present = inner?.get(w.date) === AttendanceStatus.Present;
                       return (
                         <td key={w.date} style={{ textAlign: 'center' }}>
@@ -727,7 +895,9 @@ function WeeklyAttendance({ group }: { group: GroupDetail }) {
                             checked={present}
                             onToggle={() => toggle(w.date, r.member.id, present)}
                             disabled={!perms.write}
-                            title={present ? t('group.attended') : t('group.notAttended')}
+                            // Named like a Sunday's: which occasion first, then
+                            // what the box says about it.
+                            title={`${label} · ${t(present ? 'group.attended' : 'group.notAttended')}`}
                           />
                         </td>
                       );
@@ -736,7 +906,7 @@ function WeeklyAttendance({ group }: { group: GroupDetail }) {
                 );
               })}
             </tbody>
-            {/* How many people came each week, under that week's own column —
+            {/* How many people each occasion drew, under its own column —
                 the same footer the other two sheets draw (rule G4). */}
             <SheetTotals counts={totals} />
           </table>

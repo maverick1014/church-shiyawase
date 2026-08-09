@@ -198,8 +198,19 @@ while a tick is still filed under the member's **own** hall, so what was
 recorded never loses its congregation. **循环聚会 is gone entirely** (migration
 0015): it only ever manufactured rows for dates the calendar already knew, and
 the sheet supplies its own columns. A **life group's** roll-call card
-(`/groups/[id]`) is the group's OWN meetings and nothing else — a member's
-Sunday is one fact, taken once, on the services sheet.
+(`/groups/[id]`) is ONE table with two labelled blocks of columns: the month's
+Sundays first, then the group's OWN meetings (`group_meetings` /
+`group_attendance`, its own endpoint, its own lazy meeting-on-first-tick). The
+Sunday half is not a second copy of a Sunday — it is the SAME sheet, asked for
+one roster (`GET /attendance/sheet?group_id=`), and a tick there quotes back the
+same column key and lands in the same `sunday_attendance` row the services sheet
+writes, filed under the member's own hall server-side. **One store, two doors**:
+a leader may mark their group's Sunday where they already are, and the office
+still reads one number — which is the only shape in which a second entry point
+is safe. `group_id` narrows the ROWS and nothing else (the columns stay the
+Sundays; a congregation meeting is not the group's to roll), the hall rules come
+FIRST (it is a read of that group, guarded by `assertRowReadable`, so it cannot
+be used to see another congregation's roster), and the PUT is untouched.
 
 Run before every push: `npm run --workspace @tog/web -s build` (or in
 `apps/web`: `npx tsc --noEmit && npm test && npm run build`). Deploys are gated
@@ -217,12 +228,17 @@ Testing layers (in `apps/web`):
   key, its three-language header/enum matching and every row it refuses).
 - `npm run test:api-e2e` — API end-to-end against the live Worker (auth, role
   matrix, full CRUD, the public forms — the training sign-up and the member
-  self-registration — and a member import with its refusals, all self-cleaning).
+  self-registration — a member import with its refusals, and the group-scoped
+  roll-call sheet: its rows are one roster, a Sunday ticked through it shows up
+  on the UNSCOPED sheet, and a hall-pinned account cannot reach another
+  congregation's group with `group_id`; all self-cleaning).
 - `npm run test:ui-e2e` — **browser UI end-to-end**: drives the real site in
   Chromium and asserts each interaction's expected outcome (login, search,
   filters, modals, weekly attendance, a 主日 tick→untick round-trip on the
   roll-call sheet and the same for a hand-added meeting's own column,
-  discipleship day-notes, the life-group card's own meetings sheet, a
+  discipleship day-notes, the life-group card carrying the month's Sundays AND
+  the group's own meetings (its tick round-trip driven only on the group's own
+  column — the Sundays beside it are the congregation's real record), a
   培训&活动 catalog listing both shapes with no filter, plus an
   activity's single-column roll call and its time/place, a paid 培训's fee
   block and the receipt link beside Approve (with a free one proving the same

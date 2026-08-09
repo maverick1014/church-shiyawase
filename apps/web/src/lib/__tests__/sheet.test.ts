@@ -4,9 +4,11 @@ import {
   MEETING_TICKS,
   parseColumnKey,
   sheetColumns,
+  sheetColumnStates,
+  sheetColumnWrites,
   SUNDAY_TICKS,
 } from '../sheet';
-import type { SheetMeeting } from '../types';
+import type { SheetCell, SheetMeeting } from '../types';
 
 /*
  * The roll-call sheet's columns are a calendar question, so — like every other
@@ -152,5 +154,80 @@ describe('columnTickState', () => {
   it('says all for a single-member column that is ticked', () => {
     // A church hall with one person on the sheet still has to be clearable.
     expect(columnTickState([true])).toBe('all');
+  });
+});
+
+/*
+ * Two sheets read these now — 崇拜与祷告会 and the life group's card, which
+ * carries the same Sunday columns for its own roster. They are here so the
+ * shortcut in the header and the number in the footer are provably the same
+ * count, and so filling one tick can never rewrite the one beside it.
+ */
+const SUNDAY = sheetColumns(2026, 8, [])[0]; // sunday:2026-08-02, two ticks
+const row = (id: string, cells: Record<string, SheetCell> = {}) => ({ member: { id }, cells });
+
+describe('sheetColumnStates', () => {
+  it('counts every sub-column of every column separately', () => {
+    const states = sheetColumnStates([SUNDAY], [
+      row('a', { [SUNDAY.key]: { pre_service: true, service: true } }),
+      row('b', { [SUNDAY.key]: { service: true } }),
+    ]);
+    expect(states.get(`${SUNDAY.key}|pre_service`)).toEqual({ state: 'some', ticked: 1 });
+    expect(states.get(`${SUNDAY.key}|service`)).toEqual({ state: 'all', ticked: 2 });
+  });
+
+  it('is none, with nothing ticked, for a column nobody was marked on', () => {
+    const states = sheetColumnStates([SUNDAY], [row('a'), row('b')]);
+    expect(states.get(`${SUNDAY.key}|service`)).toEqual({ state: 'none', ticked: 0 });
+  });
+
+  it('reports every tick of a meeting column too, and only its own', () => {
+    const cols = sheetColumns(2026, 8, [meeting({ id: 'night', starts_at: '2026-08-31T12:00:00Z' })]);
+    const night = cols[cols.length - 1];
+    const states = sheetColumnStates(cols, [row('a', { [night.key]: { attended: true } })]);
+    expect(states.get(`${night.key}|attended`)).toEqual({ state: 'all', ticked: 1 });
+    expect(states.get(`${night.key}|pre_service`)).toBeUndefined();
+  });
+});
+
+describe('sheetColumnWrites', () => {
+  it('sends the WHOLE cell, so the tick beside the one being set survives', () => {
+    const writes = sheetColumnWrites(SUNDAY, 'service', true, [
+      row('a', { [SUNDAY.key]: { pre_service: true } }),
+    ]);
+    expect(writes).toEqual([{ cell: { pre_service: true, service: true }, ids: ['a'] }]);
+  });
+
+  it('groups the members by what their other tick already says', () => {
+    // Two shapes → two requests for the whole column, never one per member.
+    const writes = sheetColumnWrites(SUNDAY, 'service', true, [
+      row('a', { [SUNDAY.key]: { pre_service: true } }),
+      row('b'),
+      row('c', { [SUNDAY.key]: { pre_service: true, service: true } }),
+    ]);
+    expect(writes).toEqual([
+      { cell: { pre_service: true, service: true }, ids: ['a', 'c'] },
+      { cell: { pre_service: false, service: true }, ids: ['b'] },
+    ]);
+  });
+
+  it('clears only the tick it was asked to clear', () => {
+    expect(
+      sheetColumnWrites(SUNDAY, 'service', false, [
+        row('a', { [SUNDAY.key]: { pre_service: true, service: true } }),
+      ]),
+    ).toEqual([{ cell: { pre_service: true, service: false }, ids: ['a'] }]);
+  });
+
+  it('is one request for a meeting column, whose cell has a single tick', () => {
+    const cols = sheetColumns(2026, 8, [meeting({ id: 'night', starts_at: '2026-08-31T12:00:00Z' })]);
+    const night = cols[cols.length - 1];
+    expect(sheetColumnWrites(night, 'attended', true, [row('a'), row('b')])).toEqual([
+      { cell: { attended: true }, ids: ['a', 'b'] },
+    ]);
+  });
+
+  it('writes nothing when there is nobody on the sheet', () => {
+    expect(sheetColumnWrites(SUNDAY, 'service', true, [])).toEqual([]);
   });
 });

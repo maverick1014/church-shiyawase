@@ -700,7 +700,7 @@ async function main() {
     // and which of the church's own groups are populated is not this suite's
     // business to depend on. So the module brings its own group with its own
     // member, and opens exactly that one.
-    mod('life groups · list · detail · weekly attendance');
+    mod('life groups · list · detail · attendance (Sundays + the group’s own)');
     const fxGroup = await makeRosteredGroup();
     try {
       await page.goto(`${BASE}/groups`, { waitUntil: 'domcontentloaded' });
@@ -736,10 +736,10 @@ async function main() {
         (await page.locator(`td:has-text("${fxGroup.member.name}")`).count()) > 0);
       await shot('04-group-detail');
 
-      // The group's roll call is the group's OWN meetings and nothing else:
-      // the 小组 / 会前 / 主日 tabs are gone, because a member's Sunday is one
-      // fact taken once, on 崇拜与祷告会. So there must be no segmented control
-      // anywhere on this page — neither in the card nor in the page bar.
+      // The group's roll call is ONE table with two labelled blocks of columns
+      // — the month's Sundays, then the group's own meetings. There are still
+      // no 小组 / 会前 / 主日 tabs: the Sunday half is not a second view, it is
+      // the same rows the services sheet writes, shown beside the group's own.
       check('the roll-call card offers no roll-call tabs any more',
         (await page.locator('.seg').count()) === 0, `${await page.locator('.seg').count()} segmented control(s)`);
 
@@ -761,13 +761,28 @@ async function main() {
       check('…and it is an export button, not something else',
         (await sheetCard.locator('button[aria-label*="Export"]').count()) === 1);
 
+      // Both blocks are on the one table, and each says which it is — a leader
+      // must never wonder whether the box under their finger is a Sunday or
+      // the group's own night.
+      check('the card carries the month’s Sundays as well as the group’s own',
+        (await sheetCard.locator('th:has-text("Sunday services")').count()) === 1 &&
+          (await sheetCard.locator('th:has-text("This group’s meetings")').count()) === 1);
+      check('…and the Sunday block carries a Sunday’s two ticks',
+        (await sheetCard.locator('th:has-text("Pre-service")').count()) >= 4,
+        `${await sheetCard.locator('th:has-text("Pre-service")').count()} 会前 columns`);
+
       // Ticking a week writes the group's own roll call, and unticking it puts
       // it back — the card is a sheet like every other one.
+      //
+      // Only ever the group's OWN column: the Sundays beside it are the
+      // congregation's real record (that is the whole point of the Sunday half
+      // being the same rows), and ticking one here would genuinely write it.
+      // The group's own meetings hold nothing but what this run creates.
       const groupRow = sheetCard.locator('tr', { has: page.locator(`td:has-text("${fxGroup.member.name}")`) });
       await groupRow.first().waitFor({ timeout: 20000 });
       check('the sheet lists this group’s member exactly once',
         (await groupRow.count()) === 1, `${await groupRow.count()} row(s)`);
-      const weekTick = groupRow.locator('input[type=checkbox]').first();
+      const weekTick = groupRow.locator('input[title^="Week"]').first();
       // click, not check(): the tick is optimistic and the row re-renders from
       // the server, so the checkbox's own state is not the fact worth
       // asserting — what the API returns is.
@@ -788,14 +803,20 @@ async function main() {
 
       /* -- the column check-all (全员到齐) ------------------------------- */
       // Marking a roster one person at a time is what this shortcut exists to
-      // stop. Safe to drive here: the group, its roster and its meetings were
-      // all created by this run.
+      // stop. Driven on the group's OWN week columns only, for the same reason
+      // the single tick above is: the Sunday check-alls beside them would
+      // clear the congregation's real attendance.
       const presentIn = (sheet) =>
         (sheet.rows || []).filter((r) => (r.cells || []).some((c) => c.status === 'present')).length;
-      const weekAll = sheetCard.locator('thead input.sheet-tick-all');
+      const weekAll = sheetCard.locator('thead input.sheet-tick-all[aria-label*="Week"]');
       const weekCount = await page.locator('th:has-text("Week")').count();
       check('every week column carries a check-all in its header',
         (await weekAll.count()) === weekCount, `${await weekAll.count()} of ${weekCount}`);
+      // The Sunday half has its own, one per sub-column, exactly as it does on
+      // 崇拜与祷告会 — asserted by counting, never by pressing one.
+      const sundayAllsHere = await sheetCard.locator('thead input.sheet-tick-all[aria-label*="Pre-service"]').count();
+      check('each Sunday’s ticks carry their own check-all here too',
+        sundayAllsHere >= 4, `${sundayAllsHere} 会前 check-alls`);
       const firstAll = weekAll.first();
       check('…which reads as empty while nobody is ticked',
         !(await firstAll.isChecked()) && (await firstAll.evaluate((el) => el.indeterminate)) === false);

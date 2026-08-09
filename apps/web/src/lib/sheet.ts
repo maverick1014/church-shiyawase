@@ -1,4 +1,4 @@
-import type { SheetColumn, SheetMeeting, SheetTickName } from './types';
+import type { SheetCell, SheetColumn, SheetMeeting, SheetTickName } from './types';
 import { churchParts, sundaysOfMonth } from './time';
 
 /**
@@ -134,4 +134,62 @@ export function columnTickState(flags: readonly boolean[]): ColumnTickState {
   for (const f of flags) if (f) on++;
   if (on === 0) return 'none';
   return on === flags.length ? 'all' : 'some';
+}
+
+/** The little of a sheet row these two helpers need — a person and their cells. */
+type TickedRow = { member: { id: string }; cells: Record<string, SheetCell> };
+
+/**
+ * Every sub-column's state and how many ticks it holds, keyed `<column>|<tick>`.
+ *
+ * TWO pages read it — 崇拜与祷告会 and the life group's own card, which now
+ * carries the same Sunday columns — and each reads it three times over: the
+ * check-all's own state, the number its clearing confirmation must quote, and
+ * the headcount in the totals row. Counting once here is what keeps those three
+ * from ever disagreeing (rule G5), and keeping it in one module is what keeps
+ * the two pages from drifting apart (rule G4).
+ */
+export function sheetColumnStates(
+  columns: readonly SheetColumn[],
+  rows: readonly TickedRow[],
+): Map<string, { state: ColumnTickState; ticked: number }> {
+  const map = new Map<string, { state: ColumnTickState; ticked: number }>();
+  for (const c of columns) {
+    for (const tick of c.ticks) {
+      const flags = rows.map((r) => !!r.cells[c.key]?.[tick]);
+      map.set(`${c.key}|${tick}`, {
+        state: columnTickState(flags),
+        ticked: flags.filter(Boolean).length,
+      });
+    }
+  }
+  return map;
+}
+
+/**
+ * 全员到齐, as requests: which members to write, and the whole cell to write for
+ * each of them.
+ *
+ * The members are grouped by what their OTHER tick in this column already says,
+ * so filling 主日 can never rewrite somebody's 会前 — which is exactly what one
+ * flat "set the whole cell for everyone" call would have done. That is at most
+ * two requests for a Sunday and one for a meeting; never one per member.
+ */
+export function sheetColumnWrites(
+  column: SheetColumn,
+  tick: SheetTickName,
+  next: boolean,
+  rows: readonly TickedRow[],
+): { cell: SheetCell; ids: string[] }[] {
+  const groups = new Map<string, { cell: SheetCell; ids: string[] }>();
+  for (const r of rows) {
+    const current = r.cells[column.key] ?? {};
+    const cell: SheetCell = {};
+    for (const name of column.ticks) cell[name] = name === tick ? next : !!current[name];
+    const shape = column.ticks.map((name) => (cell[name] ? '1' : '0')).join('');
+    const group = groups.get(shape);
+    if (group) group.ids.push(r.member.id);
+    else groups.set(shape, { cell, ids: [r.member.id] });
+  }
+  return [...groups.values()];
 }
