@@ -407,6 +407,14 @@ export type ImportContext = {
     english_name: string | null;
     hall_id: string;
     group_position: string | null;
+    /**
+     * The member's group BEFORE this import — read only by the server's own
+     * `applyImport` (to feed `syncGroupLeaderAccount`'s `previousGroupId`),
+     * never by `planImport` itself. Optional so the browser's own preview
+     * (which never needs it) can keep passing the narrower shape it always
+     * has.
+     */
+    group_id?: string | null;
   }[];
   /** The account's own congregation; null = 全堂权限. */
   hallScope: string | null;

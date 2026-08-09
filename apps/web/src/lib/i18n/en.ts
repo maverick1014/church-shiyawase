@@ -121,6 +121,12 @@ export const en = {
   'module.off.title': '{name} is not enabled',
   'module.off.body': 'This church does not run this module. A super admin can switch it on in Church settings.',
 
+  // What a group_leader account sees on a page/nav entry outside its own
+  // group — the same shape as `module.off.*` above (a stated reason, not a
+  // crash), reused for a role boundary instead of a module one.
+  'access.restricted.title': 'Not available for this account',
+  'access.restricted.body': 'A group leader account only sees its own group. Ask a church admin if you need broader access.',
+
   /* ---- login ----------------------------------------------------------- */
   'login.subtitle': 'Church Management System',
   'login.email': 'Email',
@@ -213,6 +219,13 @@ export const en = {
   'import.done.summary': 'Added {created} · updated {updated} · skipped {skipped}',
   'import.done.failures': 'These rows were refused by the server:',
   'import.hint': '💡 A blank cell means “nothing to say” and never clears what the church already has. Dates go in as YYYY-MM-DD.',
+  // A generated 小组长 login this import created — shown once, the same rule
+  // a single promotion's own credential modal follows (rule G6).
+  'import.leaderAccounts.title': 'Logins created',
+  'import.leaderAccounts.hint': 'Shown once — copy these before closing this window. They cannot be retrieved again.',
+  'import.leaderAccounts.col.row': 'Row',
+  'import.leaderAccounts.col.email': 'Email',
+  'import.leaderAccounts.col.password': 'Password',
   /* Column headers — also the template's header row. */
   'import.field.fullName': 'Chinese name',
   'import.field.englishName': 'English name',
@@ -286,6 +299,20 @@ export const en = {
   'member.noTraining': 'No training records yet.',
   'member.notFound': 'Member not found',
   'member.edit.title': 'Edit member profile',
+
+  /* ---- 小组长's auto-provisioned login (rule G6 — shown once) ------------ */
+  // A modal, never a toast: a toast disappears before anyone could copy a
+  // password off it (rule G6 — this is the ONE place this plaintext exists).
+  'leaderAccount.modal.title': 'Login created',
+  'leaderAccount.modal.body': 'Becoming 小组长 automatically opened a login for this person. It is shown here once and cannot be retrieved again — share it with them directly.',
+  'leaderAccount.modal.email': 'Email',
+  'leaderAccount.modal.password': 'Password',
+  'leaderAccount.modal.warning': 'This password will not be shown again. Copy it now, or reset it later from 用户管理 if it is lost.',
+  'leaderAccount.modal.copy': 'Copy email & password',
+  'leaderAccount.modal.copied': 'Copied — paste it somewhere safe',
+  // Demotion/no-email — a toast is enough, nothing to copy.
+  'leaderAccount.toast.disabled': '{name}’s login was disabled since they are no longer 小组长',
+  'leaderAccount.toast.noEmail': '{name} was made 小组长, but has no email on file — no login could be created',
   'member.delete.message': 'Delete {name}\u2019s member profile? Their training, pairing and attendance records go with it and cannot be recovered.',
   'member.noPairs': 'Not taking part in the Forty Days yet.',
   'member.viewProgress': 'View progress →',
@@ -895,12 +922,14 @@ export const en = {
   'accountRole.super_admin': 'Super admin',
   'accountRole.admin': 'Admin',
   'accountRole.coworker': 'Co-worker',
+  'accountRole.group_leader': 'Group leader',
   'accountRole.readonly': 'Read-only',
   // Dropdown-only wording: the role plus what it may do, so the meaning is
   // there at the moment it is picked. Badges keep the bare role name above.
   'accountRole.super_admin.option': 'Super admin — manages everything',
   'accountRole.admin.option': 'Admin — manages everything except users',
   'accountRole.coworker.option': 'Co-worker — roll call & member details, cannot delete',
+  'accountRole.group_leader.option': 'Group leader — auto-created; own group only, cannot delete',
   'accountRole.readonly.option': 'Read-only — views all data, no Users page',
 
   'accountStatus.active': 'Enabled',

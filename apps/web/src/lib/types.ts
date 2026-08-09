@@ -96,7 +96,22 @@ export interface MemberRow {
    * nobody referred them — which is most people — so every reader guards it.
    */
   referrer?: { id: string; full_name: string; english_name: string | null } | null;
+  /**
+   * Present only when THIS write just promoted or demoted the member to/from
+   * 小组长 and the server acted on their login account — `POST /members` and
+   * `PATCH /members/:id` merge it onto the ordinary row rather than wrapping
+   * the response in a new envelope, so every existing caller that does not
+   * check for it is unaffected. See `syncGroupLeaderAccount` in
+   * `api/[...path]/route.ts`.
+   */
+  leader_account_event?: LeaderAccountEvent;
 }
+
+/** See `MemberRow.leader_account_event`. */
+export type LeaderAccountEvent =
+  | { event: 'created'; email: string; password: string }
+  | { event: 'disabled'; email: string }
+  | { event: 'skipped_no_email' };
 
 export interface GroupRow {
   id: string;

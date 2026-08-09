@@ -781,6 +781,17 @@ export enum AccountRole {
   SuperAdmin = 'super_admin', // 超级管理员
   Admin = 'admin', // 管理员
   Coworker = 'coworker', // 同工
+  /**
+   * 小组长's auto-provisioned login (migration 0023/0026) — granted and
+   * revoked by the server itself (`syncGroupLeaderAccount`) whenever a
+   * member's `group_position` becomes or stops being `leader`, never created
+   * by hand through the accounts page. Scoped to exactly ONE group
+   * (`app_users.group_id`), which is narrower than every other role's
+   * hall-wide reach — a deliberate exception, not an oversight. Sits between
+   * `coworker` and `readonly` in the database enum (0023): real writes, but
+   * only inside its own group.
+   */
+  GroupLeader = 'group_leader', // 小组长（自动开通）
   ReadOnly = 'readonly', // 只读
 }
 

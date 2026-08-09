@@ -118,6 +118,9 @@ export const ms: Messages = {
   'module.off.title': '{name} tidak diaktifkan',
   'module.off.body': 'Gereja ini tidak menggunakan modul ini. Super admin boleh menghidupkannya dalam Tetapan gereja.',
 
+  'access.restricted.title': 'Tidak tersedia untuk akaun ini',
+  'access.restricted.body': 'Akaun ketua kumpulan hanya melihat kumpulan sendiri. Hubungi admin gereja jika anda perlukan akses yang lebih luas.',
+
   /* ---- login ----------------------------------------------------------- */
   'login.subtitle': 'Sistem Pengurusan Gereja',
   'login.email': 'E-mel',
@@ -209,6 +212,11 @@ export const ms: Messages = {
   'import.done.summary': 'Ditambah {created} · dikemas kini {updated} · dilangkau {skipped}',
   'import.done.failures': 'Baris berikut ditolak oleh pelayan:',
   'import.hint': '💡 Sel kosong bermaksud “tiada apa-apa untuk dikatakan” dan tidak sekali-kali memadam apa yang gereja sudah ada. Tarikh ditulis sebagai YYYY-MM-DD.',
+  'import.leaderAccounts.title': 'Log masuk dicipta',
+  'import.leaderAccounts.hint': 'Dipaparkan sekali sahaja — salin sebelum menutup tetingkap ini. Tidak boleh diperoleh semula selepas itu.',
+  'import.leaderAccounts.col.row': 'Baris',
+  'import.leaderAccounts.col.email': 'E-mel',
+  'import.leaderAccounts.col.password': 'Kata laluan',
   /* Tajuk lajur — juga baris tajuk templat. */
   'import.field.fullName': 'Nama Cina',
   'import.field.englishName': 'Nama Inggeris',
@@ -278,6 +286,16 @@ export const ms: Messages = {
   'member.noTraining': 'Belum ada rekod latihan.',
   'member.notFound': 'Ahli tidak dijumpai',
   'member.edit.title': 'Sunting profil ahli',
+
+  'leaderAccount.modal.title': 'Log masuk dicipta',
+  'leaderAccount.modal.body': 'Menjadi 小组长 secara automatik mencipta log masuk untuk orang ini. Dipaparkan di sini sekali sahaja dan tidak boleh diperoleh semula — kongsi terus dengannya.',
+  'leaderAccount.modal.email': 'E-mel',
+  'leaderAccount.modal.password': 'Kata laluan',
+  'leaderAccount.modal.warning': 'Kata laluan ini tidak akan dipaparkan lagi. Salin sekarang, atau tetapkan semula kemudian dari 用户管理 jika hilang.',
+  'leaderAccount.modal.copy': 'Salin e-mel & kata laluan',
+  'leaderAccount.modal.copied': 'Disalin — tampal di tempat yang selamat',
+  'leaderAccount.toast.disabled': 'Log masuk {name} dinyahaktifkan kerana tidak lagi 小组长',
+  'leaderAccount.toast.noEmail': '{name} dijadikan 小组长, tetapi tiada e-mel direkodkan — log masuk tidak dapat dicipta',
   'member.delete.message': 'Padam profil ahli {name}? Rekod latihan, pasangan dan kehadirannya turut dibuang dan tidak boleh dipulihkan.',
   'member.noPairs': 'Belum menyertai program Empat Puluh Hari.',
   'member.viewProgress': 'Lihat kemajuan →',
@@ -872,10 +890,12 @@ export const ms: Messages = {
   'accountRole.super_admin': 'Super admin',
   'accountRole.admin': 'Admin',
   'accountRole.coworker': 'Rakan sekerja',
+  'accountRole.group_leader': 'Ketua kumpulan',
   'accountRole.readonly': 'Baca sahaja',
   'accountRole.super_admin.option': 'Super admin — urus semua',
   'accountRole.admin.option': 'Admin — urus semua kecuali pengguna',
   'accountRole.coworker.option': 'Rakan sekerja — kehadiran & maklumat ahli, tiada padam',
+  'accountRole.group_leader.option': 'Ketua kumpulan — dicipta automatik; kumpulan sendiri sahaja, tiada padam',
   'accountRole.readonly.option': 'Baca sahaja — lihat semua data, tiada halaman Pengguna',
 
   'accountStatus.active': 'Aktif',

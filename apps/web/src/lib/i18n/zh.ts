@@ -116,6 +116,9 @@ export const zh: Messages = {
   'module.off.title': '{name}未启用',
   'module.off.body': '本教会未启用此模块。超级管理员可在「教会设置」中开启。',
 
+  'access.restricted.title': '此账户无法查看该页面',
+  'access.restricted.body': '小组长账户只能查看自己的小组。如需更大范围的权限，请联系教会管理员。',
+
   /* ---- login ----------------------------------------------------------- */
   'login.subtitle': '教会管理系统',
   'login.email': '邮箱',
@@ -205,6 +208,11 @@ export const zh: Messages = {
   'import.done.summary': '新增 {created} · 更新 {updated} · 跳过 {skipped}',
   'import.done.failures': '以下行被服务器拒绝：',
   'import.hint': '💡 留空表示「这一栏没有要说的」，绝不会清掉教会已有的资料。日期请填 YYYY-MM-DD。',
+  'import.leaderAccounts.title': '已开通的登录账户',
+  'import.leaderAccounts.hint': '仅显示一次——请在关闭前复制，之后将无法再次查看。',
+  'import.leaderAccounts.col.row': '行',
+  'import.leaderAccounts.col.email': '邮箱',
+  'import.leaderAccounts.col.password': '密码',
   /* 栏目名称——同时是模板的表头。 */
   'import.field.fullName': '中文名',
   'import.field.englishName': '英文名',
@@ -274,6 +282,16 @@ export const zh: Messages = {
   'member.noTraining': '暂无培训记录。',
   'member.notFound': '找不到成员',
   'member.edit.title': '编辑成员资料',
+
+  'leaderAccount.modal.title': '登录账户已创建',
+  'leaderAccount.modal.body': '成为小组长后，系统已自动为其开通登录账户。此处仅显示一次，之后无法再次查看——请直接分享给本人。',
+  'leaderAccount.modal.email': '邮箱',
+  'leaderAccount.modal.password': '密码',
+  'leaderAccount.modal.warning': '此密码不会再次显示。请现在复制，若日后遗失可在「用户管理」重设。',
+  'leaderAccount.modal.copy': '复制邮箱与密码',
+  'leaderAccount.modal.copied': '已复制——请妥善保存',
+  'leaderAccount.toast.disabled': '{name} 已不再是小组长，其登录账户已被停用',
+  'leaderAccount.toast.noEmail': '{name} 已成为小组长，但没有登记邮箱，无法开通登录账户',
   'member.delete.message': '删除 {name} 的成员档案？其培训、配对与出席记录将一并移除，且不可恢复。',
   'member.noPairs': '尚未参与四十天守望。',
   'member.viewProgress': '查看进度 →',
@@ -863,10 +881,12 @@ export const zh: Messages = {
   'accountRole.super_admin': '超级管理员',
   'accountRole.admin': '管理员',
   'accountRole.coworker': '同工',
+  'accountRole.group_leader': '小组长',
   'accountRole.readonly': '只读',
   'accountRole.super_admin.option': '超级管理员 — 可以管理所有',
   'accountRole.admin.option': '管理员 — 管理所有，但不能更改用户',
   'accountRole.coworker.option': '同工 — 可点名、管理成员资料，不能删除数据',
+  'accountRole.group_leader.option': '小组长 — 系统自动开通，仅限本组，不能删除数据',
   'accountRole.readonly.option': '只读 — 仅可查看所有数据，用户页面不可见',
 
   'accountStatus.active': '启用',

@@ -461,10 +461,22 @@ export function accountRoleOptionKey(role: AccountRole | string): MessageKey {
   return `accountRole.${role}.option` as MessageKey;
 }
 
+/**
+ * Every role selectable in the 权限角色 dropdown. `group_leader` is INCLUDED —
+ * not because a super admin is meant to hand one out by hand (it is only ever
+ * granted by `syncGroupLeaderAccount`), but so an already-provisioned
+ * group_leader account still renders correctly in this same dropdown when a
+ * super admin opens it on the accounts page (e.g. to disable it early, or to
+ * demote it into an ordinary role) — an option missing from the list would
+ * leave the `<select>` showing nothing selected. Manually setting a role TO
+ * group_leader here does not populate `hall_id`/`group_id`; that pairing is
+ * this mechanism's job, not the form's.
+ */
 export const ACCOUNT_ROLE_OPTIONS: AccountRole[] = [
   AccountRole.SuperAdmin,
   AccountRole.Admin,
   AccountRole.Coworker,
+  AccountRole.GroupLeader,
   AccountRole.ReadOnly,
 ];
 
@@ -476,6 +488,8 @@ export function accountRoleClass(role: string): string {
       return 'b-accent';
     case AccountRole.Coworker:
       return 'b-good';
+    case AccountRole.GroupLeader:
+      return 'b-warn';
     default:
       return 'b-gray';
   }
