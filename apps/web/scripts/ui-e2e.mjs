@@ -728,18 +728,22 @@ async function main() {
         (await trioPick.count()) === 3 && (await page.locator('select.trio-pick').count()) === 0,
         `${await trioPick.count()} comboboxes`);
       check('the year / month selects are present', (await page.locator('select').count()) >= 2);
-      await page.locator('th:has-text("Week")').first().waitFor({ timeout: 20000 });
-      check('weekly attendance renders a column per Sunday', (await page.locator('th:has-text("Week")').count()) > 0,
-        `${await page.locator('th:has-text("Week")').count()} weeks`);
+      await page.locator('table.sheet-table').first().waitFor({ timeout: 20000 });
+      // One header cell per Sunday of the month, each spanning its three
+      // sub-ticks (小组 / 会前 / 主日) — merged into one block now, not two
+      // side by side.
+      const dateHeads = page.locator('table.sheet-table thead th.tnum');
+      check('weekly attendance renders a column per Sunday', (await dateHeads.count()) > 0,
+        `${await dateHeads.count()} Sundays`);
       check('weekly attendance has tick boxes', (await page.locator('input[type=checkbox]').count()) > 0);
       check('the roster lists the member who is in this group',
         (await page.locator(`td:has-text("${fxGroup.member.name}")`).count()) > 0);
       await shot('04-group-detail');
 
-      // The group's roll call is ONE table with two labelled blocks of columns
-      // — the month's Sundays, then the group's own meetings. There are still
-      // no 小组 / 会前 / 主日 tabs: the Sunday half is not a second view, it is
-      // the same rows the services sheet writes, shown beside the group's own.
+      // The group's roll call is ONE table, one column per date — no more
+      // 小组 / 会前 / 主日 tabs, and no more two blocks side by side either:
+      // 小组 is now the first sub-tick under the SAME date column 会前/主日
+      // sit under, not a second table next to it.
       check('the roll-call card offers no roll-call tabs any more',
         (await page.locator('.seg').count()) === 0, `${await page.locator('.seg').count()} segmented control(s)`);
 
@@ -748,7 +752,7 @@ async function main() {
       // has (rule G7a). A spacer sits between them, so the shape is four
       // children and the assertion is about the ORDER and the last one, not
       // about a fixed count of controls.
-      const sheetCard = page.locator('.card', { has: page.locator('th:has-text("Week")') });
+      const sheetCard = page.locator('.card', { has: page.locator('table.sheet-table') });
       const toolbar = sheetCard.locator('.flex.gap-8.mb-14').first();
       await toolbar.waitFor({ timeout: 20000 });
       const toolbarShape = await toolbar.evaluate((el) =>
@@ -761,15 +765,15 @@ async function main() {
       check('…and it is an export button, not something else',
         (await sheetCard.locator('button[aria-label*="Export"]').count()) === 1);
 
-      // Both blocks are on the one table, and each says which it is — a leader
-      // must never wonder whether the box under their finger is a Sunday or
-      // the group's own night.
-      check('the card carries the month’s Sundays as well as the group’s own',
-        (await sheetCard.locator('th:has-text("Sunday services")').count()) === 1 &&
-          (await sheetCard.locator('th:has-text("This group’s meetings")').count()) === 1);
-      check('…and the Sunday block carries a Sunday’s two ticks',
-        (await sheetCard.locator('th:has-text("Pre-service")').count()) >= 4,
-        `${await sheetCard.locator('th:has-text("Pre-service")').count()} 会前 columns`);
+      // One block per date now, not two blocks side by side — a leader must
+      // never wonder whether the box under their finger is the group's own
+      // night or the church's Sunday. 小组 is the sub-tick's own label; 会前/
+      // 主日 are the SAME sub-ticks 崇拜与祷告会 draws.
+      check('every date column carries a 小组 tick as well as 会前/主日',
+        (await sheetCard.locator('th:has-text("Group")').count()) >= 4 &&
+          (await sheetCard.locator('th:has-text("Pre-service")').count()) >= 4,
+        `${await sheetCard.locator('th:has-text("Group")').count()} Group headers, ` +
+          `${await sheetCard.locator('th:has-text("Pre-service")').count()} 会前 columns`);
 
       // Ticking a week writes the group's own roll call, and unticking it puts
       // it back — the card is a sheet like every other one.
@@ -782,7 +786,9 @@ async function main() {
       await groupRow.first().waitFor({ timeout: 20000 });
       check('the sheet lists this group’s member exactly once',
         (await groupRow.count()) === 1, `${await groupRow.count()} row(s)`);
-      const weekTick = groupRow.locator('input[title^="Week"]').first();
+      // The 小组 tick is always the FIRST checkbox in the row: it renders
+      // ahead of 会前/主日 under the first Sunday column, in that fixed order.
+      const weekTick = groupRow.locator('input[type=checkbox]').first();
       // click, not check(): the tick is optimistic and the row re-renders from
       // the server, so the checkbox's own state is not the fact worth
       // asserting — what the API returns is.
@@ -808,8 +814,8 @@ async function main() {
       // clear the congregation's real attendance.
       const presentIn = (sheet) =>
         (sheet.rows || []).filter((r) => (r.cells || []).some((c) => c.status === 'present')).length;
-      const weekAll = sheetCard.locator('thead input.sheet-tick-all[aria-label*="Week"]');
-      const weekCount = await page.locator('th:has-text("Week")').count();
+      const weekAll = sheetCard.locator('thead input.sheet-tick-all[aria-label*="Group"]');
+      const weekCount = await sheetCard.locator('th:has-text("Group")').count();
       check('every week column carries a check-all in its header',
         (await weekAll.count()) === weekCount, `${await weekAll.count()} of ${weekCount}`);
       // The Sunday half has its own, one per sub-column, exactly as it does on
@@ -836,8 +842,8 @@ async function main() {
       await firstAll.click();
       await page.locator('.modal-backdrop').last().waitFor({ timeout: 8000 });
       const clearCopy = await page.locator('.modal-backdrop').last().innerText();
-      check('clearing a whole column asks first, names the column and warns it is final',
-        /Week\s*\d/.test(clearCopy) && /cannot be undone/i.test(clearCopy),
+      check('clearing a whole column asks first, names the DATE it is about to empty, and warns it is final',
+        /\d{2}-\d{2}.*Group/.test(clearCopy) && /cannot be undone/i.test(clearCopy),
         clearCopy.replace(/\s+/g, ' ').slice(0, 140));
       await page.locator('.modal-backdrop').last().locator('button:has-text("Clear column")').last().click();
       await w(1800);

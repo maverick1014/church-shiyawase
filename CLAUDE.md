@@ -74,8 +74,11 @@ every table, every mobile tile, every roll-call row, every namelist, the
 account list and the member `Combobox` (whose options carry the English name as
 their `sub`, searched as well as shown) go through it, so a person looks the
 same everywhere. A search matches EITHER name, case-insensitively — the
-members list, the sheet's find-a-person box, `comboboxFilter`, and
-`GET /api/members?q=`. The three places a name stays on one line are a relay-chart
+members list, `comboboxFilter`, and `GET /api/members?q=`. Neither roll-call
+sheet has a search box of its own: 全员到齐 and the totals row cover everybody
+on screen, and narrowing what is DRAWN while those two still act on everybody
+reads as a contradiction, so both sheets simply list the whole roster, always.
+The three places a name stays on one line are a relay-chart
 node, the lineage badges and a 铁三角 seat, each a fixed box whose geometry the
 second line would break; each says so in a comment.
 
@@ -294,10 +297,9 @@ while a tick is still filed under the member's **own** hall, so what was
 recorded never loses its congregation. **循环聚会 is gone entirely** (migration
 0015): it only ever manufactured rows for dates the calendar already knew, and
 the sheet supplies its own columns. A **life group's** roll-call card
-(`/groups/[id]`) is ONE table with two labelled blocks of columns: the month's
-Sundays first, then the group's OWN meetings (`group_meetings` /
-`group_attendance`, its own endpoint, its own lazy meeting-on-first-tick). The
-Sunday half is not a second copy of a Sunday — it is the SAME sheet, asked for
+(`/groups/[id]`) is ONE table, one column per Sunday of the month, each
+carrying THREE ticks — 小组, 会前, 主日 — rather than two blocks side by side.
+会前/主日 are not a second copy of a Sunday — they are the SAME sheet, asked for
 one roster (`GET /attendance/sheet?group_id=`), and a tick there quotes back the
 same column key and lands in the same `sunday_attendance` row the services sheet
 writes, filed under the member's own hall server-side. **One store, two doors**:
@@ -306,7 +308,13 @@ still reads one number — which is the only shape in which a second entry point
 is safe. `group_id` narrows the ROWS and nothing else (the columns stay the
 Sundays; a congregation meeting is not the group's to roll), the hall rules come
 FIRST (it is a read of that group, guarded by `assertRowReadable`, so it cannot
-be used to see another congregation's roster), and the PUT is untouched.
+be used to see another congregation's roster), and the PUT is untouched. **小组**
+is a group's own tick (`group_meetings` / `group_attendance`, its own endpoint,
+its own lazy meeting-on-first-tick) — filed under the SUNDAY of that week
+rather than the group's own meeting day, because a group's week and the
+church's week are now the same week, whichever evening the group actually met.
+There is no longer a per-group "week 1, week 2…" numbering: the date itself is
+the column's identity, the same identity the services sheet already used.
 
 Run before every push: `npm run --workspace @tog/web -s build` (or in
 `apps/web`: `npx tsc --noEmit && npm test && npm run build`). Deploys are gated
@@ -342,9 +350,10 @@ Testing layers (in `apps/web`):
   Chromium and asserts each interaction's expected outcome (login, search,
   filters, modals, weekly attendance, a 主日 tick→untick round-trip on the
   roll-call sheet and the same for a hand-added meeting's own column,
-  discipleship day-notes, the life-group card carrying the month's Sundays AND
-  the group's own meetings (its tick round-trip driven only on the group's own
-  column — the Sundays beside it are the congregation's real record), a
+  discipleship day-notes, the life-group card's one column per Sunday with its
+  三 sub-ticks 小组/会前/主日 (its tick round-trip driven only on the group's
+  own 小组 sub-tick — the 会前/主日 beside it are the congregation's real
+  record), a
   培训&活动 catalog listing both shapes with no filter, plus an
   activity's single-column roll call and its time/place, a paid 培训's fee
   block and the receipt link beside Approve (with a free one proving the same
