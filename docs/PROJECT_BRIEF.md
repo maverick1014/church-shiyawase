@@ -158,7 +158,16 @@ tog/
 ## 5. Modules & features
 
 ### 5.1 Members directory (成员目录)
-- Fields: 姓名(中/英)、邮箱、电话、性别、出生日期、**church_role**(牧师/一般成员)、状态(在册/慕道/停止聚会)、所属小组、加入日期、**服侍岗位**、备注、照片.
+- Fields: 姓名(中/英)、邮箱、电话、性别、出生日期、**church_role**(牧师/一般成员)、状态(在册/慕道/停止聚会)、所属小组、来访日期(`joined_at`)、**加入小组日期**(`group_joined_at`, migration 0023)、**服侍岗位**、备注、照片.
+- **来访日期 is a display-only rename** (rule G8): the column is still `joined_at`
+  everywhere in code — only the on-screen label changed from "Joined" to
+  "Visit Date" (来访日期), on both member forms and every fact grid that shows
+  it. **加入小组日期** (`group_joined_at`) is a separate, nullable date — when
+  somebody joined their CURRENT group, not the church — wired into both member
+  forms beside `joined_at`, with no server-side change needed (`PATCH`/`POST
+  /members` are raw passthroughs). 备注 is now on the ADD form too, not just
+  edit; the members list itself trades its own "Joined" column for a
+  "Remark" one (`notes`, truncated with an ellipsis and a `title` tooltip).
 - **A member IS the pair of names** (migration 0018): the Chinese `full_name` and the
   nullable `english_name`, unique together (trimmed, case-insensitive, "no English name"
   counting as a value). Everything that puts a person on the roll — the form, an import, the
@@ -187,7 +196,16 @@ tog/
   (`lib/imageCompress.ts`) before upload, so a full-size camera photo clears the server's 5MB cap
   without the user doing anything.
 - **Member detail** = profile + **personal training record** (5.5) + discipleship pairs they're in.
+  The profile facts are grouped into several small `FactGrid`s under section
+  headers (Contact / Church / Ministry / Notes / Referral) rather than one long
+  undifferentiated one — `FactGrid` itself is unchanged, the page just calls it
+  more than once. Each discipleship pair reads as one sentence, **Leading X**
+  or **Led by X**, aligned with how `/discipleship` phrases the same
+  relationship, rather than a bare Mentor/Trainee badge.
 - The 身份 shown is **derived** (see §3); it is not edited here.
+- The member-EDIT form is a single shared component, `<MemberEditModal />`
+  (`components/MemberEditModal.tsx`) — `/members/[id]` and the roster's own
+  **Edit** button on `/groups/[id]` (§5.2) both open the same one.
 
 ### 5.2 Groups (小组管理) — listing + detail
 - `/groups` lists every group (leader name, group name, member count, **新成员人数**, **小组状态**, meeting day/time/location); click a row → `/groups/[id]`.
@@ -197,7 +215,11 @@ tog/
   **可分植** when total > 10 and new-member count ≤ 2; **可加人** when total < 10 and new-member count ≤ old-member count; otherwise **刚好**.
 - Detail page: **create / delete** the group, **allocate members** into / out of it.
 - **铁三角 (leadership team)**: pick who holds 小组长/副组长/实习组长 directly here (rules 2 & 3 enforced — one holder per slot, auto-demote the incumbent). This is the only identity assignment on this page.
-- The member list itself is a simple name + remove list — no per-member position dropdown; 核心成员/普通成员/新成员 are set on the member's own profile page instead.
+- The member list is a name + role badge + **Edit** / **Remove** pair — no
+  per-member position dropdown; 核心成员/普通成员/新成员 are set on the member's
+  own profile page instead. **Edit** opens the same shared `<MemberEditModal />`
+  `/members/[id]` uses, so a leader can fix a roster member's details without
+  leaving the group page; **Remove** stays behind a danger confirmation (G3).
 
 ### 5.3 Services & attendance (崇拜与祷告会 · `/events`)
 **Every Sunday simply happens — nobody creates one.** The page is ONE SHEET for
@@ -376,11 +398,11 @@ Tables:
 
 | Route | Screen | Must show / do |
 | --- | --- | --- |
-| `/` | 仪表盘 Dashboard | KPIs (成员总数/在册/即将聚会, + 门训进行中 when the module is on), 身份分布图, upcoming events (`date · location`), discipleship progress |
-| `/members` | 成员目录 | search + filters by 身份(derived) / 小组 / **服侍岗位**, table, create, import, registration link |
-| `/members/[id]` | 成员详情 | profile + **个人培训档案** + 门训对子 |
+| `/` | 仪表盘 Dashboard | THREE sections: a New Visits vs Active Members line chart (trailing 6 months, two toggle chips), an upcoming-events table (desktop table + mobile tiles), one Total Active Members KPI tile |
+| `/members` | 成员目录 | search + filters by 身份(derived) / 小组 / **服侍岗位**, table (with a **Remark** column, not 加入日期), create (now with 加入小组日期 + 备注 too), import, registration link |
+| `/members/[id]` | 成员详情 | profile in labelled sections (Contact/Church/Ministry/Notes/Referral) + **个人培训档案** + 门训对子（"Leading X" / "Led by X"） |
 | `/groups` | 小组管理 · 列表 | table of all groups (小组名称+标签, 组长, 组员人数, 新成员人数, 小组状态, 聚会时间地点), sortable, filter by 标签/星期几, click a row → detail |
-| `/groups/[id]` | 小组详情 | create/delete, member allocation (simple list), **铁三角** leader picker (the only identity assignment here), roll-call card — one column per Sunday, each carrying 小组/会前/主日 (year/month, then export at the end of its toolbar; every sub-column has a check-all in its header) |
+| `/groups/[id]` | 小组详情 | create/delete, member allocation (list with **Edit** — the shared `<MemberEditModal />` — and **Remove**), **铁三角** leader picker (the only identity ASSIGNMENT here), roll-call card — one column per Sunday, each carrying 小组/会前/主日 (year/month, then export at the end of its toolbar; every sub-column has a check-all in its header) |
 | `/events` | 崇拜与祷告会 Services | ONE 聚会点名 sheet: members × (the month's Sundays with 会前 / 主日 ticks + each hand-added meeting as a dated 到场 column), a check-all per sub-column, per-tick totals, export; ＋新增聚会, edit/delete from a meeting's column header |
 | `/trainings` | 培训&活动 | catalog cards for both shapes, no filter, ＋新增培训 / ＋新增活动 |
 | `/trainings/[id]` | 培训 / 活动详情 | a course: sessions, enrolment approval, **核对名单** grid, per-session attendance. An activity: no session list, one 「到场」 column |

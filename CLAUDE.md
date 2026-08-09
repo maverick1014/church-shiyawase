@@ -153,6 +153,25 @@ import, and deliberately absent from BOTH allow-lists a person fills in about
 themselves — `REGISTER_FIELDS` (`/join`) and `SELF_MEMBER_FIELDS`
 (`/auth/me/profile`).
 
+**`joined_at` reads as 来访日期 / Visit Date on screen, and a member now
+carries a SECOND date** (migration 0023, `group_joined_at`): when they joined
+their CURRENT life group, a fact separate from when they first came to the
+church. The rename is display-only, per rule G8 — the column keeps the name
+`joined_at` everywhere in code, in every migration, in `Member`/`MemberRow`
+and in every API payload; only the field's LABEL changed, on the member edit
+form, the member add form and every `FactGrid` that shows it (member detail,
+`/profile`). `group_joined_at` is a plain nullable date column with no
+server-side allow-list of its own — `PATCH`/`POST /members` are raw
+passthroughs — so wiring it in was a client-only change, in both member forms,
+right beside where the group is chosen; nullable and excluded from any report
+built on it, exactly like `joined_at` already was. The member ADD form also
+gained a 备注/notes field — the same textarea the edit form has had since the
+very first migration, now on both. The members list traded its own **Joined**
+column for a **Remark** one: `notes`, truncated with an ellipsis in a bounded
+cell (`.cell-remark`) rather than sized to its content like every other column
+here (rule G7a), with the full text still reachable through a native `title`
+tooltip.
+
 **A member row arrives three ways, and all three decide what a row MEANS in one
 place** — `planImport` in `lib/members-import.ts`, which the browser and the
 Worker both run. Typing one into the form is the first; the other two are new:
@@ -369,6 +388,52 @@ toggleable add-on module (`church_modules`, `MODULE_HAPPINESS` in
 it has **no public-facing page at all**: roster and roll call are staff/leader
 only.
 
+**The dashboard (`/`) is three sections, not four KPI tiles and two cards.**
+The first is a hand-rolled SVG line chart — this app has no charting library
+and does not gain one, the same convention every other "chart" here follows —
+plotting **New Visits** (members whose 来访日期/`joined_at` falls in a given
+month, visitor and member alike: a visit is when someone first came, not what
+they are today) against **Active Members** (members active and non-visitor
+TODAY whose `joined_at` falls on or before that month — a defensible
+cumulative growth curve, and said so in a code comment, since it is NOT a real
+historical reconstruction: status and role are only known as of now, never as
+of each past month) over the trailing six months. Both series are one pure,
+unit-tested function, `monthlyVisitAndActiveTrend` in `lib/dashboard.ts`,
+built on `churchParts` per rule G6a rather than the runtime's own clock. Two
+independent toggle `chip`s — the same pattern `/discipleship`'s own state
+filter already uses (rule G4), not new toggle markup — show or hide each
+series, both on by default; toggling both off reads as a small empty state
+rather than a blank chart box. Below it, the old card-list-of-5 upcoming
+events is now an actual table, desktop table + mobile tile pair like every
+other list in this app (rule G7). Below THAT is a single KPI tile, **Total
+Active Members** — active and non-visitor, the SAME headline definition of
+"active" the chart's own line uses, so the page never states "active member"
+two different ways on one screen. The old KPI row (成员总数/在册/即将聚会/**门训
+进行中**), the 身份分布 bar chart and the 守望进度 card are gone entirely.
+
+**Member detail is several small `FactGrid`s under section headers, not one
+long undifferentiated one.** `FactGrid` itself is unchanged (rule G4) — the
+page just calls it more than once (Contact, Church, Ministry, Notes,
+Referral), each under its own `.section-label`, the same heading style
+培训记录/四十天守望 already use below them; `EntityHeader` at the top is
+untouched. 教会身份 is not repeated in a grid since it is already the badge in
+the header. Each pair in the 四十天守望 list below it now reads as ONE
+sentence — **Leading X** when this member is the mentor, **Led by X** when
+they are the trainee — aligned with how `/discipleship` and
+`PairProgressModal` already phrase the same relationship (the ➜ arrow,
+`disc.progress.direction`), replacing a bare `[Mentor]`/`[Trainee]` badge the
+church found confusing. `disc.col.mentor`/`disc.col.trainee` survive
+unchanged: `/d/[token]`'s own header still uses them.
+
+**The member-edit form is ONE component, `<MemberEditModal />`**
+(`components/MemberEditModal.tsx`) — extracted out of `/members/[id]`, which
+used to define it inline and privately, with the same props and the same
+leadership auto-demote behaviour (promoting someone into a leadership slot
+first demotes the incumbent). `/groups/[id]`'s own roster table offers an
+**Edit** button beside **Remove** now (same `perms.write` gate) that opens
+this same shared modal for that row's member — reloading the group's own
+member fetch on save, rather than a second, roster-only copy of the form.
+
 Run before every push: `npm run --workspace @tog/web -s build` (or in
 `apps/web`: `npx tsc --noEmit && npm test && npm run build`). Deploys are gated
 on unit tests + a post-deploy smoke test (`.github/workflows/deploy.yml`).
@@ -395,7 +460,10 @@ Testing layers (in `apps/web`):
   the public forms — the training sign-up and the member self-registration, which
   is refused a 服侍岗位 and a 推荐人 exactly as it is refused a church role — a
   member import with its refusals, a member's 服侍岗位 written
-  and read back, and the group-scoped
+  and read back, `joined_at`(来访日期)/`group_joined_at`(加入小组日期)/`notes`(备注)
+  round-tripped on the same `PATCH` and reread from a fresh `GET`, self-registration
+  refused a `group_joined_at` exactly like a role or a referral, and the
+  group-scoped
   roll-call sheet: its rows are one roster, a Sunday ticked through it shows up
   on the UNSCOPED sheet, and a hall-pinned account cannot reach another
   congregation's group with `group_id`; all self-cleaning).
@@ -421,8 +489,15 @@ Testing layers (in `apps/web`):
   badges and the members page's ministry filter, the member form offering 访客
   and a 推荐人 combobox defaulting to 无推荐人, a 聚会's 地点 typed into its form and stored on the
   row, a member row showing BOTH of a person's names, the members page's import modal opening on a file field and a
-  template with nothing written yet, and `/join` rendering with no session at
-  all, its photo field taking camera OR gallery).
+  template with nothing written yet, `/join` rendering with no session at
+  all, its photo field taking camera OR gallery, the dashboard's New
+  Visits/Active Members trend card (its two toggle chips, each hiding its own
+  line) and its upcoming-events table and single Total Active Members KPI
+  tile replacing the old four-tile row and its two cards, the member detail
+  page's facts grouped under labelled sections rather than one long grid, a
+  discipleship pair reading as "Led by X" on the trainee's own member page,
+  and a life group's roster row opening the shared member-edit modal from its
+  own **Edit** button).
   The check-all round trip is driven **only on a meeting column this run
   created** — never on a Sunday, whose ticks are the congregation's real
   attendance and would be genuinely deleted.
@@ -542,7 +617,9 @@ Reuse the shared primitives instead of re-rolling them per page:
 `Modal`, `Field`, `PasswordInput`, `useConfirm`, `useToast`, `RoleBadge`,
 `Avatar`, `MemberName` (**every** rendering of a person's name — one component
 draws the Chinese name and the English one under it, so no page invents its own
-two-line shape or forgets the second name), `PairProgressModal`, `MonthPicker`/`SheetTick`/`SheetTickAll`/
+two-line shape or forgets the second name), `PairProgressModal`,
+`MemberEditModal` (the member-edit form — `/members/[id]` and the roster
+`Edit` button on `/groups/[id]` both open the same one), `MonthPicker`/`SheetTick`/`SheetTickAll`/
 `SheetTotals` (the pieces the 聚会, 小组 and 培训&活动 namelists share — the
 totals `<tfoot>` in particular is written once, so its label, its numbers and
 the rule above them cannot drift between three sheets), `Segmented` (every segmented
