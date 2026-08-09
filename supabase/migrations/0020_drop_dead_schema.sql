@@ -60,12 +60,20 @@ alter table app_users drop column if exists notify_weekly;
 -- is not a head start on any of that.
 alter table app_users drop column if exists two_factor;
 
--- --- a meeting is a title, a date and a congregation ------------------------
--- The 聚会 form asks for exactly those three. `description`, `location` and
--- `ends_at` have been nullable spectators since the first migration — never
--- collected, never displayed, and not in the sheet's own column payload.
+-- --- a meeting's description and end time -----------------------------------
+-- The 聚会 form asks for a title, a date and a congregation, and always has.
+-- `description` and `ends_at` have been nullable spectators since the first
+-- migration — never collected, never displayed, and not in the sheet's own
+-- column payload.
+--
+-- `location` is NOT dropped, and the reason is worth recording: the first pass
+-- of this audit called it dead on a grep of the events page, and `tsc` found
+-- the caller a grep had missed — the dashboard's 近期聚会 line renders
+-- `日期 · 地点` whenever there is one. So the column was not unread, it was
+-- unfillable: a display with no way to put anything into it. The form gains a
+-- 地点 field instead, which is the half that was actually missing. (Lesson for
+-- the next audit: delete on what the type checker says, not on what grep says.)
 alter table events drop column if exists description;
-alter table events drop column if exists location;
 alter table events drop column if exists ends_at;
 
 -- --- attendance is a tick, not a record card -------------------------------
