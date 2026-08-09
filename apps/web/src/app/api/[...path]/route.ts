@@ -60,15 +60,41 @@ export const revalidate = 0;
 export const fetchCache = 'force-no-store';
 
 /**
- * 推荐人 is a foreign key from `members` back to `members`, so the embed has to
- * say WHICH direction it means: `!referred_by` names the FK column, which is
- * the many-to-one — the person who brought them, never the list of people they
- * brought. The constraint name is not enough for a self-reference (PostgREST
- * answers PGRST200 for it), and the row comes back null whenever nobody did,
- * which is the ordinary case every reader has to guard (rule G6).
+ * 推荐人 is a foreign key from `members` back to `members` — a genuine
+ * self-join, and PostgREST's embed syntax turns out not to be reliable for
+ * one against this project's live schema cache: the column hint
+ * (`referrer:members!referred_by(...)`) silently resolves the REVERSE
+ * relationship (every member THIS one referred, not who referred them —
+ * confirmed live, it returns `[]` for a row nobody else refers to), and the
+ * constraint-name hint (`!members_referred_by_fkey`) answers PGRST200,
+ * "no matches found in the schema cache", even though the constraint exists
+ * (confirmed via `pg_constraint`) — a stale-cache class of problem no amount
+ * of query-syntax tweaking fixes from the client side. `referred_by` is
+ * therefore resolved by a plain, explicit follow-up query instead
+ * (`withReferrers` below) rather than an embed — slower by one round trip,
+ * correct regardless of what the schema cache currently believes.
  */
-const MEMBER_SELECT =
-  '*, group:groups(id,name), hall:halls(id,name), referrer:members!referred_by(id,full_name,english_name)';
+const MEMBER_SELECT = '*, group:groups(id,name), hall:halls(id,name)';
+
+/**
+ * Resolves `referred_by` → `referrer` for a batch of member rows with ONE
+ * extra query (not one per row), since this is also used by the members
+ * LIST. Rows with no referrer, or whose referrer no longer exists, get
+ * `referrer: null` — the ordinary case every reader already guards (G6).
+ */
+async function withReferrers<T extends { referred_by?: string | null }>(
+  db: ReturnType<typeof getDb>,
+  rows: T[],
+): Promise<Array<T & { referrer: { id: string; full_name: string; english_name: string | null } | null }>> {
+  const ids = Array.from(new Set(rows.map((r) => r.referred_by).filter((id): id is string => !!id)));
+  const referrers = ids.length
+    ? unwrap<Array<{ id: string; full_name: string; english_name: string | null }>>(
+        await db.from('members').select('id,full_name,english_name').in('id', ids),
+      )
+    : [];
+  const byId = new Map(referrers.map((r) => [r.id, r]));
+  return rows.map((r) => ({ ...r, referrer: r.referred_by ? (byId.get(r.referred_by) ?? null) : null }));
+}
 /**
  * A person, everywhere a name is only shown: the CHINESE name and the English
  * one under it (0018). Both travel together in every brief, because every list,
@@ -573,7 +599,7 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
           query = query.or(
             `full_name.ilike.${orValue(`%${term}%`)},english_name.ilike.${orValue(`%${term}%`)}`,
           );
-        return json(unwrap(await query));
+        return json(await withReferrers(db, unwrap<Array<{ referred_by: string | null }>>(await query)));
       }
       if (method === 'POST') {
         const created = unwrap<
@@ -624,7 +650,11 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
       if (method === 'GET') {
         await assertRowReadable('members', r1);
         await assertMemberGroupReadable(r1);
-        return json(unwrap(await db.from('members').select(MEMBER_SELECT).eq('id', r1).single()));
+        const row = unwrap<{ referred_by: string | null }>(
+          await db.from('members').select(MEMBER_SELECT).eq('id', r1).single(),
+        );
+        const [withReferrer] = await withReferrers(db, [row]);
+        return json(withReferrer);
       }
       if (method === 'PATCH') {
         const dto = await body();

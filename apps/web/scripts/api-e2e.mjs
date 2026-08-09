@@ -989,7 +989,7 @@ async function paidTraining(adminCookie, hallId) {
     // Still an allow-list: no hall, no timestamps, nothing else off the row.
     ok('…and nothing else off the row',
       pub.json && Object.keys(pub.json).sort().join(',') ===
-        'ends_on,fee,id,is_enrollable,kind,location,name,payment_instructions,payment_qr_url,pic,pic_contact,start_time,starts_on,total_sessions',
+        'ends_on,fee,gender,id,is_enrollable,kind,location,name,payment_instructions,payment_qr_url,pic,pic_contact,start_time,starts_on,total_sessions',
       Object.keys(pub.json ?? {}).sort().join(','));
 
     // ---- signing up (no auth), with and without a receipt ------------------
