@@ -263,6 +263,8 @@ export const ms: Messages = {
   'events.sheet': 'Ambil kehadiran',
   'events.sheetSub': 'Setiap hari Ahad bulan ini, serta perjumpaan yang ditambah untuknya — ikut tarikh',
   'events.sheetEmpty': 'Belum ada ahli aktif.',
+  'events.searchEmpty': 'Tiada sesiapa dalam senarai ini sepadan dengan “{q}”.',
+  'events.searchCount': 'Memaparkan {n} daripada {total} ahli · jumlah di bawah dan “tanda semua” tetap merangkumi semua orang.',
   'events.col.preService': 'Pra-kebaktian',
   'events.col.service': 'Kebaktian',
   'events.col.attended': 'Hadir',
@@ -508,7 +510,7 @@ export const ms: Messages = {
   /* ---- settings -------------------------------------------------------- */
   'settings.title': 'Pengguna',
   'settings.add': '＋ Akaun baharu',
-  'settings.col.account': 'Akaun · ahli berkaitan',
+  'settings.col.account': 'Pengguna',
   'settings.col.churchRole': 'Jawatan gereja',
   'settings.col.accountRole': 'Peranan kebenaran',
   'settings.col.email': 'E-mel log masuk',

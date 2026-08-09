@@ -269,6 +269,8 @@ export const en = {
   'events.sheet': 'Roll call',
   'events.sheetSub': 'Every Sunday of the month, plus any meeting added for it — in date order',
   'events.sheetEmpty': 'No members on roll yet.',
+  'events.searchEmpty': 'Nobody on this sheet matches “{q}”.',
+  'events.searchCount': 'Showing {n} of {total} members · the totals below, and the check-all, still cover everyone.',
   'events.col.preService': 'Pre-service',
   'events.col.service': 'Service',
   'events.col.attended': 'Attended',
@@ -518,7 +520,7 @@ export const en = {
   /* ---- settings -------------------------------------------------------- */
   'settings.title': 'Users',
   'settings.add': '＋ New account',
-  'settings.col.account': 'Account · linked member',
+  'settings.col.account': 'User',
   'settings.col.churchRole': 'Church role',
   'settings.col.accountRole': 'Permission role',
   'settings.col.email': 'Login email',

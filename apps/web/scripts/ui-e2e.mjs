@@ -666,16 +666,20 @@ async function main() {
       check('the roll-call card offers no roll-call tabs any more',
         (await page.locator('.seg').count()) === 0, `${await page.locator('.seg').count()} segmented control(s)`);
 
-      // Its toolbar is year · month · export, in that order — export last, the
-      // same place every other page puts it (rule G7a).
+      // Its toolbar is the month picker's two selects on the left and the
+      // export button LAST, in the right corner — the same halves a page bar
+      // has (rule G7a). A spacer sits between them, so the shape is four
+      // children and the assertion is about the ORDER and the last one, not
+      // about a fixed count of controls.
       const sheetCard = page.locator('.card', { has: page.locator('th:has-text("Week")') });
       const toolbar = sheetCard.locator('.flex.gap-8.mb-14').first();
+      await toolbar.waitFor({ timeout: 20000 });
       const toolbarShape = await toolbar.evaluate((el) =>
         [...el.children].map((c) => c.tagName.toLowerCase() + (c.getAttribute('aria-label') ? `[${c.getAttribute('aria-label')}]` : '')),
       );
       check('the export button is the last control in the card’s toolbar',
-        toolbarShape.length === 3 && toolbarShape[0].startsWith('select') && toolbarShape[1].startsWith('select') &&
-          toolbarShape[2].startsWith('button'),
+        toolbarShape.length >= 3 && toolbarShape[0].startsWith('select') && toolbarShape[1].startsWith('select') &&
+          toolbarShape[toolbarShape.length - 1].startsWith('button'),
         toolbarShape.join(' | '));
       check('…and it is an export button, not something else',
         (await sheetCard.locator('button[aria-label*="Export"]').count()) === 1);

@@ -730,13 +730,17 @@ th.sortable:hover {
   background: var(--accent);
   color: var(--surface);
 }
+/* The secondary button. Filled with the warm off-white rather than left
+   transparent: on a white card a transparent button was a rectangle of border
+   with nothing in it, which reads as a disabled field more than as something to
+   press. The fill gives it a body, and the hover then has somewhere to go. */
 .btn.ghost {
-  background: transparent;
+  background: var(--surface-2);
   color: var(--ink);
   border-color: var(--border);
 }
 .btn.ghost:hover {
-  background: var(--surface-2);
+  background: var(--accent-soft);
   filter: none;
 }
 .btn.good {

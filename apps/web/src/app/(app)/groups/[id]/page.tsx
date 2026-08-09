@@ -641,14 +641,16 @@ function WeeklyAttendance({ group }: { group: GroupDetail }) {
         </div>
       </div>
 
-      {/* The card's own toolbar: the month it is showing, then export at the
-          end — the same order every page bar puts them in (rule G7a). This is
-          the CARD's row; the page bar belongs to the page. */}
-      {/* Month picker left, export in the right corner — the same halves a
-          PageBar has, so this card's row reads like every list page's
-          (rule G7a). It sat next to the picker before, which put the one
-          action on a different side here than everywhere else. */}
-      <div className="flex-between gap-8 mb-14 flex-wrap">
+      {/* The card's own toolbar: the month on the left, export in the right
+          corner — the same halves a PageBar has, so this row reads like every
+          list page's (rule G7a). This is the CARD's row; the page bar belongs
+          to the page.
+
+          The gap is a spacer rather than `justify-content: space-between`,
+          because MonthPicker is TWO selects: spreading the row would have put
+          the year at the left edge, the month floating in the middle and the
+          export at the right, instead of a month picker and an action. */}
+      <div className="flex gap-8 mb-14 flex-wrap">
         <MonthPicker
           year={year}
           month={month}
@@ -658,6 +660,7 @@ function WeeklyAttendance({ group }: { group: GroupDetail }) {
             setMonth(next.month);
           }}
         />
+        <div className="grow" />
         <ExportButton onClick={exportGrid} disabled={!data} title={t('group.exportTitle')} />
       </div>
 

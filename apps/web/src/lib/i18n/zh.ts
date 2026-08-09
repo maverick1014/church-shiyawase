@@ -261,6 +261,8 @@ export const zh: Messages = {
   'events.sheet': '聚会点名',
   'events.sheetSub': '本月每个主日，加上为本月添加的聚会 —— 按日期排列',
   'events.sheetEmpty': '还没有在册成员。',
+  'events.searchEmpty': '点名表里没有匹配「{q}」的人。',
+  'events.searchCount': '显示 {n} / {total} 位成员 · 下方合计与「全员到齐」仍然针对全部人。',
   'events.col.preService': '会前',
   'events.col.service': '主日',
   'events.col.attended': '到场',
@@ -505,7 +507,7 @@ export const zh: Messages = {
   /* ---- settings -------------------------------------------------------- */
   'settings.title': '用户',
   'settings.add': '＋ 新建账户',
-  'settings.col.account': '账户 · 关联成员',
+  'settings.col.account': '用户',
   'settings.col.churchRole': '教会身份',
   'settings.col.accountRole': '权限角色',
   'settings.col.email': '登录邮箱',
