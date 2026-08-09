@@ -281,6 +281,51 @@ async function main() {
     }
   };
 
+  /**
+   * The last word on test data: delete EVERY ZZ_UITEST_… row in the church,
+   * not just the ones this run registered.
+   *
+   * `sweep` above can only remove what this process created. Anything left by
+   * an earlier run — one that was killed before its handlers fired, one whose
+   * delete was refused, one from a build that predates the sweep — is invisible
+   * to it and simply accumulates in the church's live database, which is what
+   * the owner found. This asks the API what is actually there and removes
+   * whatever carries the fixture prefix, whoever made it.
+   *
+   * Order matters and is the reverse of how a fixture is built: a pair holds
+   * two members, a training holds its enrolments, a group holds its roster. So
+   * pairs first, then the things that only reference members, then the members,
+   * then the groups they sat in.
+   *
+   * It returns what it could NOT delete, because residue that cannot be removed
+   * has to be loud rather than logged — see the check in main()'s finally.
+   */
+  const PREFIX = 'ZZ_UITEST';
+  const purgeResidue = async (stream = console.log) => {
+    const stuck = [];
+    const list = (path) => apiGet(path).catch(() => []);
+    const kill = async (label, path) => {
+      if (await apiDelete(path)) stream(`  ↳ purge: deleted stray ${label} (${path})`);
+      else stuck.push(`${label} (${path})`);
+    };
+    const named = (rows, field) =>
+      (Array.isArray(rows) ? rows : []).filter((r) => String(r?.[field] ?? '').startsWith(PREFIX));
+
+    // A pair has no name of its own — it is stray when either person on it is.
+    for (const p of (await list('/discipleship/pairs')).filter?.(
+      (x) =>
+        String(x?.mentor?.full_name ?? '').startsWith(PREFIX) ||
+        String(x?.trainee?.full_name ?? '').startsWith(PREFIX),
+    ) ?? []) {
+      await kill('pair', `/discipleship/pairs/${p.id}`);
+    }
+    for (const t of named(await list('/trainings'), 'name')) await kill('training', `/trainings/${t.id}`);
+    for (const e of named(await list('/events'), 'title')) await kill('meeting', `/events/${e.id}`);
+    for (const m of named(await list('/members'), 'full_name')) await kill('member', `/members/${m.id}`);
+    for (const g of named(await list('/groups'), 'name')) await kill('group', `/groups/${g.id}`);
+    return stuck;
+  };
+
   const dieCleanly = async (why, err) => {
     if (err) console.error(`UI E2E ${why}:`, err);
     if (leftovers.length) {
@@ -291,6 +336,10 @@ async function main() {
       console.error(`${restorers.length} live setting(s) still held after ${why} — handing them back.`);
       await runRestorers(why, console.error).catch(() => {});
     }
+    // And the same total purge the normal path ends with: a crash is exactly
+    // when a fixture goes missing from the list (a module that died between
+    // creating a row and registering it), so the by-name pass matters most here.
+    await purgeResidue(console.error).catch(() => {});
     process.exit(1);
   };
   process.on('uncaughtException', (e) => void dieCleanly('uncaught exception', e));
@@ -1808,6 +1857,14 @@ async function main() {
       await ctx.request.delete(`${BASE}/api/members/${createdMemberId}`).catch(() => {});
       console.log(`  ↳ cleanup: deleted leftover test member ${createdMemberId}`);
     }
+    // The last word, pass or fail: ask the API what ZZ_UITEST_… rows are
+    // actually in the church and delete all of them — including any an earlier
+    // run left behind. Residue that survives even this is reported as a FAILED
+    // CHECK rather than a log line: a run that leaves data in the church's live
+    // database has not passed, whatever its assertions said.
+    mod('cleanup · the church is left as it was found');
+    const stuck = await purgeResidue().catch((e) => [`purge itself failed: ${e.message}`]);
+    check('the run leaves no test data behind', stuck.length === 0, stuck.join('; '));
     await browser.close();
     if (server) server.close();
   }
