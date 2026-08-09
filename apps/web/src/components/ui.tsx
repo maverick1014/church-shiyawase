@@ -380,6 +380,46 @@ export function ProgressBar({
 }
 
 /* -------------------------------------------------------------------------
+ * Theme swatch — one round chip, cut on the diagonal
+ * ---------------------------------------------------------------------- */
+
+/**
+ * A theme is two colours (the rail and the brand), and this is how a theme is
+ * SHOWN: a circle split down the diagonal, rail on one side, brand on the
+ * other — the shape every theme picker uses. One component for the preset list
+ * and for the live preview of a custom pair, so the two can never draw the
+ * same theme differently (rule G4).
+ *
+ * The colours arrive inline because they are data — a church's own pair, or a
+ * catalogue entry's — never a palette decision; the geometry is all in
+ * `.theme-swatch` in globals.css. Decorative by default: the name beside it
+ * carries the meaning, so it is hidden from assistive tech unless the caller
+ * gives it a `title`.
+ */
+export function ThemeSwatch({
+  rail,
+  brand,
+  large,
+  title,
+}: {
+  rail: string;
+  brand: string;
+  large?: boolean;
+  title?: string;
+}) {
+  return (
+    <span
+      className={`theme-swatch ${large ? 'lg' : ''}`}
+      style={{ ['--sw-rail' as string]: rail, ['--sw-brand' as string]: brand }}
+      title={title}
+      role={title ? 'img' : undefined}
+      aria-label={title}
+      aria-hidden={title ? undefined : true}
+    />
+  );
+}
+
+/* -------------------------------------------------------------------------
  * Toggle switch
  * ---------------------------------------------------------------------- */
 

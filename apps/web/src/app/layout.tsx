@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next';
 import './globals.css';
 import { PWARegister } from '@/components/PWARegister';
+import { THEME_BOOT_SCRIPT } from '@/lib/theme';
 
 // Document metadata is rendered before any session exists, so it uses the
 // app's default language (English) rather than the signed-in account's.
@@ -27,6 +28,10 @@ export const metadata: Metadata = {
   // automatically by Next's file conventions; PWA icons live in the manifest.
 };
 
+// The church's chosen brand colour, like its name, is on a record this file
+// cannot read at build time. So this is the DEFAULT: `applyTheme` (and the
+// pre-paint script below) rewrite the rendered <meta name="theme-color"> from
+// the record as soon as it is known.
 export const viewport: Viewport = {
   themeColor: '#a51f24',
   width: 'device-width',
@@ -41,6 +46,15 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
+      <head>
+        {/* The church's two theme colours, applied BEFORE the first paint from
+            the pair this device last saw, so a themed church does not flash
+            the default palette while `GET /api/church` is in flight. It reads
+            localStorage only — no request, nothing to block on — and validates
+            what it finds before it touches a custom property. See lib/theme.ts
+            for what the first-ever visit does instead. */}
+        <script dangerouslySetInnerHTML={{ __html: THEME_BOOT_SCRIPT }} />
+      </head>
       <body>
         {children}
         <PWARegister />

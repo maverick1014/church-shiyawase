@@ -860,10 +860,20 @@ async function churchAndModules(adminCookie) {
   const pub = await req('GET', '/api/church');
   ok('church profile is public (no auth) → 200', pub.status === 200, `status ${pub.status}`);
   ok('public church profile carries a name', typeof pub.json?.name === 'string' && pub.json.name.length > 0, JSON.stringify(pub.json).slice(0, 120));
-  // …and only the four public fields — no id, no timestamps.
+  // …and only the public fields — no id, no timestamps. The theme is among
+  // them because the sign-in card and both public forms are painted in the
+  // church's own colours before anyone has a session (migration 0017).
   ok('public church profile exposes nothing else',
-    pub.json && Object.keys(pub.json).sort().join(',') === 'description,logo_url,name,short_name',
+    pub.json && Object.keys(pub.json).sort().join(',') ===
+      'description,logo_url,name,short_name,theme_brand,theme_preset,theme_rail',
     Object.keys(pub.json ?? {}).join(','));
+  const HEX = /^#[0-9a-f]{6}$/i;
+  ok('the public payload carries the church’s two theme colours',
+    HEX.test(String(pub.json?.theme_rail)) && HEX.test(String(pub.json?.theme_brand)),
+    `rail=${pub.json?.theme_rail} brand=${pub.json?.theme_brand}`);
+  ok('…and says which preset they came from (null = picked by hand)',
+    pub.json?.theme_preset === null || typeof pub.json?.theme_preset === 'string',
+    String(pub.json?.theme_preset));
 
   // Writing it is not public, and not for every role either (the role matrix
   // below checks coworker/readonly with a real session).
@@ -885,8 +895,15 @@ async function churchAndModules(adminCookie) {
   const badBody = await req('PATCH', '/api/church/modules/discipleship', { ...H, body: { enabled: 'yes' } });
   ok('non-boolean enabled → 400', badBody.status === 400, `status ${badBody.status}`);
 
-  // Church profile round-trip, restored below.
+  // Church profile round-trip, restored below. The theme is restored the same
+  // way: this runs against the live site, and the colours are what everyone in
+  // the church sees.
   const originalDescription = pub.json?.description ?? null;
+  const originalTheme = {
+    preset: pub.json?.theme_preset ?? null,
+    rail: pub.json?.theme_rail,
+    brand: pub.json?.theme_brand,
+  };
   const marker = `api-e2e ${Date.now()}`;
   try {
     const patched = await req('PATCH', '/api/church', { ...H, body: { description: marker } });
@@ -897,6 +914,49 @@ async function churchAndModules(adminCookie) {
     const sneaky = await req('PATCH', '/api/church', { ...H, body: { id: '00000000-0000-0000-0000-000000000000' } });
     ok('church PATCH refuses an unknown field → 403', sneaky.status === 403, `status ${sneaky.status}`);
     ok('church name cannot be blanked → 400', (await req('PATCH', '/api/church', { ...H, body: { name: '   ' } })).status === 400);
+
+    // ---- the theme: two colours, and what may not be stored as one --------
+    // These strings end up inside a CSS custom property on every page, so the
+    // server refuses anything that is not a strict #rrggbb — never sanitises
+    // it — and refuses a pair the app cannot be read on.
+    for (const [what, body] of [
+      ['a colour name', { theme_preset: null, theme_rail: 'red', theme_brand: '#a51f24' }],
+      ['three-digit shorthand', { theme_preset: null, theme_rail: '#abc', theme_brand: '#a51f24' }],
+      ['a CSS injection', { theme_preset: null, theme_rail: '#fff; } html { display: none } :root { --x: #fff', theme_brand: '#a51f24' }],
+      ['one colour without the other', { theme_preset: null, theme_rail: '#201d1b' }],
+      ['a preset this build does not ship', { theme_preset: 'neon_pink' }],
+      ['a sidebar too pale to read its own menu', { theme_preset: null, theme_rail: '#ffffff', theme_brand: '#a51f24' }],
+      ['a brand too pale for the white text on every button', { theme_preset: null, theme_rail: '#201d1b', theme_brand: '#ffee00' }],
+    ]) {
+      const bad = await req('PATCH', '/api/church', { ...H, body });
+      ok(`church theme refuses ${what} → 400`, bad.status === 400, `status ${bad.status} ${JSON.stringify(bad.json)}`);
+    }
+    // Nothing above was stored: the colours are still the ones we started with.
+    const untouched = await req('GET', '/api/church');
+    ok('a refused theme changed nothing',
+      untouched.json?.theme_rail === originalTheme.rail && untouched.json?.theme_brand === originalTheme.brand,
+      `${untouched.json?.theme_rail}/${untouched.json?.theme_brand}`);
+
+    // A valid custom pair round-trips through the PUBLIC read, which is where
+    // the login page and the sign-up form take their colours from.
+    const custom = await req('PATCH', '/api/church', { ...H, body: { theme_preset: null, theme_rail: '#1A2130', theme_brand: '#2F6690' } });
+    ok('super_admin PATCH theme → 200 + normalized to lowercase',
+      custom.status === 200 && custom.json?.theme_rail === '#1a2130' && custom.json?.theme_brand === '#2f6690' && custom.json?.theme_preset === null,
+      `status ${custom.status} ${JSON.stringify(custom.json)}`);
+    const publicTheme = await req('GET', '/api/church');
+    ok('the theme round-trips through the public GET',
+      publicTheme.json?.theme_rail === '#1a2130' && publicTheme.json?.theme_brand === '#2f6690',
+      JSON.stringify(publicTheme.json));
+
+    // A preset names its OWN colours: the catalogue in code is the authority,
+    // so colours sent alongside a preset key are ignored rather than stored
+    // under a name that never had them.
+    const preset = await req('PATCH', '/api/church', { ...H, body: { theme_preset: 'charcoal', theme_rail: '#123456', theme_brand: '#654321' } });
+    ok('picking a preset stores the preset’s own colours, not the sender’s',
+      preset.status === 200 && preset.json?.theme_preset === 'charcoal' &&
+        preset.json?.theme_rail !== '#123456' && preset.json?.theme_brand !== '#654321' &&
+        HEX.test(String(preset.json?.theme_rail)) && HEX.test(String(preset.json?.theme_brand)),
+      `status ${preset.status} ${JSON.stringify(preset.json)}`);
 
     // ---- the gate: a disabled module's paths must stop answering ----------
     if (original) {
@@ -929,6 +989,23 @@ async function churchAndModules(adminCookie) {
     ok('the church description was restored',
       restored.status === 200 && (restored.json?.description ?? null) === originalDescription,
       `status ${restored.status} ${String(restored.json?.description)}`);
+    // The colours everyone in this church sees — put back exactly as found,
+    // by preset key when there was one (so the pair keeps its name) and by the
+    // two colours when it was a custom pair.
+    if (originalTheme.rail && originalTheme.brand) {
+      const backToTheme = await req('PATCH', '/api/church', {
+        ...H,
+        body: originalTheme.preset
+          ? { theme_preset: originalTheme.preset }
+          : { theme_preset: null, theme_rail: originalTheme.rail, theme_brand: originalTheme.brand },
+      });
+      ok('the church theme was restored',
+        backToTheme.status === 200 &&
+          backToTheme.json?.theme_rail === originalTheme.rail &&
+          backToTheme.json?.theme_brand === originalTheme.brand &&
+          (backToTheme.json?.theme_preset ?? null) === originalTheme.preset,
+        `status ${backToTheme.status} ${JSON.stringify(backToTheme.json)}`);
+    }
   }
 }
 
@@ -1060,11 +1137,21 @@ async function churchRoleMatrix(role, RH) {
   ok(`${role} PATCH church → 403`, rename.status === 403, `status ${rename.status}`);
   const toggle = await req('PATCH', '/api/church/modules/discipleship', { ...RH, body: { enabled: !wasEnabled } });
   ok(`${role} cannot switch a module off → 403`, toggle.status === 403, `status ${toggle.status}`);
+  // The theme is the church's branding, on every screen including the public
+  // ones — the same super_admin-only write as the name (rule G2).
+  const themeBefore = await req('GET', '/api/church', RH);
+  const repaint = await req('PATCH', '/api/church', { ...RH, body: { theme_preset: 'forest' } });
+  ok(`${role} cannot repaint the church → 403`, repaint.status === 403, `status ${repaint.status}`);
   // A refusal that silently wrote would be worse than a 200 — read it back.
   const after = await req('GET', '/api/church/modules', RH);
   ok(`${role} left the module catalog untouched`,
     (after.json || []).find((m) => m.key === 'discipleship')?.enabled === wasEnabled,
     JSON.stringify(after.json).slice(0, 120));
+  const themeAfter = await req('GET', '/api/church', RH);
+  ok(`${role} left the theme untouched`,
+    themeAfter.json?.theme_rail === themeBefore.json?.theme_rail &&
+      themeAfter.json?.theme_brand === themeBefore.json?.theme_brand,
+    `${themeAfter.json?.theme_rail}/${themeAfter.json?.theme_brand}`);
 }
 
 /**

@@ -53,25 +53,43 @@ with a distinctive **40-day one-on-one discipleship (四十天一对一守望)**
 
 Derived from the church logo (a charcoal **globe** wrapped by a **crimson cross-arrow**, red "GRACE" wordmark).
 
-### Palette (crimson + charcoal on warm white)
-| Token | Light | Dark | Use |
+### Palette — the church's two colours, on warm white
+
+**A theme is two colours** and they are **data**, on the `church` row (migration
+0017), chosen in 教会设置 → 主题颜色. The default pair is this church's own
+(crimson + charcoal), so the table below is what an unthemed deployment looks
+like — not a constant.
+
+| Token | Value | Source | Use |
 | --- | --- | --- | --- |
-| brand (crimson) | `#a51f24` | `#d94a4f` | primary actions, active nav, key data |
-| brand-2 | `#7f171b` | `#c23c41` | gradients, hover |
-| brand-soft | `#f6e3e3` | `#3a2422` | brand-tinted badges |
-| accent (charcoal) | `#33302f` | `#cbc6c3` | secondary emphasis, data endpoints |
-| rail (sidebar) | `#201d1b` | `#100e0d` | sidebar = the "globe" charcoal |
-| paper | `#f6f3f2` | `#141211` | app background |
-| surface | `#ffffff` | `#1c1917` | cards |
-| border | `#e7e1df` | `#322d2b` | hairlines |
-| ink | `#232120` | `#ece7e5` | text |
-| muted | `#6f6a68` | `#a29b97` | secondary text |
-| semantic good | `#2f8f5b` | `#4bab74` | present/approved/completed |
-| semantic warn | `#c9871f` | `#d8a441` | pending/excused/needs-follow-up |
-| semantic crit | `#d9482f` | `#e86b52` | absent/dropped (kept distinct from brand crimson) |
+| **rail** | `#201d1b` | `church.theme_rail` | the sidebar — the "globe" charcoal |
+| **brand** | `#a51f24` | `church.theme_brand` | primary actions, active nav, key data |
+| brand-2 | `#80181c` | `color-mix(in srgb, var(--brand) 78%, #000)` | gradients, hover |
+| brand-soft | `#f4e4e5` | `color-mix(in srgb, var(--brand) 12%, #fff)` | brand-tinted badges, focus rings |
+| accent | `#312f2d` | `color-mix(in srgb, var(--rail) 92%, #fff)` | secondary emphasis on a light surface |
+| accent-soft | `#e8e8e8` | `color-mix(in srgb, var(--rail) 10%, #fff)` | accent badges, skeleton tint |
+| rail-ink | `#fff` | — | the sidebar's brightest text |
+| rail-text / -muted / -faint / -dim | — | `color-mix(in srgb, #fff 88/74/62/50%, var(--rail))` | sidebar body text → section labels |
+| paper | `#f6f3f2` | independent | app background |
+| surface | `#ffffff` | independent | cards |
+| border | `#e7e1df` | independent | hairlines |
+| ink | `#232120` | independent | text |
+| muted | `#6f6a68` | independent | secondary text |
+| semantic good | `#2f8f5b` | independent | present/approved/completed |
+| semantic warn | `#c9871f` | independent | pending/excused/needs-follow-up |
+| semantic crit | `#d9482f` | independent | absent/dropped (kept distinct from the brand) |
 
 - **Brand mark:** a small globe (circle + meridians) with a subtle cross, crimson on white — echoes the logo.
-- Semantic colors are **separate** from the brand crimson so "absent/danger" never reads as "brand".
+- Semantic colors and the warm neutrals are **independent of the theme**: "absent/danger" must not
+  become the brand colour because a church picked a red one. `ROLE_TAG` (the member-role palette) is
+  not themed either.
+- Everything that IS a shade of the two chosen colours is `color-mix()`'d from them in `globals.css`,
+  so there is one source per colour. The sidebar's foregrounds are mixes of white **towards the
+  rail** rather than fixed greys, which is what lets the rail be any dark colour — and the API
+  refuses a rail (≥ 8:1 against white) or a brand (≥ 4.5:1) too pale to carry the light text on it.
+- **Presets** ship in code (`THEME_PRESETS` in `packages/shared`): charcoal/crimson (the default),
+  ink, forest, plum, amber. The chosen pair is stored **alongside** the preset key, so editing a
+  preset in a later release cannot restyle a church that picked it.
 
 ### Typography (system CJK, no webfonts)
 The Artifact/CSP blocks font CDNs and CJK webfonts are too large to inline, so use **system CJK fonts**:
@@ -80,7 +98,9 @@ The Artifact/CSP blocks font CDNs and CJK webfonts are too large to inline, so u
 - Use `font-variant-numeric: tabular-nums` for figures.
 
 ### Rules
-- **Light + dark themes**, both first-class (token-driven; a theme toggle stamps `data-theme`).
+- **Light only** (this was originally specced as light + dark; the app ships light, rule G7). The
+  church's theme changes the two colours the light theme is built from — it is not a dark mode, and
+  there is no `data-theme` / `prefers-color-scheme` branch anywhere.
 - **Mobile-first / fully responsive.** Sidebar collapses into a slide-in drawer (☰) on ≤820px; grids stack; wide tables scroll inside their own container.
 - Classic admin shell: charcoal left nav, top bar (title + actions), summary-before-detail content.
 
@@ -221,11 +241,15 @@ followed, in date order, by every meeting someone added for it.
 Enums: `church_role(pastor,member)`, `group_position(leader,assistant_leader,intern_leader,core_member,regular_member,new_member)`, `member_status(active,inactive)`, `gender_type`, `event_type`, `attendance_status(present,absent,excused)`, `donation_method`, `enrollment_status(pending,approved,in_progress,completed,dropped)`, `pair_status(active,completed,paused)`.
 
 Tables:
-- `church(id, name, short_name, description, logo_url, timestamps)` — **one row**, seeded by 0012. The
-  church's identity is data, not a hardcoded string: the sidebar brand, the login card and both
-  public forms render from it. `GET /api/church` is **public** (the login page has no session);
-  every write is super_admin. `logo_url` points at the public `branding` storage bucket, uploaded
-  through `POST /api/church/logo` — the same mechanism as a member's avatar.
+- `church(id, name, short_name, description, logo_url, theme_preset, theme_rail, theme_brand, timestamps)` —
+  **one row**, seeded by 0012. The church's identity is data, not a hardcoded string: the sidebar
+  brand, the login card and both public forms render from it. `GET /api/church` is **public** (the
+  login page has no session) and carries the theme, since those pages are painted in it before
+  anyone signs in; every write is super_admin. `logo_url` points at the public `branding` storage
+  bucket, uploaded through `POST /api/church/logo` — the same mechanism as a member's avatar.
+  The theme columns (0017) are the two colours plus the preset key they came from (null = custom);
+  both colours are `check`ed as `^#[0-9a-fA-F]{6}$` in the database as well as in the API, because
+  they end up inside a CSS custom property.
 - `church_modules(church_id→church on delete cascade, module, enabled, timestamps, pk(church_id,module))` —
   which **optional** modules this church runs. The catalog of what CAN be switched lives in code
   (`OPTIONAL_MODULES` in `packages/shared`: a key, the nav href it owns, the API prefixes it owns);
@@ -279,7 +303,7 @@ Tables:
 | `/d/[token]` | 每日填写页（独立） | **standalone, mobile-first, no login** mentor daily form |
 | `/enroll/[id]` | 报名页（独立） | **standalone, mobile-first, no login** self-enrollment for a course or an activity — matches full Chinese name to a member |
 | `/settings` | 用户管理 | login accounts (super_admin only) |
-| `/church` | 教会设置 | the church record (name / short name / description / logo) + the **add-on module catalog** — super_admin only |
+| `/church` | 教会设置 | the church record (name / short name / description / logo), its **theme colours** (a preset or a custom pair) + the **add-on module catalog** — super_admin only |
 
 ---
 

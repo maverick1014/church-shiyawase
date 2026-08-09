@@ -108,6 +108,155 @@ export function moduleForNavHref(href: string): string | null {
 }
 
 // ---------------------------------------------------------------------------
+// The church's theme — two colours, and the presets to choose them from
+// ---------------------------------------------------------------------------
+
+/**
+ * A theme is exactly TWO colours:
+ *
+ *   rail  — the dark sidebar (`--rail`)
+ *   brand — the accent everything active is painted in (`--brand`)
+ *
+ * Every other colour the design system needs is DERIVED from these in
+ * `globals.css` with `color-mix()` (`--brand-2` a shade down, `--brand-soft` a
+ * tint, `--accent` / `--accent-soft` and the sidebar's own foregrounds off the
+ * rail), so there is one source per colour and the shades cannot drift apart
+ * from it. The independent families — `--good` / `--warn` / `--crit` and the
+ * warm neutrals — are NOT part of a theme: "absent" must not turn into the
+ * brand colour because a church picked a red one.
+ *
+ * It belongs to the CHURCH, not to an account: it is branding, so one set does
+ * the whole congregation (stored on the `church` row, migration 0017).
+ */
+export interface ChurchTheme {
+  /** The preset this came from, or null when the two colours were picked by hand. */
+  preset: string | null;
+  /** The sidebar colour, `#rrggbb`. */
+  rail: string;
+  /** The brand colour, `#rrggbb`. */
+  brand: string;
+}
+
+/** One entry in the shipped catalogue. The colours are code, not data. */
+export interface ThemePresetDef {
+  /** Stored in `church.theme_preset`; also the i18n key suffix. */
+  readonly key: string;
+  readonly rail: string;
+  readonly brand: string;
+}
+
+/**
+ * The shipped presets.
+ *
+ * The FIRST is exactly today's palette, so applying migration 0017 and this
+ * build changes nothing visible. The rest are a considered set rather than a
+ * rainbow: every one is a near-black rail tinted towards its own brand's hue
+ * (so the sidebar and the accent read as one pair rather than two decisions),
+ * and every brand is dark enough to carry white text — which is what `.btn`,
+ * `.chip.on`, `.nav-link.active` and `.day-cell.done` all do with it.
+ *
+ * The colours are stored on the church row as well as the key, so editing a
+ * preset here can never silently restyle a church that picked it — they keep
+ * the pair they chose until they choose another.
+ *
+ * ADDING ONE is a single entry here plus its dictionary name
+ * (`theme.preset.<key>` in en/zh/ms) — `lib/__tests__/theme.test.ts` fails the
+ * build if the name is missing or the pair is unreadable.
+ */
+export const THEME_PRESETS: readonly ThemePresetDef[] = [
+  // Crimson on charcoal — the church logo's own pair, and the app's default.
+  { key: 'charcoal', rail: '#201d1b', brand: '#a51f24' },
+  // Harbour blue on slate ink.
+  { key: 'ink', rail: '#1a2130', brand: '#2f6690' },
+  // Pine on forest.
+  { key: 'forest', rail: '#182320', brand: '#276b48' },
+  // Mulberry on aubergine.
+  { key: 'plum', rail: '#221a26', brand: '#8a3f6d' },
+  // Burnt amber on coffee.
+  { key: 'amber', rail: '#231e18', brand: '#a35d1b' },
+];
+
+/** Every preset key, in catalogue order. */
+export const THEME_PRESET_KEYS: readonly string[] = THEME_PRESETS.map((p) => p.key);
+
+/**
+ * The palette a church has until it chooses otherwise — and the fallback for
+ * every place that must render before the record arrives (the CSS defaults in
+ * `globals.css`, the pre-paint script in `app/layout.tsx`).
+ */
+export const DEFAULT_THEME: ChurchTheme = {
+  preset: THEME_PRESETS[0].key,
+  rail: THEME_PRESETS[0].rail,
+  brand: THEME_PRESETS[0].brand,
+};
+
+/** One preset by key, or null if this build does not ship it. */
+export function themePreset(key: string | null | undefined): ThemePresetDef | null {
+  return THEME_PRESETS.find((p) => p.key === key) ?? null;
+}
+
+/**
+ * A STRICT six-digit hex colour, `#rrggbb`.
+ *
+ * Deliberately narrow: this string is interpolated into a CSS custom property,
+ * so `red`, `var(--x)`, `#abc`, `rgb(…)` and anything carrying a `;` or a `}`
+ * are all refused rather than normalised. Three-digit shorthand is valid CSS
+ * but is refused too — one shape in the database beats two, and every colour
+ * this app writes comes from a preset or an `<input type="color">`, both of
+ * which produce the long form.
+ */
+const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
+
+export function isHexColor(value: unknown): value is string {
+  return typeof value === 'string' && HEX_COLOR.test(value);
+}
+
+/** The colour in one canonical shape (lowercase), or null if it is not one. */
+export function normalizeHexColor(value: unknown): string | null {
+  return isHexColor(value) ? value.toLowerCase() : null;
+}
+
+/** WCAG relative luminance of a `#rrggbb` colour. */
+function relativeLuminance(hex: string): number {
+  const channel = (i: number) => {
+    const v = parseInt(hex.slice(1 + i * 2, 3 + i * 2), 16) / 255;
+    return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * channel(0) + 0.7152 * channel(1) + 0.0722 * channel(2);
+}
+
+/** WCAG contrast ratio of a colour against white — 1 (white) … 21 (black). */
+export function contrastWithWhite(hex: string): number {
+  if (!isHexColor(hex)) return 0;
+  return 1.05 / (relativeLuminance(hex) + 0.05);
+}
+
+/**
+ * How dark the two colours have to be, and why there is a floor at all.
+ *
+ * The sidebar is light-on-dark by construction: its text, its section labels
+ * and its active row are white or a mix of white towards the rail. A pale rail
+ * does not make it "a light theme", it makes it unreadable — so a pale rail is
+ * refused rather than half-supported. 8:1 lets anything down to roughly #4d4d4d
+ * through, which still carries the faintest label (a 50% white mix) legibly.
+ *
+ * The brand carries white text wherever it is a background (every `.btn`, the
+ * active nav row, a ticked day cell), so it needs the normal AA ratio of 4.5.
+ */
+export const MIN_RAIL_CONTRAST = 8;
+export const MIN_BRAND_CONTRAST = 4.5;
+
+/** Is this dark enough to be a sidebar? */
+export function isUsableRail(hex: unknown): boolean {
+  return isHexColor(hex) && contrastWithWhite(hex) >= MIN_RAIL_CONTRAST;
+}
+
+/** Is this dark enough to carry the white text every button puts on it? */
+export function isUsableBrand(hex: unknown): boolean {
+  return isHexColor(hex) && contrastWithWhite(hex) >= MIN_BRAND_CONTRAST;
+}
+
+// ---------------------------------------------------------------------------
 // Members & roles
 // ---------------------------------------------------------------------------
 

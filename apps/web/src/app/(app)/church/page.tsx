@@ -13,14 +13,16 @@ import {
   SkeletonCard,
   SkeletonScreen,
   Switch,
+  ThemeSwatch,
   useConfirm,
   useToast,
 } from '@/components/ui';
 import { BrandLogo } from '@/components/BrandLogo';
 import { ChurchProfile, ModuleStateRow } from '@/lib/types';
+import { applyTheme, themeOf } from '@/lib/theme';
 import { useT } from '@/lib/i18n';
 import type { MessageKey } from '@/lib/i18n';
-import { AccountRole } from '@tog/shared';
+import { AccountRole, isUsableBrand, isUsableRail, THEME_PRESETS } from '@tog/shared';
 
 /**
  * 教会设置 — the church's own identity, and the catalog of add-on modules.
@@ -32,7 +34,9 @@ import { AccountRole } from '@tog/shared';
  * is a singleton seeded by migration 0012, one deployment serves one church,
  * and "delete the church" is not an operation this app should offer. Modules
  * are read + updated (on/off); the catalog itself is code, so a module cannot
- * be created or deleted from the UI either.
+ * be created or deleted from the UI either. The theme is the same shape: the
+ * preset catalogue is code, so a church chooses a pair — it never creates or
+ * deletes one.
  *
  * super_admin-only, exactly like 用户管理 — and the API says the same for
  * every write to /church (rule G2).
@@ -63,17 +67,27 @@ export default function ChurchSettingsPage() {
       {profile.initialLoading ? (
         <SkeletonScreen>
           <SkeletonCard lines={5} />
+          <SkeletonCard lines={3} />
         </SkeletonScreen>
       ) : (
         profile.data && (
-          <ChurchProfileCard
-            // Remounts on a save so the form fields re-initialise from the
-            // record that came back, instead of a second copy of the same
-            // state being kept in sync by hand (rule G5).
-            key={`${profile.data.name}|${profile.data.logo_url ?? ''}`}
-            church={profile.data}
-            onSaved={() => profile.reload()}
-          />
+          <>
+            <ChurchProfileCard
+              // Remounts on a save so the form fields re-initialise from the
+              // record that came back, instead of a second copy of the same
+              // state being kept in sync by hand (rule G5).
+              key={`${profile.data.name}|${profile.data.logo_url ?? ''}`}
+              church={profile.data}
+              onSaved={() => profile.reload()}
+            />
+            <ChurchThemeCard
+              // Same reasoning: the custom pickers start from whatever the
+              // record now says, so choosing a preset moves them too.
+              key={`${profile.data.theme_preset ?? 'custom'}|${profile.data.theme_rail}|${profile.data.theme_brand}`}
+              church={profile.data}
+              onSaved={() => profile.reload()}
+            />
+          </>
         )
       )}
 
@@ -211,6 +225,133 @@ function ChurchProfileCard({
           {busy ? t('common.saving') : t('church.save')}
         </button>
       </div>
+    </div>
+  );
+}
+
+/**
+ * 主题颜色 — the church's two colours.
+ *
+ * A theme IS two colours: the rail (the sidebar) and the brand (everything
+ * active). Every other colour in the design system is mixed from them in CSS,
+ * so this card has exactly two things to set, however many shades that moves.
+ * It belongs to the church rather than to an account because it is branding:
+ * the login card and the public sign-up form are painted in it too, and
+ * neither has an account to read a preference from.
+ *
+ * Two ways in, one mechanism out (`PATCH /church` → `applyTheme`):
+ *   - a PRESET, which stores its own colours as well as its key, so editing
+ *     the catalogue in a later release cannot restyle a church that chose it;
+ *   - a CUSTOM pair, which stores the colours with a null preset.
+ * Picking is not destructive and is reversible in one tap, so it saves on the
+ * click without a confirm (rule G3 is about what discards data).
+ *
+ * Both colours are validated on the SERVER (rule G2) — a strict `#rrggbb`, and
+ * dark enough to carry the light text the sidebar and the buttons put on them.
+ * The same two predicates run here so the Save button is disabled rather than
+ * offering a click that can only 400.
+ */
+function ChurchThemeCard({
+  church,
+  onSaved,
+}: {
+  church: ChurchProfile;
+  onSaved: () => void;
+}) {
+  const t = useT();
+  const toast = useToast();
+  const current = themeOf(church);
+  const [rail, setRail] = useState(current.rail);
+  const [brand, setBrand] = useState(current.brand);
+  // Which chip is mid-save ('' = the custom pair), or null when idle.
+  const [busy, setBusy] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  const railOk = isUsableRail(rail);
+  const brandOk = isUsableBrand(brand);
+  const isCustom = current.preset === null;
+  const customInUse = isCustom && current.rail === rail && current.brand === brand;
+
+  const save = async (body: Partial<ChurchProfile>, key: string) => {
+    setBusy(key);
+    setErr(null);
+    try {
+      const saved = await api.patch<ChurchProfile>('/church', body);
+      // Repaint immediately from what the server stored, rather than from what
+      // was sent: the sidebar behind this card changes under the tap.
+      applyTheme(saved);
+      onSaved();
+      toast(t('church.theme.toast.saved'));
+    } catch (e) {
+      setErr((e as Error).message);
+      toast((e as Error).message, 'error');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <div className="card mt-16">
+      <h3 style={{ marginBottom: 4 }}>{t('church.theme')}</h3>
+      <div className="muted" style={{ fontSize: 11.5, marginBottom: 14 }}>{t('church.themeSub')}</div>
+      {err && <ErrorBanner message={err} />}
+
+      <div className="theme-options">
+        {THEME_PRESETS.map((p) => {
+          const on = current.preset === p.key;
+          return (
+            <button
+              key={p.key}
+              type="button"
+              className={`theme-option ${on ? 'on' : ''}`}
+              aria-pressed={on}
+              disabled={busy !== null}
+              onClick={() => save({ theme_preset: p.key }, p.key)}
+            >
+              <ThemeSwatch rail={p.rail} brand={p.brand} />
+              {/* Never colour alone: the chip that is in use says so with a
+                  tick and a doubled border, both of which survive a
+                  screenshot in greyscale. */}
+              <span className="theme-check">{on ? '✓' : ''}</span>
+              {t(`theme.preset.${p.key}` as MessageKey)}
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="section-label mt-16" style={{ marginBottom: 8 }}>
+        {t('church.theme.custom')}
+      </div>
+      <div className="form-row">
+        <Field label={t('church.theme.rail')}>
+          <input type="color" value={rail} onChange={(e) => setRail(e.target.value)} />
+        </Field>
+        <Field label={t('church.theme.brand')}>
+          <input type="color" value={brand} onChange={(e) => setBrand(e.target.value)} />
+        </Field>
+      </div>
+
+      {/* The same swatch as the presets above — the preview is not a second
+          drawing of a theme, it is the one drawing with other colours in it. */}
+      <div className="flex-between flex-wrap gap-12">
+        <div className="flex items-center gap-10">
+          <ThemeSwatch rail={rail} brand={brand} large title={t('church.theme.preview')} />
+          <div className="muted" style={{ fontSize: 11.5 }}>
+            {customInUse ? t('church.theme.inUse') : t('church.theme.preview')}
+          </div>
+        </div>
+        <button
+          className="btn"
+          disabled={busy !== null || !railOk || !brandOk || customInUse}
+          onClick={() => save({ theme_preset: null, theme_rail: rail, theme_brand: brand }, '')}
+        >
+          {busy === '' ? t('common.saving') : t('church.theme.save')}
+        </button>
+      </div>
+      {/* Said as soon as the colour is picked, not after a refused save: a
+          sidebar this pale would swallow its own navigation. */}
+      {!railOk && <div className="hint mt-14">{t('church.theme.err.rail')}</div>}
+      {!brandOk && <div className="hint mt-14">{t('church.theme.err.brand')}</div>}
     </div>
   );
 }

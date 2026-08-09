@@ -18,10 +18,16 @@ import type { SheetCell, SheetMeeting } from '@/lib/types';
 import {
   isOptionalModule,
   isTrainingKind,
+  isUsableBrand,
+  isUsableRail,
   LANGUAGES,
+  MIN_BRAND_CONTRAST,
+  MIN_RAIL_CONTRAST,
   moduleForApiPath,
+  normalizeHexColor,
   normalizeLanguage,
   OPTIONAL_MODULES,
+  themePreset,
   TrainingKind,
 } from '@tog/shared';
 
@@ -239,14 +245,19 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
   if (r0 === 'church') {
     if (!r1) {
       if (method === 'GET') {
-        // Deliberately only the four public fields, not the whole row: this
-        // one answers without a session.
+        // Deliberately only the public fields, not the whole row: this one
+        // answers without a session. The theme is among them because the
+        // login card and both public forms are painted in the church's
+        // colours before anyone signs in — and a colour is not a secret.
         const c = await churchRow(db);
         return json({
           name: c.name,
           short_name: c.short_name,
           description: c.description,
           logo_url: c.logo_url,
+          theme_preset: c.theme_preset,
+          theme_rail: c.theme_rail,
+          theme_brand: c.theme_brand,
         });
       }
       if (method === 'PATCH') {
@@ -1157,12 +1168,21 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
 
 // --- Church record & modules ------------------------------------------------
 
-const CHURCH_SELECT = 'id,name,short_name,description,logo_url';
+const CHURCH_SELECT =
+  'id,name,short_name,description,logo_url,theme_preset,theme_rail,theme_brand';
 
 /** Only these may be written on the church record; anything else is refused
  *  loudly rather than dropped, the same allow-list shape as the self-service
  *  profile above. `id` and the timestamps are deliberately absent. */
-const CHURCH_FIELDS = ['name', 'short_name', 'description', 'logo_url'] as const;
+const CHURCH_FIELDS = [
+  'name',
+  'short_name',
+  'description',
+  'logo_url',
+  'theme_preset',
+  'theme_rail',
+  'theme_brand',
+] as const;
 
 type ChurchRow = {
   id: string;
@@ -1170,6 +1190,9 @@ type ChurchRow = {
   short_name: string | null;
   description: string | null;
   logo_url: string | null;
+  theme_preset: string | null;
+  theme_rail: string;
+  theme_brand: string;
 };
 
 /**
@@ -1204,6 +1227,55 @@ function churchWrite(body: Record<string, unknown>): Record<string, unknown> {
     if (key in patch) {
       const v = String(patch[key] ?? '').trim();
       patch[key] = v === '' ? null : v;
+    }
+  }
+
+  // ---- the theme (migration 0017) -------------------------------------------
+  // Two colours, and they end up inside a CSS custom property on every page of
+  // the app, so this is the place they are checked: a strict `#rrggbb` and
+  // nothing else — not a colour name, not `var(…)`, not anything carrying a
+  // `;` or a `}`. The column has the same constraint, but nothing should have
+  // to rely on that.
+  //
+  // The two are also refused when they are too PALE to work. The sidebar is
+  // light-on-dark by construction and the brand carries white text on every
+  // button, so a pale pair would not be an alternative look, it would be an
+  // app nobody can read (`isUsableRail` / `isUsableBrand` in packages/shared —
+  // the shipped presets all pass, by construction).
+  if ('theme_preset' in patch || 'theme_rail' in patch || 'theme_brand' in patch) {
+    const wanted = patch.theme_preset == null ? null : String(patch.theme_preset);
+    if (wanted !== null) {
+      // A preset names its own colours: the catalogue in code is the authority
+      // for what `charcoal` looks like, so a client cannot store a pair under
+      // a preset's name that the preset never had.
+      const preset = themePreset(wanted);
+      if (!preset) throw new HttpError(400, `Unknown theme preset: ${wanted}`);
+      patch.theme_preset = preset.key;
+      patch.theme_rail = preset.rail;
+      patch.theme_brand = preset.brand;
+    } else {
+      // Custom: both colours are required together. Writing one alone would
+      // leave the pair half from a preset and half by hand, which is neither.
+      const rail = normalizeHexColor(patch.theme_rail);
+      const brand = normalizeHexColor(patch.theme_brand);
+      if (!rail || !brand)
+        throw new HttpError(
+          400,
+          'A custom theme needs both theme_rail and theme_brand as #rrggbb',
+        );
+      if (!isUsableRail(rail))
+        throw new HttpError(
+          400,
+          `The sidebar colour is too light: it carries light text, so it needs at least ${MIN_RAIL_CONTRAST}:1 contrast against white`,
+        );
+      if (!isUsableBrand(brand))
+        throw new HttpError(
+          400,
+          `The brand colour is too light: buttons put white text on it, so it needs at least ${MIN_BRAND_CONTRAST}:1 contrast against white`,
+        );
+      patch.theme_preset = null;
+      patch.theme_rail = rail;
+      patch.theme_brand = brand;
     }
   }
   return patch;

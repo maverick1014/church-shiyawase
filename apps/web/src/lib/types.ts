@@ -15,15 +15,23 @@ import {
 } from '@tog/shared';
 
 /**
- * The church itself, as `GET /api/church` returns it — the public four fields
- * only (that endpoint answers without a session). The name is data, not a
- * translation, so nothing renders a hardcoded church name any more.
+ * The church itself, as `GET /api/church` returns it — the public fields only
+ * (that endpoint answers without a session). The name is data, not a
+ * translation, so nothing renders a hardcoded church name any more; the theme
+ * rides along for the same reason, since the login card and both public forms
+ * have to be painted in the church's colours before anyone has signed in.
  */
 export interface ChurchProfile {
   name: string;
   short_name: string | null;
   description: string | null;
   logo_url: string | null;
+  /** The preset key this pair came from; null = picked by hand (0017). */
+  theme_preset: string | null;
+  /** The sidebar colour, `#rrggbb`. */
+  theme_rail: string;
+  /** The brand colour, `#rrggbb`. */
+  theme_brand: string;
 }
 
 /** One row of `GET /api/church/modules` — an optional module and its state. */

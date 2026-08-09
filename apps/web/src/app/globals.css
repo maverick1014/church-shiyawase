@@ -1,15 +1,58 @@
 /* ==========================================================================
    TOG · 主恩堂教会管理系统 — design system
-   Crimson + charcoal on warm white. Light, mobile-first.
-   Derived from the church logo (charcoal globe + crimson cross-arrow).
+   A church's two colours on warm white. Light, mobile-first.
+   The default pair is the church logo's (charcoal globe + crimson cross-arrow).
+   ==========================================================================
+
+   THE THEME IS TWO COLOURS: --rail (the sidebar) and --brand (the accent).
+   They are the only two a church chooses (教会设置 → 主题颜色, stored on the
+   church record by migration 0017 and applied to <html> at runtime by
+   lib/theme.ts). The values below are the DEFAULTS — today's palette — so a
+   church that has never chosen looks exactly as it always did, and so does the
+   first paint of a page whose record has not arrived yet.
+
+   Everything the design system needs from those two is DERIVED with
+   color-mix() rather than stored: one source per colour, so a shade can never
+   drift apart from the colour it is a shade of, and a new theme is genuinely
+   two values rather than eight.
+
+   What is NOT part of the theme, and must not become derived:
+     --good / --warn / --crit (+ their soft tints) — "absent" and "overdue"
+       carry a meaning of their own; they must not turn into the brand colour
+       because a church picked a red one.
+     --paper / --surface / --surface-2 / --border / --ink / --muted / --faint —
+       the warm neutrals the whole light theme is built on.
    ========================================================================== */
 
 :root {
+  /* ---- the two chosen colours ------------------------------------------ */
   --brand: #a51f24;
-  --brand-2: #7f171b;
-  --brand-soft: #f6e3e3;
-  --accent: #33302f;
-  --accent-soft: #eae7e5;
+  --rail: #201d1b;
+
+  /* ---- derived from --brand -------------------------------------------- */
+  /* A shade down, for gradients and link hover. */
+  --brand-2: color-mix(in srgb, var(--brand) 78%, #000);
+  /* A tint, for brand-coloured badges, focus rings and soft backgrounds. */
+  --brand-soft: color-mix(in srgb, var(--brand) 12%, #fff);
+
+  /* ---- derived from --rail --------------------------------------------- */
+  /* The secondary emphasis colour: the rail, a hair lighter, for use on a
+     light surface (.btn.accent, .b-accent, a selected day cell). */
+  --accent: color-mix(in srgb, var(--rail) 92%, #fff);
+  --accent-soft: color-mix(in srgb, var(--rail) 10%, #fff);
+  /* The sidebar's own foregrounds. These used to be four hardcoded light
+     greys, which silently assumed the rail would always be near-black — pick a
+     pale rail and the navigation disappeared. They are mixes of white towards
+     the rail now, so they follow whatever colour the church chose, and the API
+     refuses a rail too pale to carry them (MIN_RAIL_CONTRAST in
+     packages/shared). Brightest first. */
+  --rail-ink: #fff;
+  --rail-text: color-mix(in srgb, #fff 88%, var(--rail));
+  --rail-muted: color-mix(in srgb, #fff 74%, var(--rail));
+  --rail-faint: color-mix(in srgb, #fff 62%, var(--rail));
+  --rail-dim: color-mix(in srgb, #fff 50%, var(--rail));
+
+  /* ---- independent ----------------------------------------------------- */
   --paper: #f6f3f2;
   --surface: #ffffff;
   --surface-2: #faf7f6;
@@ -17,7 +60,6 @@
   --ink: #232120;
   --muted: #6f6a68;
   --faint: #a49e9b;
-  --rail: #201d1b;
   --good: #2f8f5b;
   --good-soft: #dff0e6;
   --warn: #c9871f;
@@ -126,7 +168,7 @@ button {
   width: 244px;
   flex-shrink: 0;
   background: var(--rail);
-  color: #e7e2df;
+  color: var(--rail-text);
   position: sticky;
   top: 0;
   height: 100vh;
@@ -158,7 +200,7 @@ button {
   font-family: var(--font-serif);
   font-size: 18px;
   font-weight: 600;
-  color: #fff;
+  color: var(--rail-ink);
   letter-spacing: 0.5px;
 }
 .brand-name small {
@@ -166,7 +208,7 @@ button {
   font-family: var(--font-sans);
   font-size: 10px;
   font-weight: 500;
-  color: #a49b96;
+  color: var(--rail-faint);
   letter-spacing: 1.5px;
   margin-top: 2px;
 }
@@ -174,7 +216,7 @@ button {
 .nav-section {
   font-size: 10.5px;
   letter-spacing: 2px;
-  color: #8a807b;
+  color: var(--rail-dim);
   padding: 14px 12px 6px;
   text-transform: uppercase;
 }
@@ -188,7 +230,7 @@ button {
   font-weight: 500;
   margin-bottom: 2px;
   cursor: pointer;
-  color: #cabfbb;
+  color: var(--rail-muted);
   transition: background 0.15s, color 0.15s;
 }
 .nav-link .ico {
@@ -197,7 +239,7 @@ button {
 }
 .nav-link:hover {
   background: rgba(255, 255, 255, 0.05);
-  color: #fff;
+  color: var(--rail-ink);
 }
 .nav-link.active {
   background: var(--brand);
@@ -225,12 +267,12 @@ button {
 }
 .nav-user .who {
   font-size: 13px;
-  color: #fff;
+  color: var(--rail-ink);
   font-weight: 500;
 }
 .nav-user .who small {
   display: block;
-  color: #a49b96;
+  color: var(--rail-faint);
   font-size: 11px;
   font-weight: 400;
 }
@@ -929,6 +971,31 @@ input[type='file']::file-selector-button:hover {
   color: var(--brand);
 }
 
+/* A colour input is the other control whose CONTENT the browser draws: a
+   swatch inside a UA-styled box, with its own padding and (on WebKit) its own
+   border. Left alone it sits a few pixels off the field beside it, which is
+   exactly what the theme picker's two colour fields would do next to their
+   Save button. Same treatment as the date fields below: drop the native box,
+   size it by the shared token, and let the swatch fill what is left (G9). */
+input[type='color'] {
+  padding: 4px;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+  min-height: var(--control-h);
+}
+input[type='color']::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+input[type='color']::-webkit-color-swatch {
+  border: none;
+  border-radius: 5px;
+}
+input[type='color']::-moz-color-swatch {
+  border: none;
+  border-radius: 5px;
+}
+
 /* An empty date/datetime input shows a "dd/mm/yyyy"-style pattern by default
    (this is the browser's internal segment display, not the `placeholder`
    attribute — `:placeholder-shown` does not match it). `.date-empty` is added
@@ -1380,6 +1447,81 @@ input.sheet-tick-all:disabled {
 }
 .switch.on .knob {
   transform: translateX(18px);
+}
+
+/* Theme swatch (<ThemeSwatch /> in components/ui.tsx) -----------------------
+   One round chip cut on the diagonal: the rail on one side, the brand on the
+   other — the shape a theme picker is expected to have. Drawn ONCE here and
+   used for every preset in the catalogue and for the live preview of a custom
+   pair, so the two can never disagree about what a theme looks like.
+
+   The two colours are the only thing a caller sets, through --sw-rail /
+   --sw-brand: they are DATA (a church's chosen pair), not palette decisions,
+   which is why they arrive inline rather than as more tokens. The hairline
+   between them is a translucent white so it reads on any pair. */
+.theme-swatch {
+  --sw-rail: var(--rail);
+  --sw-brand: var(--brand);
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: linear-gradient(
+    135deg,
+    var(--sw-rail) 0 calc(50% - 0.75px),
+    rgba(255, 255, 255, 0.9) calc(50% - 0.75px) calc(50% + 0.75px),
+    var(--sw-brand) calc(50% + 0.75px) 100%
+  );
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.16);
+}
+.theme-swatch.lg {
+  width: 42px;
+  height: 42px;
+}
+
+/* One choosable theme: its swatch, its name, and a ✓ when it is the one in
+   use. The tick is the point — a "selected" state told only by a colour is no
+   state at all on a page whose whole subject is colour. */
+.theme-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.theme-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  min-height: var(--control-h);
+  padding: 0 14px 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.theme-option:hover {
+  border-color: var(--brand);
+  color: var(--ink);
+}
+.theme-option.on {
+  border-color: var(--ink);
+  box-shadow: 0 0 0 1px var(--ink);
+  color: var(--ink);
+}
+.theme-option:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+/* Holds the tick's width whether or not this option is the chosen one, so
+   picking another does not re-flow the row. */
+.theme-option .theme-check {
+  width: 11px;
+  font-size: 11px;
+  line-height: 1;
+  text-align: center;
+  flex-shrink: 0;
 }
 
 /* ==========================================================================

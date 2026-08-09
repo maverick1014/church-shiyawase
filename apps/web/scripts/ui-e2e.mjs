@@ -1276,6 +1276,39 @@ async function main() {
     }
     /** The row in the catalog for one module — its switch lives on it. */
     const catalogRow = (name) => page.locator('.card .flex-between', { hasText: name });
+
+    // The church's two theme colours, read before anything is clicked and put
+    // back in the `finally` below — the same treatment as the module switch,
+    // and for the same reason: this is the live church's own branding, on
+    // every screen including the sign-in page.
+    const themeBefore = {
+      preset: churchRecord.theme_preset ?? null,
+      rail: churchRecord.theme_rail,
+      brand: churchRecord.theme_brand,
+    };
+    /** Restore/choose a theme: by preset key when it had one, else the pair. */
+    const themeBody = (t) =>
+      t.preset ? { theme_preset: t.preset } : { theme_preset: null, theme_rail: t.rail, theme_brand: t.brand };
+    /** Is the live record back on the colours this run found? */
+    const themeIsRestored = async () => {
+      const now = await ctx.request.get(`${BASE}/api/church`).then((r) => r.json());
+      return now.theme_rail === themeBefore.rail && now.theme_brand === themeBefore.brand;
+    };
+    // …and once more for the path that runs no `finally` at all (a crash).
+    if (themeBefore.rail) {
+      restoreLater(`the church theme to ${themeBefore.preset ?? `${themeBefore.rail}/${themeBefore.brand}`}`, async () => {
+        if (await themeIsRestored()) return;
+        const r = await ctx.request.patch(`${BASE}/api/church`, { data: themeBody(themeBefore) });
+        if (!r.ok()) throw new Error(`restore failed: ${r.status()}`);
+      });
+    }
+    /** `#rrggbb` as the browser reports a computed colour. */
+    const asRgb = (hex) => {
+      const n = parseInt(String(hex).slice(1), 16);
+      return `rgb(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255})`;
+    };
+    const sidebarBg = () =>
+      page.evaluate(() => getComputedStyle(document.querySelector('.sidebar')).backgroundColor);
     try {
       await page.goto(`${BASE}/church`, { waitUntil: 'domcontentloaded' });
       await page.locator('button:has-text("Save church profile")').first().waitFor({ timeout: 20000 });
@@ -1289,6 +1322,48 @@ async function main() {
       check('the church name field is filled from the record',
         (await churchName.inputValue()) === churchRecord.name,
         `field=${await churchName.inputValue()} record=${churchRecord.name}`);
+
+      /* -- the theme: two colours, chosen here, applied everywhere ---------- */
+      // The theme is the church's branding, not a personal preference, so it
+      // is stored on the church record and shows on every screen — the
+      // sidebar's own colour above all. What is worth asserting is exactly
+      // that: pick a preset, and the rail IS a different colour, without a
+      // reload. Restored below, like the module switch: these are the colours
+      // real users see.
+      check('church settings offers the theme picker',
+        churchBody.includes('Theme colours') && (await page.locator('.theme-option').count()) > 1,
+        `${await page.locator('.theme-option').count()} presets`);
+      check('the sidebar is painted in the church’s stored rail colour',
+        (await sidebarBg()) === asRgb(themeBefore.rail),
+        `sidebar=${await sidebarBg()} record=${themeBefore.rail}`);
+      // Any chip that is not the one in use — `:not(.on)` guarantees a
+      // different preset, and every preset ships a different pair.
+      await page.locator('.theme-option:not(.on)').first().click();
+      await w(1500);
+      const themeAfter = await apiGet('/church');
+      check('picking a preset stores its pair on the church record',
+        themeAfter.theme_preset && themeAfter.theme_preset !== themeBefore.preset &&
+          themeAfter.theme_rail !== themeBefore.rail,
+        `${themeAfter.theme_preset} ${themeAfter.theme_rail}/${themeAfter.theme_brand}`);
+      check('…and the sidebar repaints under the picker, with no reload',
+        (await sidebarBg()) === asRgb(themeAfter.theme_rail),
+        `sidebar=${await sidebarBg()} record=${themeAfter.theme_rail}`);
+      check('the chosen preset is the one marked in use, with a tick as well as a colour',
+        (await page.locator('.theme-option.on').count()) === 1 &&
+          (await page.locator('.theme-option.on').innerText()).includes('✓'),
+        (await page.locator('.theme-option.on').innerText().catch(() => '—')).replace(/\s+/g, ' '));
+      await shot('08b-theme');
+      // Put the church's own colours back, and prove they came back — the
+      // `restoreLater` above only covers a run that dies before this point.
+      const themeRestored = await ctx.request.patch(`${BASE}/api/church`, { data: themeBody(themeBefore) });
+      check('the church theme was restored', themeRestored.ok(), `status ${themeRestored.status()}`);
+      await page.goto(`${BASE}/church`, { waitUntil: 'domcontentloaded' });
+      await page.locator('.theme-option').first().waitFor({ timeout: 20000 });
+      await w(800);
+      check('…and the sidebar is the church’s own colour again',
+        (await sidebarBg()) === asRgb(themeBefore.rail),
+        `sidebar=${await sidebarBg()} record=${themeBefore.rail}`);
+
       check('the catalog lists the Forty Days add-on with a switch',
         (await catalogRow('Forty Days').locator('.switch').count()) === 1);
 
@@ -1355,7 +1430,16 @@ async function main() {
       await shot('08a-church');
     } finally {
       // Belt and braces: whatever happened above, the church is left running
-      // exactly the modules it was running before this ran.
+      // exactly the modules it was running before this ran — and wearing
+      // exactly the colours it was wearing.
+      if (themeBefore.rail && !(await themeIsRestored().catch(() => true))) {
+        const restored = await ctx.request
+          .patch(`${BASE}/api/church`, { data: themeBody(themeBefore) })
+          .then((r) => r.ok())
+          .catch(() => false);
+        console.log(`  ↳ cleanup: ${restored ? 'restored' : 'COULD NOT RESTORE'} the church theme (${themeBefore.preset ?? `${themeBefore.rail}/${themeBefore.brand}`})`);
+        check('the church theme was left as it was found', restored, themeBefore.preset ?? themeBefore.rail);
+      }
       if (discBefore) {
         const now = await ctx.request
           .get(`${BASE}/api/church/modules`)

@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useEffect, useState } from 'react';
 import { OPTIONAL_MODULES } from '@tog/shared';
+import { applyTheme } from './theme';
 import { ChurchProfile, ModuleStateRow } from './types';
 
 /**
@@ -63,6 +64,11 @@ export function useModuleEnabled(key: string): boolean {
  * Fetch the public church record once. Used by the shell (which then shares it
  * through the context above) and directly by the public pages, which have no
  * session and so cannot go through the shell.
+ *
+ * It is also where the church's THEME is applied (`applyTheme`): every surface
+ * that renders the church's name already reads this record, so painting the
+ * app in its colours needs no second mechanism and cannot be forgotten on a
+ * page that has no shell (rule G4).
  */
 export function useChurchProfile(): ChurchProfile | null {
   const [church, setChurch] = useState<ChurchProfile | null>(null);
@@ -71,7 +77,9 @@ export function useChurchProfile(): ChurchProfile | null {
     fetch('/api/church')
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
       .then((c: ChurchProfile) => {
-        if (alive) setChurch(c);
+        if (!alive) return;
+        applyTheme(c);
+        setChurch(c);
       })
       // A church that cannot be read is not worth blocking a login screen for
       // — the caller falls back to a generic name.

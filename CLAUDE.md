@@ -8,14 +8,41 @@ theme only; mobile-first. The API is a single catch-all route handler at
 (`lib/server/auth.ts`).
 
 The church itself is **data**, not a hardcoded string: one `church` row
-(name / short name / description / logo) drives the sidebar brand, the login
-card and the public forms, and `church_modules` records which **add-on
-modules** this church runs. Both are edited on `/church` (教会设置,
+(name / short name / description / logo / **theme**) drives the sidebar brand,
+the login card and the public forms, and `church_modules` records which
+**add-on modules** this church runs. Both are edited on `/church` (教会设置,
 super_admin only). The catalog of what is switchable lives in code —
 `OPTIONAL_MODULES` in `packages/shared` — where each entry names its key, the
 nav href it owns and the API prefixes it owns; today the one entry is
 `discipleship` (四十天守望). Core surfaces are not switchable and are not in
 the registry.
+
+**A theme is TWO colours** (migration 0017): `theme_rail` (the dark sidebar,
+`--rail`) and `theme_brand` (the accent, `--brand`), with `theme_preset`
+naming which shipped pair they came from — null when they were picked by hand.
+Everything else the design system needs is **derived in `globals.css` with
+`color-mix()`** from those two (`--brand-2` a shade down, `--brand-soft` a
+tint, `--accent`/`--accent-soft`, and the sidebar's own foregrounds
+`--rail-ink`/`--rail-text`/`--rail-muted`/`--rail-faint`/`--rail-dim`), so a
+shade can never drift from the colour it is a shade of. `--good`/`--warn`/
+`--crit` and the warm neutrals are NOT part of a theme — "absent" must not turn
+into the brand colour — and `ROLE_TAG` is not either. The presets live in code
+(`THEME_PRESETS` in `packages/shared`, first entry = today's charcoal+crimson,
+so nothing changes on deploy) while the **colours are stored as well as the
+key**, so editing a preset later cannot restyle a church that chose it. It is
+the CHURCH's, not an account's: the login card and the public forms are painted
+in it too. Both colours are validated **server-side** — a strict `#rrggbb`
+(never interpolate an unvalidated string into CSS) and dark enough to carry the
+light text the sidebar and every button put on them (`isUsableRail` /
+`isUsableBrand`; a pale rail is refused rather than half-supported, which is
+why the sidebar's foregrounds could stop being hardcoded greys). Applying one
+is `applyTheme` in `lib/theme.ts`, called from `useChurchProfile` so the shell
+and the three shell-less public pages share one mechanism; the last pair is
+cached in `localStorage` and re-applied by a few inlined lines in `<head>`
+(`THEME_BOOT_SCRIPT`) **before the first paint**, so only the first-ever visit
+on a device can flash the default palette. The picker (a split-circle
+`ThemeSwatch`, one component for the presets and the custom preview) is its own
+card on `/church`.
 
 Not to be confused with a **守望模块** (`discipleship_programs`), which is the
 definition a 40-day pair hangs off. That one is **created once and then read**:
@@ -99,7 +126,8 @@ Run before every push: `npm run --workspace @tog/web -s build` (or in
 on unit tests + a post-deploy smoke test (`.github/workflows/deploy.yml`).
 
 Testing layers (in `apps/web`):
-- `npm test` — Vitest unit tests (labels, rules, perms, i18n dictionaries).
+- `npm test` — Vitest unit tests (labels, rules, perms, i18n dictionaries, the
+  theme catalogue + its colour validation).
 - `npm run test:api-e2e` — API end-to-end against the live Worker (auth, role
   matrix, full CRUD, public form).
 - `npm run test:ui-e2e` — **browser UI end-to-end**: drives the real site in
@@ -113,12 +141,13 @@ Testing layers (in `apps/web`):
   fields are absent), a column check-all on both sheets, a
   member combobox typed→filtered→picked, an interface-language round-trip, the
   absence of the 守望模块 manager in the UI *and* on the server, an add-on
-  module off→on cycle on 教会设置, a create→delete member write-cycle).
+  module off→on cycle on 教会设置, a theme preset picked there and the sidebar
+  repainting under it, a create→delete member write-cycle).
   The check-all round trip is driven **only on a meeting column this run
   created** — never on a Sunday, whose ticks are the congregation's real
   attendance and would be genuinely deleted.
-  It restores anything it changes — including the module states, which it
-  reads first and puts back in a `finally`. It runs a tiny in-process reverse proxy so the browser
+  It restores anything it changes — including the module states and the
+  church's theme, which it reads first and puts back in a `finally`. It runs a tiny in-process reverse proxy so the browser
   works even behind an egress proxy. `UI_E2E_PASSWORD` is required (never
   hardcode a real password); `UI_E2E_URL` / `UI_E2E_EMAIL` are optional. In this
   sandbox run it as:
@@ -228,11 +257,17 @@ control), `Combobox` (**every** picker whose options are members — a native
 `<select>` is a system wheel with no search on a phone, and the member list only
 grows; its matching rules are `lib/combobox.ts`),
 `exportRows`/`exportMatrix` (`lib/export.ts`),
+`ThemeSwatch` (**every** rendering of a theme — the preset list and the custom
+preview are the same split circle),
 `api` (`lib/api.ts`), and the label/style helpers in `lib/labels.ts`
 (`roleTagStyle`, `roleDot`, `memberRoleZh`, `positionZh`, status/category
 classes). New code that duplicates one of these is a finding — name the helper
 to call instead. Colours come from CSS tokens / `ROLE_TAG`, never hard-coded hex
-in components.
+in components — and a token that is a *shade* of the church's two chosen
+colours is `color-mix()`'d from `--rail` / `--brand` in `globals.css` rather
+than written out, including the sidebar's light-on-dark foregrounds. The one
+kind of colour that may be inline is a colour that is **data** (a church's own
+pair, on its way into `--sw-rail` / `--sw-brand`).
 
 ### G5 — Data fetch/derive once; simplify state
 Don't map the same collection twice (e.g. desktop table + mobile tiles) with the
@@ -290,7 +325,11 @@ or it expires at 08:00 that morning. Unit tests must pass under a non-Malaysia
 ### G7 — Mobile-first & theme
 Tables become list tiles on small screens (`.only-desktop` / `.only-mobile`
 helpers). Two-column layouts collapse to a single full-width column on tablet
-and below. Light theme only — no dark-mode branches or `data-theme` code.
+and below. **Light theme only** — no dark-mode branches, no `data-theme` code,
+no `prefers-color-scheme`. The church's 主题颜色 is not a counter-example: it
+changes the two colours the light theme is built from (`--rail` / `--brand`),
+never the light/dark question, which is why a pale rail is refused rather than
+treated as "a light sidebar".
 
 ### G8 — Every user-facing string comes from the dictionary
 - No literal user-facing text in a component — ever. Render it with
@@ -340,7 +379,11 @@ and below. Light theme only — no dark-mode branches or `data-theme` code.
   UA margin. Without it iOS/iPadOS sizes the field from the system picker and
   paints the value centred, so it sits taller than the `<select>` beside it and
   reads centre while its neighbours read left. It lives in `globals.css` with
-  the other shared control rules — never patch one page's date field.
+  the other shared control rules — never patch one page's date field. A
+  `color` input (the theme picker's two) gets the same treatment for the same
+  reason: the browser draws a swatch inside a box of its own choosing, so
+  `appearance: none` + the height token + a zeroed swatch wrapper is what keeps
+  it level with the control beside it.
 - New controls inherit these by using the base element / `.btn` classes; page
   code should not restyle control geometry inline.
 
