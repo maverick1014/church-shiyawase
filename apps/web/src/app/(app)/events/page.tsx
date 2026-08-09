@@ -420,9 +420,16 @@ export default function EventsPage() {
 /**
  * Add / edit one hand-added meeting. A name and a date is all it takes — the
  * sheet's Sunday columns cover the standing services, so nothing here asks for
- * a type, a location or a recurrence. An existing meeting keeps its own time of
- * day: the field only moves the date, so a 20:00 prayer meeting does not
- * silently become a midnight one.
+ * a type or a recurrence. An existing meeting keeps its own time of day: the
+ * field only moves the date, so a 20:00 prayer meeting does not silently become
+ * a midnight one.
+ *
+ * 地点 is optional and is the one field here that is not about WHEN: the
+ * dashboard's 近期聚会 line has always rendered `日期 · 地点`, and until this
+ * form asked for one there was no way to put anything into it — the column read
+ * as dead in an audit for exactly that reason (migration 0020 keeps it and says
+ * so). Worded and shaped like 培训&活动's own meeting point, since a person
+ * filling both in a week should not have to learn two words for one thing.
  *
  * Deleting it takes its ticks with it, which is why that button goes through
  * the shared confirmation (rule G3) in the page above.
@@ -445,6 +452,7 @@ function MeetingModal({
   const [form, setForm] = useState({
     title: meeting?.title ?? '',
     date: stored.slice(0, 10),
+    location: meeting?.location ?? '',
     // Editing keeps the meeting's own hall; creating defaults to the hall being
     // viewed (and to 全堂 only when viewing all congregations).
     hall_id: meeting ? meeting.hall_id : hallId || null,
@@ -464,6 +472,9 @@ function MeetingModal({
       const payload = {
         title: form.title.trim(),
         starts_at: fromChurchInput(`${form.date}T${timeOfDay}`),
+        // Emptied on purpose clears it, rather than leaving a stale room name
+        // on the dashboard for a meeting that has moved.
+        location: form.location.trim() || null,
         hall_id: form.hall_id,
       };
       if (meeting) await api.patch(`/events/${meeting.id}`, payload);
@@ -508,6 +519,13 @@ function MeetingModal({
           />
         </Field>
       </div>
+      <Field label={t('events.field.location')}>
+        <input
+          value={form.location}
+          onChange={(e) => setForm({ ...form, location: e.target.value })}
+          placeholder={t('events.locationPlaceholder')}
+        />
+      </Field>
       <div className="modal-actions">
         {onDelete && (
           <button className="btn danger" style={{ marginRight: 'auto' }} onClick={onDelete}>

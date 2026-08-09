@@ -246,18 +246,6 @@ function AccountRoleField({ value, onChange }: { value: AccountRole; onChange: (
   );
 }
 
-function NotifyRow({ title, sub, on, set }: { title: string; sub: string; on: boolean; set: (v: boolean) => void }) {
-  return (
-    <div className="flex-between" style={{ padding: '11px 0', borderBottom: '1px solid var(--border)' }}>
-      <div>
-        <div style={{ fontSize: 13, fontWeight: 600 }}>{title}</div>
-        <div className="muted" style={{ fontSize: 11.5 }}>{sub}</div>
-      </div>
-      <Switch on={on} onToggle={() => set(!on)} />
-    </div>
-  );
-}
-
 function AccountDetail({
   account,
   onBack,
@@ -282,8 +270,6 @@ function AccountDetail({
   const [hall, setHall] = useState<string | null>(account.hall_id ?? null);
   const [status, setStatus] = useState<AccountStatus>(account.status);
   const [language, setLanguage] = useState(account.language);
-  const [nDisc, setNDisc] = useState(account.notify_discipleship);
-  const [nWeekly, setNWeekly] = useState(account.notify_weekly);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [pw, setPw] = useState('');
@@ -359,8 +345,6 @@ function AccountDetail({
         hall_id: hall,
         status,
         language,
-        notify_discipleship: nDisc,
-        notify_weekly: nWeekly,
       });
       saved = true;
       onSaved();
@@ -465,9 +449,6 @@ function AccountDetail({
           </Field>
         </div>
       </div>
-
-      {/* Notifications are hidden until email/push delivery is actually
-          implemented — the toggles didn't send anything, just stored a flag. */}
 
       <div className="card flex-between flex-wrap mt-16">
         <div>

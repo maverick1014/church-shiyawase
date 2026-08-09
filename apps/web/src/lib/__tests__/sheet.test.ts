@@ -20,6 +20,7 @@ import type { SheetCell, SheetMeeting } from '../types';
 const meeting = (over: Partial<SheetMeeting> & { starts_at: string }): SheetMeeting => ({
   id: 'e1',
   title: 'ZZ',
+  location: null,
   hall_id: null,
   ...over,
 });

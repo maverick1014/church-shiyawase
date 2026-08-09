@@ -22,12 +22,14 @@ import {
   SkeletonScreen,
   SkeletonTable,
   SortTh,
+  TagsInput,
   useToast,
 } from '@/components/ui';
 import { ImportMembersModal } from '@/components/ImportMembersModal';
 import { can } from '@/lib/perms';
 import { copyText } from '@/lib/clipboard';
 import { exportRows } from '@/lib/export';
+import { importFieldKey } from '@/lib/members-import';
 import { GroupDetail, GroupRow, MemberRow } from '@/lib/types';
 import {
   CHURCH_ROLE_OPTIONS,
@@ -58,6 +60,10 @@ export default function MembersPage() {
   const [q, setQ] = useState('');
   const [roleFilter, setRoleFilter] = useState<string>('all');
   const [groupFilter, setGroupFilter] = useState<string>('all');
+  // The STORED ministry, never its label — 服侍岗位 is free text the church
+  // typed, so there is nothing to translate and nothing that may be keyed by a
+  // translation (rule G8).
+  const [servingFilter, setServingFilter] = useState<string>('all');
   const [addOpen, setAddOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
 
@@ -95,11 +101,21 @@ export default function MembersPage() {
     };
   }, [members]);
 
+  // Every 服侍岗位 anybody actually serves in, for the filter and for the two
+  // forms' autocomplete — derived from the list already fetched (G5), exactly
+  // the way /groups derives its tags.
+  const allServing = useMemo(() => {
+    const set = new Set<string>();
+    for (const m of members) for (const r of m.serving_roles ?? []) set.add(r);
+    return [...set].sort((a, b) => a.localeCompare(b, 'zh'));
+  }, [members]);
+
   const rows = useMemo(() => {
     const term = q.trim().toLowerCase();
     return members.filter((m) => {
       const role = memberRole(m);
       if (roleFilter !== 'all' && role !== roleFilter) return false;
+      if (servingFilter !== 'all' && !(m.serving_roles ?? []).includes(servingFilter)) return false;
       if (groupFilter === UNASSIGNED) {
         if (m.group) return false;
       } else if (groupFilter !== 'all' && m.group?.id !== groupFilter) {
@@ -111,7 +127,7 @@ export default function MembersPage() {
       if (term && !`${m.full_name} ${m.english_name ?? ''}`.toLowerCase().includes(term)) return false;
       return true;
     });
-  }, [members, q, roleFilter, groupFilter]);
+  }, [members, q, roleFilter, groupFilter, servingFilter]);
 
   const getSortValue = (m: MemberRow, key: string): string | number | null | undefined => {
     switch (key) {
@@ -150,6 +166,10 @@ export default function MembersPage() {
         [t('export.email')]: m.email ?? '',
         [t('export.phone')]: m.phone ?? '',
         [t('member.field.gender')]: m.gender ? t(genderKey(m.gender)) : '',
+        // The IMPORTER's own header and the importer's own separator, so a list
+        // exported here can be edited and uploaded straight back (the column
+        // list in `lib/members-import.ts` is the one definition of both).
+        [t(importFieldKey('serving_roles'))]: (m.serving_roles ?? []).join('、'),
         [t('export.status')]: t(memberStatusKey(m.status)),
         [t('export.joined')]: formatDate(m.joined_at),
       })),
@@ -189,6 +209,16 @@ export default function MembersPage() {
               ))}
               <option value={UNASSIGNED}>{t('members.filter.ungrouped')} ({groupOptions.unassigned})</option>
             </select>
+            {/* Only offered once somebody serves somewhere — a dropdown with a
+                single "all" option asks a question the church cannot answer. */}
+            {allServing.length > 0 && (
+              <select value={servingFilter} onChange={(e) => setServingFilter(e.target.value)}>
+                <option value="all">{t('members.filter.serving')}</option>
+                {allServing.map((r) => (
+                  <option key={r} value={r}>{r}</option>
+                ))}
+              </select>
+            )}
           </>
         }
         actions={
@@ -322,6 +352,7 @@ export default function MembersPage() {
 
       {addOpen && (
         <AddMemberModal
+          servingSuggestions={allServing}
           onClose={() => setAddOpen(false)}
           onSaved={() => {
             setAddOpen(false);
@@ -339,9 +370,13 @@ export default function MembersPage() {
 }
 
 function AddMemberModal({
+  servingSuggestions,
   onClose,
   onSaved,
 }: {
+  /** The 服侍岗位 the church already uses — the list is free text, so the only
+   *  thing standing between 敬拜 and 敬拜团 is what somebody typed last time. */
+  servingSuggestions: string[];
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -361,6 +396,7 @@ function AddMemberModal({
     church_role: ChurchRole.Member as ChurchRole,
     group_position: GroupPosition.NewMember as GroupPosition,
   });
+  const [serving, setServing] = useState<string[]>([]);
   const [photo, setPhoto] = useState<File | null>(null);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -403,6 +439,7 @@ function AddMemberModal({
         church_role: form.church_role,
         group_id: form.group_id || undefined,
         group_position: form.group_id ? form.group_position : undefined,
+        serving_roles: serving,
       });
       // The photo goes through the SAME endpoint the member's own profile page
       // uses (rule G4), once the row exists to hang it on — so nothing reaches
@@ -485,6 +522,14 @@ function AddMemberModal({
           </Field>
         )}
       </div>
+      <Field label={t('members.field.serving')}>
+        <TagsInput
+          value={serving}
+          onChange={setServing}
+          suggestions={servingSuggestions}
+          placeholder={t('members.servingPlaceholder')}
+        />
+      </Field>
       <Field label={t('members.field.photo')}>
         <PhotoPicker file={photo} onChange={setPhoto} name={form.full_name} />
       </Field>

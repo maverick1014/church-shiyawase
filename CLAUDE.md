@@ -79,6 +79,26 @@ members list, the sheet's find-a-person box, `comboboxFilter`, and
 node, the lineage badges and a 铁三角 seat, each a fixed box whose geometry the
 second line would break; each says so in a comment.
 
+**服侍岗位 is a LIST, and it is the same list `groups.tags` is** (migration
+0019). `members.serving_roles` is a `text[]`, NOT NULL DEFAULT `'{}'`: which
+ministries a person serves in (敬拜 / 司琴 / 招待 / 音响 / 投影 / 儿童主日学) —
+free text rather than an enum, because every church invents one nobody modelled
+and an enum turns that into a migration, and several per person because 敬拜 AND
+音响 is the normal case. Empty array, never null: "serves nowhere" and "nobody
+has said" are the same fact, so no reader needs `?? []` to mean anything. Being
+that shape is the point — it is entered with the shared `TagsInput`
+autocompleting from the ministries other members already carry (the same
+derivation `/groups` builds `allTags` with), never a second way to type a list
+of short strings. The members list filters by the **stored** string (G8), on a
+dropdown that only appears once somebody serves somewhere, and the member page
+draws the ministries as badges and **nothing at all** when there are none — an
+empty list is a fact about that person, not a value the church has yet to fill
+in, which is exactly what the 家庭 tile it replaced got wrong. It is the
+church's to hand out: it is writable on `POST`/`PATCH /members` and by the
+import, and deliberately absent from BOTH allow-lists a person fills in about
+themselves — `REGISTER_FIELDS` (`/join`) and `SELF_MEMBER_FIELDS`
+(`/auth/me/profile`).
+
 **A member row arrives three ways, and all three decide what a row MEANS in one
 place** — `planImport` in `lib/members-import.ts`, which the browser and the
 Worker both run. Typing one into the form is the first; the other two are new:
@@ -97,16 +117,25 @@ never "clear this", and a sparse re-import cannot blank a phone number the
 church already had. Headers and enum values are matched against **all three
 dictionaries** (read from them, never copied, with a unit test guarding the
 drift), so a Chinese template filled in and sent back reads correctly; the
-template itself is `exportRows` over the same column list. A refused row names
-its own SPREADSHEET row and the value it choked on, and never stops the rows
-around it. Dates are year-first only: `03/04/2026` is two different days
-depending on who reads it.
+template itself is `exportRows` over the same column list, and so is the
+members page's own export — one definition, so a list exported there can be
+edited and uploaded straight back. `IMPORT_COLUMNS` is that definition: 中文名、
+英文名、电话、邮箱、性别、生日、加入日期、教会身份、状态、堂会、小组、**服侍岗
+位**. A refused row names its own SPREADSHEET row and the value it choked on,
+and never stops the rows around it. Dates are year-first only: `03/04/2026` is
+two different days depending on who reads it. 服侍岗位 is the one column holding
+a LIST in one cell, so it accepts every separator a church might reach for
+(`,` `、` `;` `；` `/` `／`), trims each piece and drops the empties a trailing
+separator leaves — and an empty cell still supplies nothing, so a sparse
+re-import cannot un-serve the whole church.
 
 *自助注册* (`/join` + `GET`/`POST /members/register`) is the public link the
 church hands out — the fourth shell-less page, and the only public path under
 `/members`. It reads an allow-list of fields (names, phone, email, gender,
-birthday, congregation, photo), so a body carrying `church_role` is ignored
-rather than obeyed: every self-registration is an ordinary member. An existing
+birthday, congregation, photo), so a body carrying `church_role` or
+`serving_roles` is ignored rather than obeyed: every self-registration is an
+ordinary member serving nowhere, because a role and a ministry are things the
+church hands out. An existing
 pair is an update of that person's contact details — not their name, which is
 the church's spelling to keep — and the answer is one word (`created` /
 `updated`), the same shape either way, carrying no member data at all. The photo
@@ -171,6 +200,15 @@ occasion (a 31 August night prayer meeting) with the single tick 到场, stored 
 a Sunday, a Sunday nobody marked has no rows at all, and unticking deletes
 rather than storing falses — in either table.
 
+A hand-added meeting is a **title, a date, a congregation and an optional
+地点** — no type, no end time, no description, no recurrence (migration 0020
+dropped `events.description` and `events.ends_at`, which no form ever collected
+and no page ever drew). 地点 stayed, and the reason is worth remembering: the
+dashboard's 近期聚会 line has always rendered `日期 · 地点`, so a grep of
+`/events` alone read the column as dead when it was merely **unfillable** — the
+missing half was the form's, and the form now asks for it, worded like
+培训&活动's own meeting point so one thing does not have two names.
+
 The page knows about neither table: `GET /api/attendance/sheet` hands each
 column an opaque `key` (`sunday:YYYY-MM-DD` / `meeting:<id>`) and
 `PUT /api/attendance/sheet` quotes it back, so the server decides where a tick
@@ -225,10 +263,14 @@ that is what you want.
 Testing layers (in `apps/web`):
 - `npm test` — Vitest unit tests (labels, rules, perms, i18n dictionaries, the
   theme catalogue + its colour validation, and the import planner — its name-pair
-  key, its three-language header/enum matching and every row it refuses).
+  key, its three-language header/enum matching, every row it refuses, and the
+  one column that holds a list — 服侍岗位 read out of a single cell whatever the
+  church separated it with).
 - `npm run test:api-e2e` — API end-to-end against the live Worker (auth, role
   matrix, full CRUD, the public forms — the training sign-up and the member
-  self-registration — a member import with its refusals, and the group-scoped
+  self-registration, which is refused a 服侍岗位 exactly as it is refused a
+  church role — a member import with its refusals, a member's 服侍岗位 written
+  and read back, and the group-scoped
   roll-call sheet: its rows are one roster, a Sunday ticked through it shows up
   on the UNSCOPED sheet, and a hall-pinned account cannot reach another
   congregation's group with `group_id`; all self-cleaning).
@@ -247,8 +289,10 @@ Testing layers (in `apps/web`):
   member combobox typed→filtered→picked, an interface-language round-trip, the
   absence of the 守望模块 manager in the UI *and* on the server, an add-on
   module off→on cycle on 教会设置, a theme preset picked there and the sidebar
-  repainting under it, a create→delete member write-cycle, a member row showing BOTH of a
-  person's names, the members page's import modal opening on a file field and a
+  repainting under it, a create→delete member write-cycle carrying a 服侍岗位
+  through the shared `TagsInput` onto the member page's badges and the members
+  page's ministry filter, a 聚会's 地点 typed into its form and stored on the
+  row, a member row showing BOTH of a person's names, the members page's import modal opening on a file field and a
   template with nothing written yet, and `/join` rendering with no session at
   all, its photo field taking camera OR gallery).
   The check-all round trip is driven **only on a meeting column this run

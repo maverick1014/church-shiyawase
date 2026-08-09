@@ -55,7 +55,7 @@ export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 export const fetchCache = 'force-no-store';
 
-const MEMBER_SELECT = '*, group:groups(id,name), household:households(id,name), hall:halls(id,name)';
+const MEMBER_SELECT = '*, group:groups(id,name), hall:halls(id,name)';
 /**
  * A person, everywhere a name is only shown: the CHINESE name and the English
  * one under it (0018). Both travel together in every brief, because every list,
@@ -369,11 +369,13 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
     // congregation and one photo — or, when that pair is already on the roll,
     // update those same contact details on that one row. What it CANNOT do:
     // set a church role (every registration is an ordinary member), a status,
-    // a life group, a group position or notes — the fields are read by name
-    // from an allow-list, so a body carrying `church_role: 'pastor'` has it
-    // ignored rather than obeyed; touch anyone but the single person whose
-    // name pair was typed; or read anything back — the answer is one word,
-    // the same shape either way, and never a member's stored data.
+    // a life group, a group position, notes, or a 服侍岗位 — a ministry is
+    // something the church hands out, never something a visitor claims for
+    // themselves. The fields are read by name from an allow-list, so a body
+    // carrying `church_role: 'pastor'` or `serving_roles: ['敬拜']` has it
+    // ignored rather than obeyed; it can touch nobody but the single person
+    // whose name pair was typed; and it reads nothing back — the answer is one
+    // word, the same shape either way, and never a member's stored data.
     if (r1 === 'register' && !r2) {
       if (method === 'GET') {
         // The form's own bootstrap. A public page cannot call /halls (that
@@ -554,7 +556,7 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
         unwrap(
           await db
             .from('group_meetings')
-            .insert({ group_id: r1, meeting_date: dto.meeting_date, note: dto.note ?? null })
+            .insert({ group_id: r1, meeting_date: dto.meeting_date })
             .select()
             .single(),
         ),
@@ -932,11 +934,11 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
     else if (r1 === 'sessions' && r2) {
       if (r3 === 'attendance' && method === 'POST') {
         const dto = await body();
+        // A roll call stores one fact: present, or no row at all.
         const records = (dto.records as Array<Record<string, unknown>>).map((r) => ({
           session_id: r2,
           member_id: r.member_id,
           attended: r.attended,
-          notes: r.notes ?? null,
         }));
         return json(
           unwrap(
@@ -1447,9 +1449,15 @@ async function applyImport(db: ReturnType<typeof getDb>, plan: ReturnType<typeof
     // because these are NEW rows: an unmentioned column on an insert is null
     // anyway. The update path below must never do this — there a null would
     // erase what the church already had.
+    //
+    // `serving_roles` is the one column whose "unmentioned" is not null: it is
+    // NOT NULL DEFAULT '{}' (0019), so a row in a chunk where somebody else
+    // named a ministry is widened with the empty array instead.
     const columns = [...new Set(chunk.flatMap((r) => Object.keys(r.values)))];
     const widened = chunk.map((r) =>
-      Object.fromEntries(columns.map((c) => [c, r.values[c] ?? null])),
+      Object.fromEntries(
+        columns.map((c) => [c, r.values[c] ?? (c === 'serving_roles' ? [] : null)]),
+      ),
     );
     const res = await db.from('members').insert(widened).select('id');
     if (!res.error) {
@@ -1852,7 +1860,7 @@ async function rollCallSheet(
     if (groupId) return [] as SheetMeeting[];
     let meetingQuery = db
       .from('events')
-      .select('id,title,starts_at,hall_id')
+      .select('id,title,starts_at,location,hall_id')
       .gte('starts_at', monthStart)
       .lt('starts_at', monthEnd)
       .order('starts_at');
@@ -1928,10 +1936,10 @@ async function groupAttendance(db: ReturnType<typeof getDb>, groupId: string) {
   const meetings = unwrap(
     await db
       .from('group_meetings')
-      .select('id, meeting_date, note')
+      .select('id, meeting_date')
       .eq('group_id', groupId)
       .order('meeting_date'),
-  ) as Array<{ id: string; meeting_date: string; note: string | null }>;
+  ) as Array<{ id: string; meeting_date: string }>;
 
   const members = unwrap(
     await db

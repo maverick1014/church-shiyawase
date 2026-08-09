@@ -270,7 +270,7 @@ followed, in date order, by every meeting someone added for it.
 
 ## 6. Data model (PostgreSQL — source of truth)
 
-Enums: `church_role(pastor,member)`, `group_position(leader,assistant_leader,intern_leader,core_member,regular_member,new_member)`, `member_status(active,inactive)`, `gender_type`, `event_type`, `attendance_status(present,absent,excused)`, `donation_method`, `enrollment_status(pending,approved,in_progress,completed,dropped)`, `pair_status(active,completed,paused)`.
+Enums: `church_role(pastor,member)`, `group_position(leader,assistant_leader,intern_leader,core_member,regular_member,new_member)`, `member_status(active,inactive)`, `gender_type`, `event_type`, `attendance_status(present,absent,excused)`, `enrollment_status(pending,approved,in_progress,completed,dropped)`, `pair_status(active,completed,paused)`.
 
 Tables:
 - `church(id, name, short_name, description, logo_url, theme_preset, theme_rail, theme_brand, timestamps)` —
@@ -289,20 +289,18 @@ Tables:
   `discipleship` (四十天守望). A missing row counts as ON.
 - `halls(id, name, sort_order, created_at)` — 中文堂 / 英文堂 / 马来文堂. One shared database; a hall is a **scope column**, not a separate deployment.
 - `groups(id, name, description, meeting_day weekday, meeting_time, location, tags text[], hall_id→halls **NOT NULL**, created_at)` — **no leader columns** (derived); 小组状态 (可分植/可加人/刚好) is also derived, not stored.
-- `households(id, name, address, phone, created_at)` — optional family grouping.
-- `members(id, full_name, **english_name**, email, phone, gender, date_of_birth, church_role, status, group_id→groups, group_position, household_id→households, hall_id→halls **NOT NULL**, joined_at, notes, timestamps)` — `full_name` is the CHINESE name; `english_name` (0018, renamed from the mislabelled `chinese_name`) is the English one and may be null.
+- `members(id, full_name, **english_name**, email, phone, gender, date_of_birth, church_role, status, group_id→groups, group_position, hall_id→halls **NOT NULL**, joined_at, notes, **serving_roles text[] NOT NULL DEFAULT '{}'**, timestamps)` — `full_name` is the CHINESE name; `english_name` (0018, renamed from the mislabelled `chinese_name`) is the English one and may be null. `serving_roles` (0019) is 服侍岗位: the ministries this person serves in, free text and several per person, the same shape `groups.tags` has and entered with the same `TagsInput`. Empty array = serves nowhere, which is a fact, not a blank. `household_id` went with 0020, together with the `households` table nothing ever wrote to.
   - `check (group_position is null or group_id is not null)`
   - **partial unique indexes**: one `leader` / one `assistant_leader` / one `intern_leader` per `group_id`.
   - **`members_name_pair_key` (0018)**: unique on `(lower(btrim(full_name)), lower(btrim(coalesce(english_name,''))))` — the PAIR of names is the identity of a person, compared case- and whitespace-insensitively, with "no English name" counting as a value of its own. A second 张伟 with no English name is refused; the API turns the 23505 into a **409** naming the conflict (`unwrap` in `lib/server/db.ts`).
 - `sunday_attendance(id, hall_id→halls **NOT NULL**, service_date date, member_id→members, pre_service, service, updated_at, unique(hall_id,service_date,member_id))` — 主日点名. `check (pre_service or service)` so an all-false row can never be stored (no row already means "not recorded"), and `check (extract(dow from service_date) = 0)` so only Sundays land on the Sunday sheet. Indexed `(hall_id, service_date)` — the sheet is always read as one hall, one month — and `(member_id, service_date desc)` for a member's own history.
-- `events(id, title, description, event_type, location, starts_at, ends_at, hall_id→halls **nullable**, created_at)` — the meetings someone adds by hand, each a dated column on the roll-call sheet; `hall_id is null` = 全堂. The old `events_unique_sunday_service` index went with 0013 (nothing manufactures a 主日崇拜 row any more) and `recurring_id` with 0015.
+- `events(id, title, event_type, location, starts_at, hall_id→halls **nullable**, created_at)` — the meetings someone adds by hand, each a dated column on the roll-call sheet; `hall_id is null` = 全堂. The old `events_unique_sunday_service` index went with 0013 (nothing manufactures a 主日崇拜 row any more), `recurring_id` with 0015, and `description` / `ends_at` with 0020 — never collected, never displayed. `location` stayed and the meeting form now asks for it: the dashboard's upcoming-meetings line has always rendered `date · location`, so the column was unfillable rather than unread.
 - ~~`recurring_events`~~ — **dropped by 0015**, together with `events.recurring_id`. The schedules only ever pre-created event rows for dates the calendar already had; the roll-call sheet builds its own columns, so nothing needed them.
-- `event_attendance(id, event_id, member_id, status, checked_in_at, notes, unique(event_id,member_id))`
-- `donations(id, member_id?, amount, currency, fund, method, donated_at, notes, created_at)`
+- `event_attendance(id, event_id, member_id, status, unique(event_id,member_id))` — a roll call stores one fact; `checked_in_at` / `notes` went with 0020, as did the `donations` table and the `donation_method` enum whose feature had already been removed.
 - `trainings(id, name, description, **kind** `course|activity` check, default `course`, **pic**, **pic_contact**, total_sessions, is_enrollable, starts_on, ends_on, **start_time**, **location**, **fee** numeric ≥ 0, **payment_instructions**, **payment_qr_url**, hall_id→halls **nullable**, created_at)` — `hall_id is null` = 全堂开放. `kind` (0014) is the only thing that tells a course from a one-off activity; the catalog of shapes is `TrainingKind` in `packages/shared`. 0016 dropped `category` and replaced `trainer_id→members` with free-text `pic` (+ its contact), copying each linked member's name forward first.
-- `training_sessions(id, training_id, session_number, title, scheduled_at, location, notes, unique(training_id,session_number))` — an ACTIVITY's single row is plumbing for the roll call: its `scheduled_at`/`location` stay null, because the occasion's time and place live on the training row.
-- `training_enrollments(id, training_id, member_id, status, progress, enrolled_at, completed_at, notes, **payment_slip_url**, unique(training_id,member_id))`
-- `training_attendance(id, session_id, member_id, attended, checked_at, notes, unique(session_id,member_id))`
+- `training_sessions(id, training_id, session_number, title, scheduled_at, location, unique(training_id,session_number))` — an ACTIVITY's single row is plumbing for the roll call: its `scheduled_at`/`location` stay null, because the occasion's time and place live on the training row.
+- `training_enrollments(id, training_id, member_id, status, progress, enrolled_at, completed_at, **payment_slip_url**, unique(training_id,member_id))`
+- `training_attendance(id, session_id, member_id, attended, unique(session_id,member_id))`
 - `discipleship_programs(id, name, description, total_days=40 check ≥ 1, created_at)` — the
   **module** (模块) in the UI. It has no `hall_id`, so no hall gate applies. It is **created
   once and then read**: the app has `GET`/`POST` and `GET /:id` only. There is no edit and no
@@ -322,13 +320,12 @@ Tables:
 
 | Route | Screen | Must show / do |
 | --- | --- | --- |
-| `/` | 仪表盘 Dashboard | KPIs (成员总数/在册/即将聚会/本月奉献/门训进行中), 身份分布图, 奉献趋势, upcoming events, discipleship progress |
-| `/members` | 成员目录 | filter chips by 身份(derived) + 小组, search, table, create |
+| `/` | 仪表盘 Dashboard | KPIs (成员总数/在册/即将聚会, + 门训进行中 when the module is on), 身份分布图, upcoming events (`date · location`), discipleship progress |
+| `/members` | 成员目录 | search + filters by 身份(derived) / 小组 / **服侍岗位**, table, create, import, registration link |
 | `/members/[id]` | 成员详情 | profile + **个人培训档案** + 门训对子 |
 | `/groups` | 小组管理 · 列表 | table of all groups (小组名称+标签, 组长, 组员人数, 新成员人数, 小组状态, 聚会时间地点), sortable, filter by 标签/星期几, click a row → detail |
 | `/groups/[id]` | 小组详情 | create/delete, member allocation (simple list), **铁三角** leader picker (the only identity assignment here), roll-call card for the group's OWN meetings (year/month, then export at the end of its toolbar; each week column has a check-all in its header) |
 | `/events` | 崇拜与祷告会 Services | ONE 聚会点名 sheet: members × (the month's Sundays with 会前 / 主日 ticks + each hand-added meeting as a dated 到场 column), a check-all per sub-column, per-tick totals, export; ＋新增聚会, edit/delete from a meeting's column header |
-| `/donations` | 奉献管理 | fund summary tiles + records table + create |
 | `/trainings` | 培训&活动 | catalog cards for both shapes, no filter, ＋新增培训 / ＋新增活动 |
 | `/trainings/[id]` | 培训 / 活动详情 | a course: sessions, enrolment approval, **核对名单** grid, per-session attendance. An activity: no session list, one 「到场」 column |
 | `/discipleship` | 四十天守望 | cascade chain, **牧者总览** (per-pair progress + 复制链接/打开表单), a pair's 40-day grid |
@@ -346,14 +343,12 @@ Tables:
 | Area | Endpoints |
 | --- | --- |
 | Members | `GET/POST /members`, `GET/PATCH/DELETE /members/:id`, `GET /members/:id/trainings`, `POST /members/:id/avatar` (image upload) (filters: `church_role`, `group_position`, `group_id`, `q`) |
-| Member import | `POST /members/import` `{hall_id, rows[{row, full_name, english_name, phone, email, gender, date_of_birth, joined_at, church_role, status, hall, group}]}` → `{created, updated, skipped[{row, issue, field, detail, message}], failures[{row, message}]}`. **super_admin / admin only**, 300 rows at most. Rows are matched on the name pair and planned by the same `lib/members-import.ts` the browser previewed with; a refused row never stops the others |
-| **Public registration** | `GET /members/register` → `{halls[{id,name}]}` (the form's own bootstrap) and `POST /members/register` (JSON, or multipart when a photo rides along) → `{status:'created'\|'updated'}`. No session; the ONLY public path under `/members`, and only those two methods. It reads an allow-list of fields — a body carrying `church_role` / `group_id` / `status` / `notes` has them ignored — and answers with no member data at all |
+| Member import | `POST /members/import` `{hall_id, rows[{row, full_name, english_name, phone, email, gender, date_of_birth, joined_at, church_role, status, hall, group, serving_roles}]}` → `{created, updated, skipped[{row, issue, field, detail, message}], failures[{row, message}]}`. **super_admin / admin only**, 300 rows at most. Rows are matched on the name pair and planned by the same `lib/members-import.ts` the browser previewed with; a refused row never stops the others |
+| **Public registration** | `GET /members/register` → `{halls[{id,name}]}` (the form's own bootstrap) and `POST /members/register` (JSON, or multipart when a photo rides along) → `{status:'created'\|'updated'}`. No session; the ONLY public path under `/members`, and only those two methods. It reads an allow-list of fields — a body carrying `church_role` / `group_id` / `status` / `notes` / `serving_roles` has them ignored, because a role and a ministry are the church's to hand out — and answers with no member data at all |
 | Halls | `GET /halls` — 堂会 list (read-only; a hall-scoped account only sees its own) |
 | Groups | `GET/POST /groups`, `GET/PATCH/DELETE /groups/:id` (member positions live on `members`), `GET /groups/:id/attendance`, `POST /groups/:id/meetings`, `DELETE /groups/meetings/:meetingId`, `POST /groups/meetings/:meetingId/attendance` `{records[{member_id,status}]}` — one tick or a whole column in the same call; a group meeting's hall is its **group's** hall, checked server-side |
-| Households | `GET/POST /households`, `GET/PATCH/DELETE /households/:id` |
 | 聚会点名 | `GET /attendance/sheet?year&month[&hall_id]` → `{hall_id, columns[{key, kind, date, ticks[], meeting}], rows[{member, cells{key:{…ticks}}}]}` — no `hall_id` means every congregation's members; `PUT /attendance/sheet` `{column, member_ids[], …ticks}` → `{column, member_ids[], count, …ticks}` — the cells of **one or many** members in one call (`member_id` is the singular alias), created / updated / **deleted** (every tick false) by the same call, in `sunday_attendance` or `event_attendance` depending on the column. A list is the general shape so the column check-all cannot drift from a single tick: same gate, same hall rule (each row filed under **that member's own** hall), same delete-instead-of-false. 400 on a non-Sunday `sunday:` column, a column key the server never handed out, an empty list, or an id that is not a member (refused whole — never half-applied) |
 | Events | `GET/POST /events`, `GET/PATCH/DELETE /events/:id` — the hand-added meetings; their attendance is a column on the sheet above |
-| Donations | `GET/POST /donations`, `GET /donations/summary`, `PATCH/DELETE /donations/:id` |
 | Trainings & Activities | `GET/POST /trainings`, `GET/PATCH/DELETE /trainings/:id`, `GET /trainings/:id/namelist`, `POST /trainings/:id/payment-qr` (image upload), **public** `GET/POST /trainings/enroll/:id` (JSON, or multipart when a receipt rides along). `kind` is validated server-side (400 on anything but `course`/`activity`); creating **or converting to** an `activity` forces `total_sessions: 1`, `ends_on = starts_on` and exactly one session; `fee` must be a number ≥ 0; a paid sign-up with no receipt is a 400 in words |
 | Sessions | `POST /trainings/:id/sessions`, `PATCH/DELETE /trainings/sessions/:sessionId`, `POST /trainings/sessions/:sessionId/attendance` |
 | Enrollment | `POST /trainings/:id/enroll`, `PATCH/DELETE /trainings/enrollments/:enrollmentId` |

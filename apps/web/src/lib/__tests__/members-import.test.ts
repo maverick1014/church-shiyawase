@@ -5,6 +5,7 @@ import {
   matchImportColumn,
   pairKey,
   parseImportDate,
+  parseServingRoles,
   planImport,
   tidy,
   type ImportContext,
@@ -74,7 +75,7 @@ describe('matchImportColumn', () => {
   });
 
   it('answers null for a column this app does not import', () => {
-    expect(matchImportColumn('奉献总额')).toBeNull();
+    expect(matchImportColumn('洗礼日期')).toBeNull();
     expect(matchImportColumn('')).toBeNull();
   });
 
@@ -279,5 +280,32 @@ describe('planImport', () => {
   it('refuses a cell holding a paragraph rather than a name', () => {
     const plan = planImport([{ row: 2, full_name: '甲'.repeat(200) }], ctx());
     expect(plan.rows[0]).toMatchObject({ action: 'skip', issue: 'too_long', field: 'full_name' });
+  });
+
+  it('reads a cell of 服侍岗位 however the church punctuated it', () => {
+    const plan = planImport([{ row: 2, full_name: '甲', serving_roles: '敬拜、音响 ; 招待/投影' }], ctx());
+    expect(plan.rows[0].values.serving_roles).toEqual(['敬拜', '音响', '招待', '投影']);
+    expect(plan.rows[0].fields).toContain('serving_roles');
+  });
+
+  it('never blanks the ministries a file said nothing about', () => {
+    // The same rule every other column obeys: a blank cell is "nothing to say",
+    // so a re-import of names and phones cannot un-serve the whole church.
+    const plan = planImport(
+      [{ row: 2, full_name: '陈约翰', english_name: 'John Tan', serving_roles: ' 、 ; ' }],
+      ctx({ existing: [member()] }),
+    );
+    expect(plan.rows[0].values).not.toHaveProperty('serving_roles');
+  });
+});
+
+describe('parseServingRoles', () => {
+  it('trims each ministry and drops the empties a trailing separator leaves', () => {
+    expect(parseServingRoles(' 敬拜 , 司琴,, ')).toEqual(['敬拜', '司琴']);
+    expect(parseServingRoles('')).toEqual([]);
+  });
+
+  it('keeps one ministry once, however many times the cell names it', () => {
+    expect(parseServingRoles('敬拜、敬拜')).toEqual(['敬拜']);
   });
 });

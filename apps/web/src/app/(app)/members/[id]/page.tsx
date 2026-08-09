@@ -1,12 +1,12 @@
 'use client';
 
 import { useParams, useRouter } from 'next/navigation';
-import { useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useFetch } from '@/lib/hooks';
 import { useSortableRows } from '@/lib/sort';
 import { api } from '@/lib/api';
 import { usePageChrome, useMe } from '@/components/AppShell';
-import { Avatar, BackButton, EntityHeader, ErrorBanner, FactGrid, Field, HallSelect, MemberName, Modal, ProgressBar, RoleBadge, SkeletonDetail, SkeletonScreen, SortTh, useConfirm, useToast } from '@/components/ui';
+import { Avatar, BackButton, EntityHeader, ErrorBanner, FactGrid, Field, HallSelect, MemberName, Modal, ProgressBar, RoleBadge, SkeletonDetail, SkeletonScreen, SortTh, TagsInput, useConfirm, useToast } from '@/components/ui';
 import { PairProgressModal } from '@/components/PairProgressModal';
 import { can } from '@/lib/perms';
 import { useModuleEnabled } from '@/lib/church';
@@ -107,6 +107,7 @@ export default function MemberDetailPage() {
     (p) => p.mentor_id === m.id || p.trainee_id === m.id,
   );
 
+  const serving = m.serving_roles ?? [];
   const facts = [
     { label: tr('members.field.email'), value: m.email ?? '—' },
     { label: tr('members.field.phone'), value: m.phone ?? '—' },
@@ -115,7 +116,21 @@ export default function MemberDetailPage() {
     { label: tr('members.col.status'), value: tr(memberStatusKey(m.status)) },
     { label: tr('member.field.joined'), value: formatDate(m.joined_at) },
     { label: tr('member.field.birthday'), value: formatDate(m.date_of_birth) },
-    { label: tr('member.field.household'), value: m.household?.name ?? '—' },
+    {
+      label: tr('members.field.serving'),
+      // Nothing at all when they serve nowhere: an empty list is a fact about
+      // this person, not a value the church has yet to fill in, and a "—" here
+      // would read as the second.
+      value: serving.length > 0
+        ? (
+            <span className="flex gap-6 flex-wrap">
+              {serving.map((r) => (
+                <span key={r} className="badge b-brand">{r}</span>
+              ))}
+            </span>
+          )
+        : '',
+    },
   ];
 
   return (
@@ -277,6 +292,9 @@ function EditMemberModal({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  // 服侍岗位 is a list, so it is its own piece of state rather than a string in
+  // the form object — the same shape a group's tags are edited in.
+  const [serving, setServing] = useState<string[]>(member.serving_roles ?? []);
   const [form, setForm] = useState({
     full_name: member.full_name ?? '',
     english_name: member.english_name ?? '',
@@ -298,6 +316,16 @@ function EditMemberModal({
   const toast = useToast();
 
   const allGroups = useFetch<GroupRow[]>('/groups');
+  // The whole roll, only to autocomplete 服侍岗位 from the ministries the church
+  // already uses — free text drifts into 敬拜 / 敬拜团 / 敬拜组 otherwise. Same
+  // derivation as /groups' tag suggestions (rule G4).
+  const allMembers = useFetch<MemberRow[]>('/members');
+  const servingSuggestions = useMemo(() => {
+    const set = new Set<string>();
+    for (const other of allMembers.data ?? [])
+      for (const r of other.serving_roles ?? []) set.add(r);
+    return [...set].sort((a, b) => a.localeCompare(b, 'zh'));
+  }, [allMembers.data]);
   // Sibling members of whichever group is currently SELECTED (not necessarily
   // the member's original group) — used to auto-demote whoever currently
   // holds a leadership slot when someone new is assigned to it (one holder
@@ -345,6 +373,7 @@ function EditMemberModal({
         hall_id: form.hall_id,
         group_id: form.group_id || null,
         group_position: form.group_id ? form.group_position : null,
+        serving_roles: serving,
       });
       onSaved();
     } catch (e) {
@@ -435,6 +464,14 @@ function EditMemberModal({
           </Field>
         )}
       </div>
+      <Field label={t('members.field.serving')}>
+        <TagsInput
+          value={serving}
+          onChange={setServing}
+          suggestions={servingSuggestions}
+          placeholder={t('members.servingPlaceholder')}
+        />
+      </Field>
       <Field label={t('member.field.notes')}>
         <textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} rows={2} />
       </Field>
