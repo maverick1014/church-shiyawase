@@ -654,7 +654,7 @@ function WeeklyAttendance({ group }: { group: GroupDetail }) {
         <div className="empty">{t('group.noMembers')}</div>
       ) : (
         <div className="table-wrap">
-          <table>
+          <table className="sheet-table">
             <thead>
               <tr>
                 <SortTh sortKey="name" activeKey={attSortKey} dir={attSortDir} onSort={toggleAttSort}>{t('members.col.member')}</SortTh>

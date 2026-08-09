@@ -165,13 +165,10 @@ Testing layers (in `apps/web`):
   actually tested.
 - `npm run ui:shots` — **screenshot sweep**: captures every list page at a phone
   and a desktop viewport into `$OUT` (default `/tmp/shots`; `WIDE=1` for
-  desktop). ui-e2e proves the pages *work*; it cannot see that two pages lay
-  their header out differently. After any layout change, run this and **look at
-  the images** — a green ui-e2e is not evidence the UI is consistent.
-  The `ui-e2e` workflow runs the `WIDE=1` sweep itself and uploads it under
-  `desktop/` in the same artifact, because ui-e2e drives a 402px phone and so
-  never photographs anything inside `.only-desktop` — which is every list
-  table, and therefore most column work.
+  desktop). A local tool for looking at a layout change with your own eyes —
+  ui-e2e proves the pages *work*, it cannot see that two pages lay their header
+  out differently. **CI does not run it and collects no artifacts**: the
+  workflow's job is finding bugs, and nobody was reading the images.
 
 ---
 
@@ -302,7 +299,11 @@ phones. They use the same `--control-h` as every other control — no `sm`
 variant, no inline width.
 List tables size their columns to their own content (`table-layout: auto` +
 `white-space: nowrap` on cells). Never hand-type a column width: one tuned to
-two CJK glyphs clips the moment the same label is English.
+two CJK glyphs clips the moment the same label is English. The one exception is
+the **name column of a roll-call sheet** (`.sheet-table`), whose neighbours are
+however many occasions the month had: it carries a `min-width` and refuses to
+wrap, so that a sheet too wide for the screen scrolls sideways in its
+`.table-wrap` instead of breaking a Chinese name one glyph per line.
 
 ### G6a — Every date and time is Malaysia time
 The church is in one place, so a 10:00 service reads 10:00 on every screen.

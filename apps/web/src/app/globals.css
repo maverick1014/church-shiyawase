@@ -520,6 +520,21 @@ tbody tr:last-child td {
 .tnum {
   font-variant-numeric: tabular-nums;
 }
+
+/* A roll-call sheet is a name column followed by however many occasions the
+   month happened to have, so it is the one table whose width is not up to it.
+   Auto layout hands the leftover space out proportionally, and once the tick
+   columns outnumber the room the name column is what gives — a Chinese name
+   has no word boundary to wrap on, so it breaks one glyph per line ("曾 / 勇 /
+   勒") and the row grows three lines tall. Pin the name column to a real
+   minimum and let it refuse to wrap: when the ticks no longer fit beside it the
+   table scrolls sideways inside its own .table-wrap, which is the behaviour
+   every wide table in this app already has. */
+.sheet-table th:first-child,
+.sheet-table td:first-child {
+  min-width: 96px;
+  white-space: nowrap;
+}
 th.sortable {
   cursor: pointer;
   user-select: none;

@@ -808,15 +808,18 @@ async function main() {
         (await page.locator('input[type=checkbox]').count()) > 0);
 
       // The meeting is a COLUMN on the same grid, not a second card — with one
-      // tick, because one occasion has one thing to record. Its own header and
-      // the totals row are the two "Attended" headers there should be.
+      // tick, because one occasion has one thing to record. That is its
+      // header's own colspan: counting "Attended" headers across the sheet
+      // instead would answer a different question, because the month may
+      // legitimately hold other meetings than this run's, each with a column
+      // of its own.
       const meetingHead = page.locator('th', { hasText: fxMeeting.name });
       await meetingHead.first().waitFor({ timeout: 20000 });
       check('a hand-added meeting is a dated column on the same sheet',
         (await meetingHead.count()) === 1);
+      const meetingSpan = await meetingHead.first().getAttribute('colspan');
       check('…carrying exactly one tick, not an invented 会前 as well',
-        (await page.locator('th:has-text("Attended")').count()) === 2,
-        `${await page.locator('th:has-text("Attended")').count()} Attended headers`);
+        meetingSpan === '1', `colspan=${meetingSpan}`);
       check('the meetings no longer have a card of their own',
         (await page.locator('.meeting-row').count()) === 0);
 
@@ -865,11 +868,16 @@ async function main() {
         (await meetingAll.count()) === 1);
       check('…reading as empty while nobody is ticked',
         !(await meetingAll.isChecked()) && (await meetingAll.evaluate((el) => el.indeterminate)) === false);
+      // One check-all per sub-column, which is exactly one per tick in a
+      // member's row: two per Sunday (会前 / 主日 filled separately) plus one
+      // per meeting. Comparing the two counts states that without having to
+      // know how many meetings this month happens to hold — and without
+      // counting "Pre-service" headers, one of which belongs to the totals.
       const sundayAlls = await page.locator('input.sheet-tick-all').count();
-      // One per sub-column: two per Sunday (会前 / 主日) plus one per meeting.
+      const rowTicks = await sheetRow.locator('input[type=checkbox]').count();
       check('every sub-column gets its own — a Sunday’s two ticks are filled separately',
-        sundayAlls >= 2 * (await page.locator('th:has-text("Pre-service")').count()) + 1,
-        `${sundayAlls} check-alls`);
+        sundayAlls === rowTicks && rowTicks > (await page.locator('th:has-text("Pre-service")').count()),
+        `${sundayAlls} check-alls vs ${rowTicks} ticks in a row`);
 
       // One person ticked out of the whole sheet is the in-between state, and
       // it has to be reported honestly rather than rounded to on or off.
@@ -1364,6 +1372,11 @@ async function main() {
         (await sidebarBg()) === asRgb(themeBefore.rail),
         `sidebar=${await sidebarBg()} record=${themeBefore.rail}`);
 
+      // The catalog is its own fetch and sits below the theme card, which is
+      // all the navigation above waited for — so wait for the row itself
+      // rather than counting whatever has arrived by now.
+      await catalogRow('Forty Days').locator('.switch').first()
+        .waitFor({ timeout: 20000 }).catch(() => {});
       check('the catalog lists the Forty Days add-on with a switch',
         (await catalogRow('Forty Days').locator('.switch').count()) === 1);
 

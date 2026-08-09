@@ -270,7 +270,7 @@ export default function EventsPage() {
           <div className="empty-inline">{t('events.sheetEmpty')}</div>
         ) : (
           <div className="table-wrap">
-            <table>
+            <table className="sheet-table">
               <thead>
                 <tr>
                   <th rowSpan={2}>{t('members.col.member')}</th>

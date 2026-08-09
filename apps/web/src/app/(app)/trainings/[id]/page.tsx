@@ -450,7 +450,7 @@ export default function TrainingDetailPage() {
           <ExportButton onClick={exportNamelist} disabled={!nl || nl.rows.length === 0} title={tr('training.exportTitle')} />
         </div>
         <div className="table-wrap">
-          <table>
+          <table className="sheet-table">
             <thead>
               <tr>
                 <SortTh sortKey="name" activeKey={nlSortKey} dir={nlSortDir} onSort={toggleNlSort}>{tr('training.col.enrollee')}</SortTh>

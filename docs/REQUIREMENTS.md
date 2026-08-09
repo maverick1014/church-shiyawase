@@ -35,7 +35,7 @@
 | 删除（DELETE） | ✅ | ✅ | ❌ | ❌ |
 | 账户管理（`/accounts*` 的**读与写**：列表、新建、编辑、删除、重设密码） | ✅ | ❌ | ❌ | ❌ |
 | 查看教会资料与附加模块状态（`GET /church`、`GET /church/modules`） | ✅ | ✅ | ✅ | ✅ |
-| 修改教会资料 / 开关附加模块（`/church*` 的**任意写操作**） | ✅ | ❌ | ❌ | ❌ |
+| 修改教会资料 / 主题颜色 / 开关附加模块（`/church*` 的**任意写操作**） | ✅ | ❌ | ❌ | ❌ |
 | 自助修改我的密码（`/auth/password`，须验证当前密码） | ✅ | ✅ | ✅ | ✅ |
 | 公开门训表单（`/d/[token]` 及 `/api/discipleship/form/*`，无需登录） | 公开（任何持 token 者） | 公开 | 公开 | 公开 |
 
@@ -43,10 +43,11 @@
 
 - `r0 === 'auth'`、`discipleship/form/*`、`trainings/enroll/*` 与 **`GET /church`** 为公开路径，
   其余一律要求有效会话，否则 `401 未登录`。`GET /church` 公开是因为登录页与两个公开表单都要显示
-  教会名称，且这四个字段（name / short_name / description / logo_url）本身不敏感；`/church` 的
+  教会名称与教会主题色，且这些字段（name / short_name / description / logo_url +
+  theme_preset / theme_rail / theme_brand）本身都不敏感；`/church` 的
   **写操作依旧仅 super_admin**。
 - `accounts*` 的**任意方法（含 GET）** 仅 `super_admin`，否则 `403 仅超级管理员可管理登录账户`（读也受限，避免账户邮箱 / 角色 / 登录历史泄露）。
-- `church*` 的**非 GET** 仅 `super_admin`，否则 `403`（改教会名称或关掉一个模块，影响的是全教会）。
+- `church*` 的**非 GET** 仅 `super_admin`，否则 `403`（改教会名称、换主题颜色或关掉一个模块，影响的是全教会）。
 - 非 GET 时：`readonly` 一律 `403 只读账户无法修改`；`DELETE` 仅 `super_admin` / `admin`，否则 `403 当前角色无删除权限`。
 - **模块启用（第三个访问维度，与角色、堂会并列）**：`church_modules` 记录本教会开启了哪些
   **附加模块**；代码侧的注册表（`packages/shared` 的 `OPTIONAL_MODULES`）说明每个模块拥有哪个
@@ -305,7 +306,7 @@
 - ⚠ **小缺口（G2 UX）**：`usePageChrome` 无条件设置顶栏动作，非超级管理员误入 `/settings`
   时顶栏仍显示「＋ 新建账户」按钮（点击无效，因新建弹窗只在超管分支渲染）。见 §6。
 
-### 3.8b 教会设置 `/church`（教会资料 + 附加模块目录，仅超级管理员）
+### 3.8b 教会设置 `/church`（教会资料 + 主题颜色 + 附加模块目录，仅超级管理员）
 
 - 导航项 `/church` 位于「系统」分组、紧邻 `/settings`，同样带 `role: SuperAdmin` 门控；
   非超级管理员即使手动进入也会被重定向到 `/profile`（与 `/settings` 一致）。服务端
@@ -314,6 +315,26 @@
   （`api.upload` → 公开存储桶 → 回写 `logo_url`），`POST /church/logo`；已有标志时可「移除
   标志」（`useConfirm` `danger` → `PATCH /church {logo_url: null}`）。教会记录是迁移 0012
   播种的**单行**，一个部署服务一间教会，因此**不提供新建 / 删除**（G1 的明示例外）。
+- **主题颜色（R / U，迁移 0017）**：一套主题只有**两种颜色**——`theme_rail`（侧边栏）与
+  `theme_brand`（品牌色）；其余色阶（`--brand-2`、`--brand-soft`、`--accent(-soft)` 以及侧边栏
+  自身的浅色前景 `--rail-ink/-text/-muted/-faint/-dim`）一律在 `globals.css` 里以
+  `color-mix()` 由这两色调配，**不入库**，因此永远不会与本色走样；`--good/--warn/--crit`
+  与暖色中性色**不属于主题**（「缺席」不能因为教会选了红色就变成品牌色），`ROLE_TAG` 同理。
+  - **预设**写在代码里（`packages/shared` 的 `THEME_PRESETS`：charcoal（今日配色，默认）、
+    ink、forest、plum、amber），但**颜色与 preset key 一同入库**——日后改动某个预设的定义，
+    不会悄悄改掉已选它的教会。
+  - **自选**：两个 `<input type="color">` + 同一枚「对角切开的圆形」色卡实时预览
+    （共享组件 `ThemeSwatch`，预设列表与预览用的是同一个，G4）；选中态除颜色外还有 ✓ 与加粗
+    边框（不靠颜色单独表意）。
+  - **服务端校验（G2）**：严格 `#rrggbb`（拒绝颜色名、缩写、`var(…)`、任何带 `;`/`}` 的串——
+    这两个值会被写进 CSS 自定义属性），且**必须够深**：侧边栏 ≥ 8:1、品牌色 ≥ 4.5:1（对白）。
+    浅色侧边栏不是「浅色主题」，而是看不见导航，因此直接拒绝而非半支持；预设按定义全部通过。
+    数据库列另有同样的 `check` 约束兜底。
+  - 主题属于**教会**而非账户：登录页与两个公开表单也照此上色，它们根本没有账户可读偏好。
+    应用主题的唯一入口是 `lib/theme.ts` 的 `applyTheme`，由 `useChurchProfile` 调用（外壳与三个
+    无外壳的公开页共用一条路径）；上次的配色缓存在 `localStorage`，由 `<head>` 内联的
+    `THEME_BOOT_SCRIPT` 在**首帧之前**回填，因此只有某台设备的首次访问才可能闪一下默认配色。
+  - 选择即保存（不销毁任何数据，一键可换回，故不需要 `useConfirm`）；保存后立即重绘侧边栏。
 - **附加模块目录（R / U）**：注册表里每个可选模块一行——名称、一句话说明、开关。
   - 关闭一个模块会让全教会失去一整块功能，因此必经 `useConfirm({danger:true})`，文案同时说明
     **消失的是什么**（侧边栏入口、它的所有页面与链接）与**保留的是什么**（配对、每日进度、
@@ -328,6 +349,7 @@
 - **教会名称的边界**：登录页、`/d/[token]`、`/enroll/[id]` 无会话，界面语言取默认（英文）；
   但**教会名称不是翻译而是数据**，三种语言都显示同一个名称，因此这三个页面各自请求公开的
   `GET /api/church` 并渲染 `church.name`（`form.privacy` 以 `{church}` 占位符接收）。
+  同一次请求也带回**教会主题色**，因此这三个页面同样按教会的配色上色（`applyTheme`）。
   例外：`app/layout.tsx` 的 HTML `<title>` 与 `app/manifest.ts` 的 PWA 清单在**构建期**生成，
   没有请求也没有数据库连接，无法读取教会记录，故仍为按部署写死的字面量。
 - **登录 `/login`**：邮箱 + 密码（含显示 / 隐藏切换），`POST /api/auth/login`。账户不存在或
