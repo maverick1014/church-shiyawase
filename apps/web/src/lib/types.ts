@@ -61,6 +61,10 @@ export interface MemberRow {
   english_name: string | null;
   email: string | null;
   phone: string | null;
+  /** Free text, as you would write it on an envelope (migration 0021). */
+  address: string | null;
+  /** 推荐人 — the member who brought them; null = 无推荐人, the ordinary case. */
+  referred_by: string | null;
   gender: Gender | null;
   date_of_birth: string | null;
   church_role: ChurchRole;
@@ -68,7 +72,14 @@ export interface MemberRow {
   group_id: string | null;
   group_position: GroupPosition | null;
   hall_id: string;
+  /** 来访日期 — display label only; the column and its meaning are unchanged. */
   joined_at: string | null;
+  /**
+   * 加入小组日期 — when this member joined their CURRENT life group (migration
+   * 0023). A separate fact from `joined_at` (when they joined the church):
+   * nullable, and excluded from any report built on it, same as `joined_at`.
+   */
+  group_joined_at: string | null;
   notes: string | null;
   /**
    * 服侍岗位 — the ministries this person serves in (migration 0019). Free text
@@ -80,7 +91,27 @@ export interface MemberRow {
   avatar_url: string | null;
   group?: { id: string; name: string } | null;
   hall?: { id: string; name: string } | null;
+  /**
+   * The person `referred_by` points at, embedded by the API. Null whenever
+   * nobody referred them — which is most people — so every reader guards it.
+   */
+  referrer?: { id: string; full_name: string; english_name: string | null } | null;
+  /**
+   * Present only when THIS write just promoted or demoted the member to/from
+   * 小组长 and the server acted on their login account — `POST /members` and
+   * `PATCH /members/:id` merge it onto the ordinary row rather than wrapping
+   * the response in a new envelope, so every existing caller that does not
+   * check for it is unaffected. See `syncGroupLeaderAccount` in
+   * `api/[...path]/route.ts`.
+   */
+  leader_account_event?: LeaderAccountEvent;
 }
+
+/** See `MemberRow.leader_account_event`. */
+export type LeaderAccountEvent =
+  | { event: 'created'; email: string; password: string }
+  | { event: 'disabled'; email: string }
+  | { event: 'skipped_no_email' };
 
 export interface GroupRow {
   id: string;
@@ -196,7 +227,7 @@ export interface TrainingRow {
   id: string;
   name: string;
   description: string | null;
-  /** 课程 or 活动 — which shape this row is (migration 0014, convertible 0016). */
+  /** 课程 or 活动 — which shape this row is (migration 0014), FIXED at creation (0024). */
   kind: TrainingKind;
   /** 负责人 — free text (0016): the person in charge is often not a member. */
   pic: string | null;
@@ -210,6 +241,8 @@ export interface TrainingRow {
   start_time: string | null;
   /** An ACTIVITY's meeting point. A course's places live on its sessions. */
   location: string | null;
+  /** null = open to everyone; else restricted to that gender (migration 0024). */
+  gender: Gender | null;
   /** 报名费. null / 0 = free, and the payment fields below stay hidden. */
   fee: string | number | null;
   /** How to pay: bank account, TnG number, a note. One field, any method. */
@@ -297,6 +330,8 @@ export interface PairRow {
   status: PairStatus;
   start_date: string | null;
   form_token: string;
+  /** Free text, staff's own note about the pair (migration 0024); null = none. */
+  remark: string | null;
   mentor?: MemberBrief;
   trainee?: MemberBrief;
 }
@@ -306,6 +341,8 @@ export interface ProgressRow {
   pair_id: string;
   day_number: number;
   entry_date: string | null;
+  /** "HH:MM:SS" (Postgres `time`), alongside entry_date (migration 0024). */
+  entry_time: string | null;
   completed: boolean;
   notes: string | null;
 }
@@ -356,6 +393,64 @@ export interface SelfProfile {
   last_sign_in_at: string | null;
   hall?: { id: string; name: string } | null;
   member: MemberRow | null;
+}
+
+/* -------------------------------------------------------------------------
+ * 幸福小组 (Happiness Groups) — 期 (term) → group → roster + weekly attendance
+ *
+ * `GET /api/happiness/attendance` on a group is presence-only, by WEEK
+ * NUMBER rather than by date (the one roll call in the app that isn't
+ * date-based): `records` is the flat list of `{ week_number, member_id }`
+ * pairs that exist — a pair present means "was there that week", and there is
+ * nothing to read for a week nobody marked. The page builds its own
+ * member × week matrix from `weeks` (the term's length) and this list.
+ * ---------------------------------------------------------------------- */
+
+/** `GET /api/happiness/terms` — one term, plus how many groups run inside it. */
+export interface HappinessTermRow {
+  id: string;
+  term_no: number;
+  name: string | null;
+  weeks: number;
+  starts_on: string | null;
+  ends_on: string | null;
+  /** Server-computed (one extra query for the whole list, never N+1) — so the
+   *  term list and its delete confirmation both read a real count. */
+  group_count: number;
+}
+
+export interface HappinessGroupRow {
+  id: string;
+  term_id: string;
+  name: string;
+  hall_id: string;
+  leader_id: string | null;
+  meeting_day: Weekday | null;
+  meeting_time: string | null;
+  location: string | null;
+  hall?: { id: string; name: string } | null;
+  leader?: { id: string; full_name: string; english_name: string | null } | null;
+  term?: { id: string; term_no: number; name: string | null; weeks: number } | null;
+  /** Server-computed roster size, for the group list and its delete confirmation. */
+  roster_count: number;
+}
+
+export interface HappinessGroupDetail extends HappinessGroupRow {
+  members: {
+    id: string;
+    full_name: string;
+    english_name: string | null;
+    church_role: ChurchRole;
+    group_position: GroupPosition | null;
+  }[];
+}
+
+/** `GET /api/happiness/groups/:id/attendance` — one group's whole roll call. */
+export interface HappinessAttendanceResponse {
+  /** The term's own length — every week column the sheet should draw. */
+  weeks: number;
+  /** Every recorded presence; absence of a pair means "not marked". */
+  records: { week_number: number; member_id: string }[];
 }
 
 export interface OverviewRow {

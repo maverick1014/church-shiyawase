@@ -323,6 +323,12 @@ async function main() {
     for (const e of named(await list('/events'), 'title')) await kill('meeting', `/events/${e.id}`);
     for (const m of named(await list('/members'), 'full_name')) await kill('member', `/members/${m.id}`);
     for (const g of named(await list('/groups'), 'name')) await kill('group', `/groups/${g.id}`);
+    // A fixture-named term cascades its group, roster and attendance with it.
+    // The group sweep beneath it only catches one left under a REAL term,
+    // which should never happen but is checked anyway (the same reason this
+    // function exists at all: a run that died before its own `finally`).
+    for (const t of named(await list('/happiness/terms'), 'name')) await kill('happiness term', `/happiness/terms/${t.id}`);
+    for (const g of named(await list('/happiness/groups'), 'name')) await kill('happiness group', `/happiness/groups/${g.id}`);
     return stuck;
   };
 
@@ -547,6 +553,8 @@ async function main() {
     const removePair = disposable(`pair ${mentor.name} → ${trainee.name}`, `/discipleship/pairs/${row.id}`);
     return {
       id: row.id,
+      mentorId: mentor.id,
+      traineeId: trainee.id,
       mentorName: mentor.name,
       traineeName: trainee.name,
       remove: async () => { await removePair(); await trainee.remove(); await mentor.remove(); },
@@ -608,7 +616,7 @@ async function main() {
     const sidebar = await page.locator('.sidebar').innerText();
     check(
       'sidebar lists every module + Users and Church settings (super admin only)',
-      ['Members', 'Life Groups', 'Services', 'Trainings & Activities', 'Forty Days', 'Users', 'Church settings']
+      ['Members', 'Life Groups', 'Services', 'Trainings & Activities', 'Forty Days', 'Happiness Groups', 'Users', 'Church settings']
         .every((label) => sidebar.includes(label)),
     );
     // The brand at the top of the sidebar is the CHURCH's own name, read from
@@ -617,6 +625,32 @@ async function main() {
     check('the sidebar brand shows the church record’s name',
       sidebar.includes(churchRecord.short_name || churchRecord.name),
       churchRecord.short_name || churchRecord.name);
+
+    /* -- dashboard: trend chart · upcoming-events table · one KPI tile ----- */
+    // The dashboard was rebuilt around three sections; the old 4-tile KPI row,
+    // the "Identity distribution" bar chart and the "Discipleship progress"
+    // card are gone entirely.
+    const dashBody = await page.locator('.content').innerText();
+    check('the dashboard shows the New Visits / Active Members trend card',
+      dashBody.includes('New Visits & Active Members'));
+    check('…the upcoming-events section…', dashBody.includes('Upcoming events'));
+    check('…and a single "Total Active Members" KPI tile',
+      dashBody.includes('Total Active Members') && (await page.locator('.stat').count()) === 1);
+    check('the retired KPI row / identity chart / discipleship-progress card are gone',
+      !dashBody.includes('Identity distribution') && !dashBody.includes('Discipleship progress'));
+    // Two independent toggle chips, both on by default — each hides its own
+    // line without touching the other.
+    const trendChips = page.locator('.card:has-text("New Visits & Active Members") .chip');
+    const chipsOnByDefault = await trendChips.evaluateAll((els) => els.every((el) => el.classList.contains('on')));
+    check('the trend card offers two toggle chips, both on by default',
+      (await trendChips.count()) === 2 && chipsOnByDefault);
+    const linesBefore = await page.locator('.card:has-text("New Visits & Active Members") svg polyline').count();
+    await trendChips.first().click();
+    await w(200);
+    const linesAfter = await page.locator('.card:has-text("New Visits & Active Members") svg polyline').count();
+    check('toggling a chip off removes its own line from the chart', linesAfter === linesBefore - 1, `${linesBefore} → ${linesAfter}`);
+    await trendChips.first().click();
+    await w(200);
     await shot('01-dashboard');
 
     /* -- member directory ------------------------------------------------- */
@@ -693,6 +727,11 @@ async function main() {
     await page.locator('.modal button:has-text("Cancel")').first().click();
     await w(300);
     check('the modal closes again', (await page.locator('.modal').count()) === 0);
+    // The single long FactGrid was split into several smaller, labelled
+    // sections rather than one undifferentiated grid.
+    const detailBody = await page.locator('.content').innerText();
+    check('the member detail page groups its facts under section headers (Contact/Church/Ministry/Referral)',
+      ['Contact', 'Church', 'Ministry', 'Referral'].every((label) => detailBody.includes(label)));
     await shot('03-member-detail');
 
     /* -- life groups ------------------------------------------------------ */
@@ -728,18 +767,22 @@ async function main() {
         (await trioPick.count()) === 3 && (await page.locator('select.trio-pick').count()) === 0,
         `${await trioPick.count()} comboboxes`);
       check('the year / month selects are present', (await page.locator('select').count()) >= 2);
-      await page.locator('th:has-text("Week")').first().waitFor({ timeout: 20000 });
-      check('weekly attendance renders a column per Sunday', (await page.locator('th:has-text("Week")').count()) > 0,
-        `${await page.locator('th:has-text("Week")').count()} weeks`);
+      await page.locator('table.sheet-table').first().waitFor({ timeout: 20000 });
+      // One header cell per Sunday of the month, each spanning its three
+      // sub-ticks (小组 / 会前 / 主日) — merged into one block now, not two
+      // side by side.
+      const dateHeads = page.locator('table.sheet-table thead th.tnum');
+      check('weekly attendance renders a column per Sunday', (await dateHeads.count()) > 0,
+        `${await dateHeads.count()} Sundays`);
       check('weekly attendance has tick boxes', (await page.locator('input[type=checkbox]').count()) > 0);
       check('the roster lists the member who is in this group',
         (await page.locator(`td:has-text("${fxGroup.member.name}")`).count()) > 0);
       await shot('04-group-detail');
 
-      // The group's roll call is ONE table with two labelled blocks of columns
-      // — the month's Sundays, then the group's own meetings. There are still
-      // no 小组 / 会前 / 主日 tabs: the Sunday half is not a second view, it is
-      // the same rows the services sheet writes, shown beside the group's own.
+      // The group's roll call is ONE table, one column per date — no more
+      // 小组 / 会前 / 主日 tabs, and no more two blocks side by side either:
+      // 小组 is now the first sub-tick under the SAME date column 会前/主日
+      // sit under, not a second table next to it.
       check('the roll-call card offers no roll-call tabs any more',
         (await page.locator('.seg').count()) === 0, `${await page.locator('.seg').count()} segmented control(s)`);
 
@@ -748,7 +791,7 @@ async function main() {
       // has (rule G7a). A spacer sits between them, so the shape is four
       // children and the assertion is about the ORDER and the last one, not
       // about a fixed count of controls.
-      const sheetCard = page.locator('.card', { has: page.locator('th:has-text("Week")') });
+      const sheetCard = page.locator('.card', { has: page.locator('table.sheet-table') });
       const toolbar = sheetCard.locator('.flex.gap-8.mb-14').first();
       await toolbar.waitFor({ timeout: 20000 });
       const toolbarShape = await toolbar.evaluate((el) =>
@@ -761,15 +804,15 @@ async function main() {
       check('…and it is an export button, not something else',
         (await sheetCard.locator('button[aria-label*="Export"]').count()) === 1);
 
-      // Both blocks are on the one table, and each says which it is — a leader
-      // must never wonder whether the box under their finger is a Sunday or
-      // the group's own night.
-      check('the card carries the month’s Sundays as well as the group’s own',
-        (await sheetCard.locator('th:has-text("Sunday services")').count()) === 1 &&
-          (await sheetCard.locator('th:has-text("This group’s meetings")').count()) === 1);
-      check('…and the Sunday block carries a Sunday’s two ticks',
-        (await sheetCard.locator('th:has-text("Pre-service")').count()) >= 4,
-        `${await sheetCard.locator('th:has-text("Pre-service")').count()} 会前 columns`);
+      // One block per date now, not two blocks side by side — a leader must
+      // never wonder whether the box under their finger is the group's own
+      // night or the church's Sunday. 小组 is the sub-tick's own label; 会前/
+      // 主日 are the SAME sub-ticks 崇拜与祷告会 draws.
+      check('every date column carries a 小组 tick as well as 会前/主日',
+        (await sheetCard.locator('th:has-text("Group")').count()) >= 4 &&
+          (await sheetCard.locator('th:has-text("Pre-service")').count()) >= 4,
+        `${await sheetCard.locator('th:has-text("Group")').count()} Group headers, ` +
+          `${await sheetCard.locator('th:has-text("Pre-service")').count()} 会前 columns`);
 
       // Ticking a week writes the group's own roll call, and unticking it puts
       // it back — the card is a sheet like every other one.
@@ -782,7 +825,9 @@ async function main() {
       await groupRow.first().waitFor({ timeout: 20000 });
       check('the sheet lists this group’s member exactly once',
         (await groupRow.count()) === 1, `${await groupRow.count()} row(s)`);
-      const weekTick = groupRow.locator('input[title^="Week"]').first();
+      // The 小组 tick is always the FIRST checkbox in the row: it renders
+      // ahead of 会前/主日 under the first Sunday column, in that fixed order.
+      const weekTick = groupRow.locator('input[type=checkbox]').first();
       // click, not check(): the tick is optimistic and the row re-renders from
       // the server, so the checkbox's own state is not the fact worth
       // asserting — what the API returns is.
@@ -808,8 +853,8 @@ async function main() {
       // clear the congregation's real attendance.
       const presentIn = (sheet) =>
         (sheet.rows || []).filter((r) => (r.cells || []).some((c) => c.status === 'present')).length;
-      const weekAll = sheetCard.locator('thead input.sheet-tick-all[aria-label*="Week"]');
-      const weekCount = await page.locator('th:has-text("Week")').count();
+      const weekAll = sheetCard.locator('thead input.sheet-tick-all[aria-label*="Group"]');
+      const weekCount = await sheetCard.locator('th:has-text("Group")').count();
       check('every week column carries a check-all in its header',
         (await weekAll.count()) === weekCount, `${await weekAll.count()} of ${weekCount}`);
       // The Sunday half has its own, one per sub-column, exactly as it does on
@@ -836,8 +881,8 @@ async function main() {
       await firstAll.click();
       await page.locator('.modal-backdrop').last().waitFor({ timeout: 8000 });
       const clearCopy = await page.locator('.modal-backdrop').last().innerText();
-      check('clearing a whole column asks first, names the column and warns it is final',
-        /Week\s*\d/.test(clearCopy) && /cannot be undone/i.test(clearCopy),
+      check('clearing a whole column asks first, names the DATE it is about to empty, and warns it is final',
+        /\d{2}-\d{2}.*Group/.test(clearCopy) && /cannot be undone/i.test(clearCopy),
         clearCopy.replace(/\s+/g, ' ').slice(0, 140));
       await page.locator('.modal-backdrop').last().locator('button:has-text("Clear column")').last().click();
       await w(1800);
@@ -875,8 +920,98 @@ async function main() {
         await seat.inputValue());
       check('the option list closes once something is picked',
         (await page.locator('.combo-list').count()) === 0);
+
+      /* -- roster row: Edit opens the SHARED member-edit modal ------------ */
+      // The same editor `/members/[id]` uses (extracted to
+      // `components/MemberEditModal.tsx`, rule G4) — not a second, roster-only
+      // copy of the form.
+      const rosterRow = page.locator('table tr', { hasText: fxGroup.member.name }).first();
+      await rosterRow.locator('button:has-text("Edit")').click();
+      await page.locator('.modal').waitFor({ timeout: 8000 });
+      check('the roster row’s Edit button opens the shared member-edit modal',
+        (await page.locator('.modal:has-text("Edit member profile")').count()) === 1);
+      const rosterPhoneInput = page.locator('.modal input[placeholder="012-000 0000"]');
+      await rosterPhoneInput.fill('012-000 1111');
+      await page.locator('.modal button:has-text("Save")').first().click();
+      await w(1200);
+      check('saving it closes the modal', (await page.locator('.modal').count()) === 0);
+      const rosterMemberAfter = await apiGet(`/members/${fxGroup.member.id}`);
+      check('…and the edit reached the server (the roster reloads, not just the modal)',
+        rosterMemberAfter.phone === '012-000 1111', String(rosterMemberAfter.phone));
     } finally {
       await fxGroup.remove();
+    }
+
+    /* -- group leadership · auto-provisioned 小组长 login ------------------- */
+    // Promoting a member WITH AN EMAIL to the Leader seat auto-creates a
+    // group_leader login and shows the credential ONCE, in a modal — never a
+    // toast, which would disappear before anyone could copy a password off
+    // it (rule G6). A fresh group + member of its own, separate from the
+    // roster fixture above (which deliberately carries no email, so that
+    // module's own leadership pick stays a no-op for this mechanism).
+    mod('group leadership · auto-provisioned login (credential modal + copy)');
+    const fxLeaderGroup = await (async () => {
+      const row = await apiPost('/groups', { name: fixtureName('LEADGROUP'), hall_id: await someHallId() });
+      const removeGroup = disposable(`group ${row.name}`, `/groups/${row.id}`);
+      const leaderEmail = `zz-uitest-${STAMP}-${Math.floor(Math.random() * 1e4)}@grace.org`;
+      // The trio picker's options are the group's OWN roster only (leadership
+      // is assigned from among people already in the group) — so the member
+      // has to be on the roster BEFORE the Leader seat can offer them, the
+      // same shape `makeRosteredGroup` above sets up.
+      const member = await makeMember('LEADER', { group_id: row.id, group_position: 'core_member', email: leaderEmail });
+      return {
+        id: row.id,
+        name: row.name,
+        member,
+        email: leaderEmail,
+        remove: async () => { await member.remove(); await removeGroup(); },
+      };
+    })();
+    try {
+      await page.goto(`${BASE}/groups/${fxLeaderGroup.id}`, { waitUntil: 'domcontentloaded' });
+      await page.locator('.trio-pick input[role=combobox]').first().waitFor({ timeout: 20000 });
+      // The FIRST seat is the apex — Leader — the only one of the three this
+      // mechanism ever acts on (`GroupPosition.Leader` specifically, not the
+      // assistant/intern seats beside it).
+      const leaderSeat = page.locator('.trio-pick input[role=combobox]').first();
+      await leaderSeat.click();
+      await page.locator('.combo-list').first().waitFor({ timeout: 8000 });
+      await leaderSeat.fill(fxLeaderGroup.member.name);
+      await w(400);
+      await page.locator('.combo-list .combo-option').first().click();
+      await w(1200);
+
+      const credModal = page.locator('.modal:has-text("Login created")');
+      await credModal.first().waitFor({ timeout: 8000 });
+      check('promoting a member with an email to 小组长 shows a credential modal, once',
+        (await credModal.count()) === 1);
+      const credBody = await credModal.first().innerText();
+      check('…naming the email the login was created for', credBody.includes(fxLeaderGroup.email), credBody.slice(0, 200));
+      // A password long enough to satisfy this app's own 8-char minimum with
+      // real margin (rule G6) — not asserting the exact string, since it is
+      // randomly generated.
+      check('…and showing a generated password of a sensible length',
+        /Password/i.test(credBody) && (credBody.match(/[A-Za-z0-9]{12,}/) || []).length > 0,
+        credBody.slice(0, 200));
+
+      const assignedLeader = await apiGet(`/groups/${fxLeaderGroup.id}`);
+      check('…and the member is actually saved as this group’s leader',
+        (assignedLeader.members || []).find((m) => m.id === fxLeaderGroup.member.id)?.group_position === 'leader',
+        JSON.stringify((assignedLeader.members || []).map((m) => m.group_position)));
+
+      // The copy button answers the tap either way (rule G4's `copyText` —
+      // through `navigator.clipboard` alone a denied/unsupported permission
+      // runs no callback and the button reads as dead), the same tolerant
+      // assertion the sign-up link's own copy button uses above.
+      await credModal.first().locator('button:has-text("Copy")').first().click();
+      const copyToasted = await page.locator('.toast').first().waitFor({ timeout: 5000 }).then(() => true, () => false);
+      check('the copy button answers the tap, copied or not', copyToasted);
+
+      await credModal.first().locator('button:has-text("Close")').first().click();
+      await w(300);
+      check('closing the credential modal dismisses it', (await page.locator('.modal').count()) === 0);
+    } finally {
+      await fxLeaderGroup.remove();
     }
 
     /* -- services · one roll-call sheet ------------------------------------ */
@@ -1168,9 +1303,85 @@ async function main() {
         /09:30/.test(activityBody) && /ZZ_UITEST car park/.test(activityBody),
         activityBody.replace(/\s+/g, ' ').slice(0, 200));
       await shot('06b-activity-detail');
+
+      // Editing this activity: `kind` is fixed at creation now (0024) — no
+      // shape picker in the edit form, and the meeting point pairs with the
+      // congregation select in one row (it used to stand alone).
+      await page.locator('button:has-text("Edit activity")').first().click();
+      await page.locator('.modal').first().waitFor({ timeout: 15000 });
+      check('editing an activity offers no shape picker any more',
+        (await page.locator('.modal [role="group"][aria-label="Shape"]').count()) === 0);
+      check('…it shows the shape as plain read-only text instead',
+        (await page.locator('.modal .field:has(.field-label:has-text("Shape")) input[disabled]').count()) === 1);
+      check('the edit form also offers a gender-restriction field',
+        (await page.locator('.modal .field:has(.field-label:has-text("Restricted to")) select').count()) === 1);
+      const actFormRows = page.locator('.modal .form-row');
+      const actRowTexts = await actFormRows.allInnerTexts();
+      check('the meeting point and the congregation select now share one row',
+        actRowTexts.some((t2) => /Meeting point/.test(t2) && /Congregation/.test(t2)),
+        JSON.stringify(actRowTexts));
+      await page.locator('.modal button:has-text("Cancel")').click();
+
+      // Editing the course fixture: same kind-lock, and its own row-pairing —
+      // sessions beside the congregation select, start/end date together.
+      await page.goto(`${BASE}/trainings/${fxTraining.id}`, { waitUntil: 'domcontentloaded' });
+      await page.locator('button:has-text("Edit training")').first().click();
+      await page.locator('.modal').first().waitFor({ timeout: 15000 });
+      check('editing a course offers no shape picker any more',
+        (await page.locator('.modal [role="group"][aria-label="Shape"]').count()) === 0);
+      const courseFormRows = page.locator('.modal .form-row');
+      const courseRowTexts = await courseFormRows.allInnerTexts();
+      check('sessions and the congregation select now share one row',
+        courseRowTexts.some((t2) => /Sessions/.test(t2) && /Congregation/.test(t2)),
+        JSON.stringify(courseRowTexts));
+      check('…and start date / end date share their own separate row',
+        courseRowTexts.some((t2) => /Start date/.test(t2) && /End date/.test(t2)),
+        JSON.stringify(courseRowTexts));
+      await page.locator('.modal button:has-text("Cancel")').click();
     } finally {
       await fxActivity.remove();
       await fxTraining.remove();
+    }
+
+    /* -- trainings: CREATE mode still offers the shape picker, plus a
+       direct QR upload chained onto the row the moment it exists -------- */
+    mod('trainings & activities · create-mode shape picker · QR upload at creation');
+    {
+      await page.goto(`${BASE}/trainings`, { waitUntil: 'domcontentloaded' });
+      await page.locator('button:visible:has-text("Add training")').first().click();
+      await page.locator('.modal').first().waitFor({ timeout: 15000 });
+      check('CREATE still offers the shape picker (only an edit locks it)',
+        (await page.locator('.modal [role="group"][aria-label="Shape"]').count()) === 1);
+
+      const field = (label) =>
+        page.locator('.modal .field', { has: page.locator('.field-label', { hasText: label }) }).locator('input, select, textarea').first();
+      const qrCourseName = fixtureName('QRCOURSE');
+      await field('Training name').fill(qrCourseName);
+      // A fee turns the payment block — and the QR picker — on.
+      await field('Sign-up fee (RM)').fill('20');
+      const qrInput = page.locator('.modal .field', { has: page.locator('.field-label', { hasText: 'Payment QR' }) }).locator('input[type=file]');
+      check('the QR picker appears during CREATE, not only after the row is saved',
+        (await qrInput.count()) === 1);
+      const qrPng = Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+        'base64',
+      );
+      await qrInput.setInputFiles({ name: 'qr.png', mimeType: 'image/png', buffer: qrPng });
+      // compressImage() decodes and re-encodes the picked file client-side —
+      // give it a beat before Save is pressed.
+      await w(400);
+      await page.locator('.modal button:has-text("Save")').click();
+      await page.waitForURL(/\/trainings\/[0-9a-f-]+/, { timeout: 20000 });
+      const qrTrainingId = page.url().match(/trainings\/([0-9a-f-]+)/)?.[1];
+      check('the training was created', !!qrTrainingId, page.url());
+      if (qrTrainingId) {
+        const removeQrTraining = disposable(`training ${qrCourseName}`, `/trainings/${qrTrainingId}`);
+        const created = await apiGet(`/trainings/${qrTrainingId}`);
+        check('…and its payment QR was chained onto it in the same action, one request after the other',
+          typeof created?.payment_qr_url === 'string' && created.payment_qr_url.length > 0,
+          String(created?.payment_qr_url));
+        await removeQrTraining();
+      }
     }
 
     /* -- 报名费: the fee fields, and the receipt behind an approval -------- */
@@ -1296,6 +1507,12 @@ async function main() {
     mod('forty days · progress dialog');
     const fxPair = await makePair();
     try {
+      // A staff remark, set directly (the point of C1's field is that AddPairModal
+      // can also write it at creation — this covers the PATCH half of the same
+      // column, and gives the overview table something real to show).
+      const pairRemark = 'ZZ_UITEST 进度良好';
+      await ctx.request.patch(`${BASE}/api/discipleship/pairs/${fxPair.id}`, { data: { remark: pairRemark } });
+
       await page.goto(`${BASE}/discipleship`, { waitUntil: 'domcontentloaded' });
       await page.locator('.chip', { hasText: 'Active' }).first().waitFor({ timeout: 20000 });
       await page.locator('.chip', { hasText: 'Completed' }).first().click();
@@ -1303,19 +1520,109 @@ async function main() {
       await page.locator('.chip', { hasText: 'Active' }).first().click();
       await w(400);
       check('the relay chart state filter switches', true);
+
+      // The pastor-overview table: mentor and trainee are now their OWN
+      // columns (not one combined "trainee ← mentor" cell), and a Remark
+      // column sits right before the actions column. This table is
+      // `.only-desktop`, hidden at this suite's phone viewport, so the check
+      // reads textContent (DOM-only) rather than innerText (visibility-aware).
+      const theadThs = page.locator('.only-desktop table thead th');
+      const headerTexts = (await theadThs.allTextContents()).map((s) => s.trim());
+      check('the pastor-overview table splits mentor and trainee into separate columns',
+        headerTexts.includes('Trainee') && headerTexts.includes('Mentor'), JSON.stringify(headerTexts));
+      check('…and a Remark column sits immediately before the actions column',
+        headerTexts.length >= 2 && headerTexts[headerTexts.length - 2] === 'Remark', JSON.stringify(headerTexts));
+      const remarkCell = page.locator('.only-desktop table tbody tr', { has: page.locator(`text=${fxPair.traineeName}`) })
+        .locator('.cell-remark');
+      check('…and this pair’s row shows the remark that was set',
+        (await remarkCell.first().textContent())?.trim() === pairRemark,
+        await remarkCell.first().textContent());
+
       const pairTile = page.locator('.mtile', { hasText: fxPair.traineeName });
       await pairTile.first().waitFor({ timeout: 20000 });
       check('a created pair appears in the pastor overview', (await pairTile.count()) === 1);
+      check('…and the mobile tile shows the remark too',
+        (await pairTile.first().innerText()).includes(pairRemark));
       await pairTile.first().click();
       await page.locator('.modal .day-cell').first().waitFor({ timeout: 15000 });
       check('opening a pair shows the 40-day grid', (await page.locator('.modal .day-cell').count()) >= 40);
+
+      // The pair-level remark is editable right here too, pre-filled with
+      // what was just set — not merely displayed.
+      const modalRemark = page.locator('.modal .field', { has: page.locator('.field-label', { hasText: 'Remark' }) }).locator('textarea');
+      check('the remark is editable inside the progress dialog, pre-filled',
+        (await modalRemark.inputValue()) === pairRemark);
+
       await page.locator('.modal .day-cell').first().click();
       await w(400);
       check("clicking a day shows that day's entry", /Day\s*1\b/.test(await page.locator('.modal').innerText()));
+
+      // The day entry is now EDITABLE — a checkbox, notes, and entry
+      // date/time — not a read-only badge. Nothing here auto-saves.
+      check('a day cell offers a completed checkbox and entry date/time fields',
+        (await page.locator('.modal input[type=checkbox]').count()) === 1 &&
+          (await page.locator('.modal input[type=date]').count()) === 1 &&
+          (await page.locator('.modal input[type=time]').count()) === 1);
+      const dayNote = 'ZZ_UITEST day one note';
+      await page.locator('.modal textarea').last().fill(dayNote);
+      await page.locator('.modal input[type=checkbox]').first().check();
       await shot('07-pair-modal');
+
+      // Footer is exactly one row: Delete, Share, Save — no separate "Open
+      // form" any more, since this dialog can now fill in an entry itself.
+      const footerLabels = (await page.locator('.modal .modal-actions button').allInnerTexts()).map((s) => s.trim());
+      check('the footer is one row — Delete, Share, Save',
+        footerLabels.some((l) => /Delete/i.test(l)) &&
+          footerLabels.some((l) => /Copy link/i.test(l)) &&
+          footerLabels.some((l) => /^Save$/i.test(l)),
+        JSON.stringify(footerLabels));
+      check('…and "Open form" is gone — Share is the only way to the public link now',
+        !footerLabels.some((l) => /Open form/i.test(l)), JSON.stringify(footerLabels));
+
+      await page.locator('.modal button:has-text("Save")').click();
+      const saveToasted = await page.locator('.toast').first().waitFor({ timeout: 5000 }).then(() => true, () => false);
+      check('saving the day entry and the remark together answers with a toast', saveToasted);
+      await w(500);
+
+      // Reopen and confirm it actually persisted — Save must not have been a
+      // no-op that only looked like it worked.
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await page.locator('.mtile', { hasText: fxPair.traineeName }).first().waitFor({ timeout: 20000 });
+      await page.locator('.mtile', { hasText: fxPair.traineeName }).first().click();
+      await page.locator('.modal .day-cell').first().waitFor({ timeout: 15000 });
+      check('the day is marked done after reload', (await page.locator('.modal .day-cell.done').count()) >= 1);
+      await page.locator('.modal .day-cell').first().click();
+      await w(400);
+      check('…and the note that was typed actually persisted',
+        (await page.locator('.modal textarea').last().inputValue()) === dayNote);
+
       await page.locator('.modal .icon-btn').first().click();
       await w(300);
       check('✕ closes the dialog', (await page.locator('.modal').count()) === 0);
+
+      // The pair reads as one sentence ("Led by X" / "Leading X") on the
+      // MEMBER's own detail page now, not a bare "Mentor"/"Trainee" badge.
+      await page.goto(`${BASE}/members/${fxPair.traineeId}`, { waitUntil: 'domcontentloaded' });
+      await page.locator('.content:has-text("Forty Days")').first().waitFor({ timeout: 15000 });
+      const traineePageBody = await page.locator('.content').innerText();
+      check('the trainee’s own page reads the pair as "Led by <mentor>"',
+        traineePageBody.includes(`Led by ${fxPair.mentorName}`) &&
+          !traineePageBody.includes('Mentor') && !traineePageBody.includes('Trainee'));
+
+      // AddPairModal (C1): mentor and trainee comboboxes sit in ONE row now,
+      // divider "➜" between them, plus an optional remark field — replacing
+      // the old vertical stack with a centred "↓".
+      await page.goto(`${BASE}/discipleship`, { waitUntil: 'domcontentloaded' });
+      await page.locator('button:visible:has-text("Add pair")').first().click();
+      await page.locator('.modal').first().waitFor({ timeout: 15000 });
+      const pickerRow = page.locator('.modal .flex.items-end.gap-10.flex-wrap');
+      check('mentor and trainee sit in one row, not stacked with a ↓ divider',
+        (await pickerRow.count()) === 1 &&
+          (await pickerRow.locator('.combo').count()) === 2 &&
+          /➜/.test(await pickerRow.innerText()));
+      check('the add-pair form also offers a remark field',
+        (await page.locator('.modal .field', { has: page.locator('.field-label', { hasText: 'Remark' }) }).locator('textarea').count()) === 1);
+      await page.locator('.modal button:has-text("Cancel")').click();
     } finally {
       await fxPair.remove();
     }
@@ -1350,6 +1657,113 @@ async function main() {
       check('…and the church’s module survived both attempts',
         afterModules.find((p) => p.id === moduleId)?.total_days === liveModules[0].total_days,
         String(afterModules.find((p) => p.id === moduleId)?.total_days));
+    }
+
+    /* -- happiness groups: term → group → roster → weekly attendance ------ */
+    // Unlike 守望, a term is a first-class, repeatable entity with full CRUD —
+    // so this module drives term creation and group creation THROUGH THE UI
+    // (not pre-seeded over the API, the way the life-group fixture is), then
+    // the roster Combobox and the week-by-week tick the same way the life
+    // group's own column is driven above: on this run's own fixture, never a
+    // week that could be somebody's real attendance.
+    mod('happiness groups · term → group → roster → weekly attendance');
+    const fxHappyMember = await makeMember('HAPPY');
+    const happyTermNo = Math.floor(Date.now() / 1000);
+    const happyTermName = fixtureName('TERM');
+    const happyGroupName = fixtureName('GROUP');
+    let happyTermId = null;
+    try {
+      /* -- term, created through the UI ----------------------------------- */
+      await page.goto(`${BASE}/happiness`, { waitUntil: 'domcontentloaded' });
+      await page.locator('button:visible:has-text("Add term")').first().waitFor({ timeout: 20000 });
+      await page.locator('button:visible:has-text("Add term")').first().click();
+      await page.locator('.modal').waitFor({ timeout: 8000 });
+      // Term number, then weeks — both plain number inputs in that order.
+      await page.locator('.modal input[type=number]').first().fill(String(happyTermNo));
+      // The name field is the modal's only untyped text input.
+      await page.locator('.modal input:not([type=number]):not([type=date])').first().fill(happyTermName);
+      await page.locator('.modal button:has-text("Save")').first().click();
+      await w(1500);
+      const termTile = page.locator('.mtile', { hasText: `Term ${happyTermNo}` });
+      await termTile.first().waitFor({ timeout: 20000 });
+      check('creating a term through the UI adds it to the list', (await termTile.count()) === 1);
+      const termsAfter = await apiGet('/happiness/terms');
+      happyTermId = termsAfter.find((t) => t.term_no === happyTermNo)?.id ?? null;
+      check('…and it is readable from the API, weeks defaulting to 8',
+        !!happyTermId && termsAfter.find((t) => t.id === happyTermId)?.weeks === 8,
+        JSON.stringify(termsAfter.find((t) => t.term_no === happyTermNo)));
+
+      /* -- group, under that term, created through the UI ------------------ */
+      await termTile.first().click();
+      await page.waitForURL(/\/happiness\/[0-9a-f-]+/, { timeout: 15000 });
+      await page.locator('button:visible:has-text("Add group")').first().waitFor({ timeout: 20000 });
+      check('opening a term shows its own facts (period number, weeks)',
+        (await page.locator('.content').innerText()).includes(String(happyTermNo)));
+      await page.locator('button:visible:has-text("Add group")').first().click();
+      await page.locator('.modal').waitFor({ timeout: 8000 });
+      await page.locator('.modal input').first().fill(happyGroupName);
+      const groupHallSel = page.locator('.modal select').first();
+      const groupHallOpt = await groupHallSel.locator('option').nth(1).getAttribute('value').catch(() => null);
+      if (groupHallOpt) await groupHallSel.selectOption(groupHallOpt);
+      await page.locator('.modal button:has-text("Save")').first().click();
+      await w(1500);
+      const groupTile = page.locator('.mtile', { hasText: happyGroupName });
+      await groupTile.first().waitFor({ timeout: 20000 });
+      check('creating a group through the UI adds it to the term’s own list', (await groupTile.count()) === 1);
+
+      /* -- group detail: roster + week-numbered attendance sheet ---------- */
+      await groupTile.first().click();
+      await page.waitForURL(/\/happiness\/group\/[0-9a-f-]+/, { timeout: 15000 });
+      const happyGroupId = page.url().match(/\/happiness\/group\/([0-9a-f-]+)/)?.[1] ?? null;
+      check('…and its own detail page opens', !!happyGroupId);
+
+      // Roster add via the shared Combobox (rule G4) — never a native <select>.
+      const rosterCombo = page.locator('.combo input[role=combobox]').first();
+      await rosterCombo.click();
+      await rosterCombo.fill(fxHappyMember.name);
+      await w(400);
+      await page.locator('.combo-list .combo-option').first().waitFor({ timeout: 8000 });
+      check('the roster combobox offers 教会成员 and 福友 with no role filtering — one option matches',
+        (await page.locator('.combo-list .combo-option').count()) === 1);
+      await page.locator('.combo-list .combo-option').first().click();
+      await w(300);
+      await page.locator('button:visible:has-text("Add member")').first().click();
+      await w(1200);
+      check('adding a roster member via the Combobox shows them on the roster',
+        (await page.locator(`table td:has-text("${fxHappyMember.name}")`).count()) > 0);
+
+      // The sheet's columns are WEEK NUMBERS, never dates — the one roll call
+      // in the app that isn't date-based.
+      const weekHeads = page.locator('table.sheet-table thead th', { hasText: 'Week' });
+      check('the attendance sheet has a column per week (Week N), never a calendar date',
+        (await weekHeads.count()) === 8, `${await weekHeads.count()} week column(s)`);
+
+      const rosterRow = page.locator('table.sheet-table tbody tr', { hasText: fxHappyMember.name });
+      await rosterRow.first().waitFor({ timeout: 20000 });
+      // Week 1 is the first tick box in the row — the member-name cell carries
+      // no checkbox of its own.
+      const week1Tick = rosterRow.locator('input[type=checkbox]').first();
+      await week1Tick.click();
+      await w(1500);
+      const attAfterTick = happyGroupId ? await apiGet(`/happiness/groups/${happyGroupId}/attendance`) : { records: [] };
+      check('ticking week 1 records that member present that week',
+        (attAfterTick.records || []).some((r) => r.week_number === 1 && r.member_id === fxHappyMember.id),
+        JSON.stringify(attAfterTick.records));
+      await week1Tick.click();
+      await w(1500);
+      const attAfterUntick = happyGroupId ? await apiGet(`/happiness/groups/${happyGroupId}/attendance`) : { records: [] };
+      check('unticking it DELETES the row — a presence-only table, no absence to store',
+        !(attAfterUntick.records || []).some((r) => r.week_number === 1 && r.member_id === fxHappyMember.id),
+        JSON.stringify(attAfterUntick.records));
+    } finally {
+      // Deleting the term cascades its group, roster and every week of
+      // attendance — nothing else here needs its own teardown.
+      if (happyTermId) {
+        const gone = await apiDelete(`/happiness/terms/${happyTermId}`);
+        console.log(`  ↳ cleanup: ${gone ? 'deleted' : 'COULD NOT DELETE'} happiness term ${happyTermName} (cascades its group)`);
+        if (!gone) console.log(`  ↳ purge will retry: /happiness/terms/${happyTermId}`);
+      }
+      await fxHappyMember.remove();
     }
 
     /* -- user management -------------------------------------------------- */
@@ -1444,6 +1858,7 @@ async function main() {
     mod('church settings · add-on modules');
     const moduleStatesBefore = await apiGet('/church/modules');
     const discBefore = moduleStatesBefore.find((m) => m.key === 'discipleship');
+    const happyBefore = moduleStatesBefore.find((m) => m.key === 'happiness');
     // The `finally` below covers a failed check; this covers the process dying
     // outright, which runs no `finally` at all.
     if (discBefore) {
@@ -1453,6 +1868,17 @@ async function main() {
         if (current && current.enabled === discBefore.enabled) return;
         const r = await ctx.request.patch(`${BASE}/api/church/modules/discipleship`, {
           data: { enabled: discBefore.enabled },
+        });
+        if (!r.ok()) throw new Error(`restore failed: ${r.status()}`);
+      });
+    }
+    if (happyBefore) {
+      restoreLater(`the happiness module to enabled=${happyBefore.enabled}`, async () => {
+        const now = await ctx.request.get(`${BASE}/api/church/modules`).then((r) => r.json());
+        const current = now?.find?.((m) => m.key === 'happiness');
+        if (current && current.enabled === happyBefore.enabled) return;
+        const r = await ctx.request.patch(`${BASE}/api/church/modules/happiness`, {
+          data: { enabled: happyBefore.enabled },
         });
         if (!r.ok()) throw new Error(`restore failed: ${r.status()}`);
       });
@@ -1615,6 +2041,55 @@ async function main() {
           (await page.locator('.sidebar').innerText()).includes('Forty Days') &&
             !/not enabled/i.test(await page.locator('.content').innerText()));
       }
+
+      // The same on/off cycle, for 幸福小组 — a second, independent module
+      // switch that must not disturb 守望's own state (asserted above).
+      await catalogRow('Happiness Groups').locator('.switch').first()
+        .waitFor({ timeout: 20000 }).catch(() => {});
+      check('the catalog lists the Happiness Groups add-on with a switch',
+        (await catalogRow('Happiness Groups').locator('.switch').count()) === 1);
+      if (!happyBefore?.enabled) check('happiness module already off — toggle cycle skipped', true);
+      if (happyBefore?.enabled) {
+        await catalogRow('Happiness Groups').locator('.switch').first().click();
+        await page.locator('.modal-backdrop').last().waitFor({ timeout: 8000 });
+        const confirmCopy = await page.locator('.modal-backdrop').last().innerText();
+        check('switching off Happiness Groups asks first, and says what disappears',
+          confirmCopy.includes('Happiness Groups') && /sidebar/i.test(confirmCopy),
+          confirmCopy.replace(/\s+/g, ' ').slice(0, 140));
+        await page.locator('.modal-backdrop').last().locator('button:has-text("Turn off module")').last().click();
+        await w(1500);
+        const offStates = await apiGet('/church/modules');
+        check('confirming stores the happiness module as off',
+          offStates.find((m) => m.key === 'happiness')?.enabled === false, JSON.stringify(offStates));
+        const blocked = await ctx.request.get(`${BASE}/api/happiness/terms`);
+        check('a disabled happiness module’s API path is refused', blocked.status() === 404, `status ${blocked.status()}`);
+        await page.goto(`${BASE}/members`, { waitUntil: 'domcontentloaded' });
+        await page.locator('.mtile').first().waitFor({ timeout: 20000 });
+        check('the nav loses the disabled happiness entry',
+          !(await page.locator('.sidebar').innerText()).includes('Happiness Groups'));
+        await page.goto(`${BASE}/happiness`, { waitUntil: 'domcontentloaded' });
+        await page.locator('.empty').first().waitFor({ timeout: 20000 });
+        const offPage = await page.locator('.content').innerText();
+        check('going straight to its URL explains it is not enabled',
+          /not enabled/i.test(offPage) && !/error/i.test(offPage),
+          offPage.replace(/\s+/g, ' ').slice(0, 120));
+
+        await page.goto(`${BASE}/church`, { waitUntil: 'domcontentloaded' });
+        await catalogRow('Happiness Groups').locator('.switch').first().waitFor({ timeout: 20000 });
+        await catalogRow('Happiness Groups').locator('.switch').first().click();
+        await w(1500);
+        check('turning it back on needs no confirmation',
+          (await page.locator('.modal-backdrop').count()) === 0);
+        const onStates = await apiGet('/church/modules');
+        check('the happiness module is stored as on again',
+          onStates.find((m) => m.key === 'happiness')?.enabled === true, JSON.stringify(onStates));
+        await page.goto(`${BASE}/happiness`, { waitUntil: 'domcontentloaded' });
+        await page.locator('h1').first().waitFor({ timeout: 20000 });
+        await w(1200);
+        check('the nav entry and the page come back',
+          (await page.locator('.sidebar').innerText()).includes('Happiness Groups') &&
+            !/not enabled/i.test(await page.locator('.content').innerText()));
+      }
       await shot('08a-church');
     } finally {
       // Belt and braces: whatever happened above, the church is left running
@@ -1641,6 +2116,21 @@ async function main() {
             .catch(() => false);
           console.log(`  ↳ cleanup: ${restored ? 'restored' : 'COULD NOT RESTORE'} the discipleship module to enabled=${discBefore.enabled}`);
           check('the add-on module was left as it was found', restored, `enabled=${discBefore.enabled}`);
+        }
+      }
+      if (happyBefore) {
+        const now = await ctx.request
+          .get(`${BASE}/api/church/modules`)
+          .then((r) => r.json())
+          .catch(() => null);
+        const current = now?.find?.((m) => m.key === 'happiness');
+        if (!current || current.enabled !== happyBefore.enabled) {
+          const restored = await ctx.request
+            .patch(`${BASE}/api/church/modules/happiness`, { data: { enabled: happyBefore.enabled } })
+            .then((r) => r.ok())
+            .catch(() => false);
+          console.log(`  ↳ cleanup: ${restored ? 'restored' : 'COULD NOT RESTORE'} the happiness module to enabled=${happyBefore.enabled}`);
+          check('the happiness add-on module was left as it was found', restored, `enabled=${happyBefore.enabled}`);
         }
       }
     }
@@ -1686,7 +2176,7 @@ async function main() {
     const halls = await (await ctx.request.get(`${BASE}/api/halls`)).json();
     const expectSwitcher = Array.isArray(halls) && halls.length > 1;
 
-    const LIST_PAGES = ['/members', '/groups', '/events', '/trainings', '/discipleship', '/settings'];
+    const LIST_PAGES = ['/members', '/groups', '/events', '/trainings', '/discipleship', '/happiness', '/settings'];
     const strays = [];
     const missingDrawerHall = [];
     const noBar = [];
@@ -1834,6 +2324,27 @@ async function main() {
 
     /* -- interface language ----------------------------------------------- */
     mod('interface language');
+
+    // The DEFAULT language — no session, no account, no cached choice — is
+    // now Chinese (0025: the DB column's own DEFAULT flipped from 'en' to
+    // 'zh', and DEFAULT_LANGUAGE in packages/shared with it). A brand-new
+    // browser context has neither a cookie nor a localStorage entry, so
+    // /login has nothing to fall back on but that default.
+    {
+      const fresh = await browser.newContext({ viewport: { width: 402, height: 874 } });
+      try {
+        const freshPage = await fresh.newPage();
+        await freshPage.goto(`${BASE}/login`, { waitUntil: 'domcontentloaded' });
+        await freshPage.locator('button[type=submit]').first().waitFor({ timeout: 20000 });
+        const freshBody = await freshPage.locator('body').innerText();
+        check('a fresh session with no language chosen renders /login in Chinese by default',
+          /登录/.test(freshBody) && !/Sign in/.test(freshBody),
+          freshBody.replace(/\s+/g, ' ').slice(0, 160));
+      } finally {
+        await fresh.close();
+      }
+    }
+
     // The language is a per-account setting, so switch this account's own and
     // confirm the whole shell re-renders in it (then switch straight back).
     const meRes = await ctx.request.get(`${BASE}/api/auth/me`);
@@ -1891,20 +2402,55 @@ async function main() {
     const hallSel = page.locator('.modal select').first();
     const hallOpt = await hallSel.locator('option').nth(1).getAttribute('value');
     if (hallOpt) await hallSel.selectOption(hallOpt);
-    /* 服侍岗位 (migration 0019) — the shared TagsInput, entered the way a tag
-       is: type, Enter, and a chip appears. The ministry is fixture-named, so
-       the filter assertion below can look for a value only this run put there,
-       and it leaves with the member. */
+    /* 访客 + 推荐人 (migration 0021) — the fifth church role has to be on offer
+       in the form that writes one, and the referrer is a Combobox (never a
+       `<select>`, rule G4) whose default is an explicit 无推荐人 rather than an
+       empty field. */
+    check('the member form offers 访客 as a church role',
+      (await page.locator('.modal select option[value="visitor"]').count()) === 1);
+    const referrerBox = page.locator('.modal input[role="combobox"]');
+    check('…and a 推荐人 picker that is a searchable member combobox',
+      (await referrerBox.count()) === 1);
+    if (await referrerBox.count())
+      check('…defaulting to 无推荐人 rather than to an empty field',
+        (await referrerBox.inputValue()) === 'No referral', await referrerBox.inputValue());
+
+    /* 服侍岗位 (migration 0019) — the shared TagsInput. Typed and then SAVED
+       WITHOUT pressing Enter, which is the ordinary way to use it and the path
+       that used to lose the value silently: leaving the field is what commits
+       the chip (on a phone the keyboard's key says 完成, not Enter). The
+       ministry is fixture-named, so the filter assertion below can look for a
+       value only this run put there, and it leaves with the member. */
     const testMinistry = 'ZZ_UITEST_服侍';
     const servingBox = page.locator('.modal input[placeholder*="Worship"]');
     check('the add-member form offers a 服侍岗位 field', (await servingBox.count()) === 1);
     if (await servingBox.count()) {
       await servingBox.fill(testMinistry);
-      await servingBox.press('Enter');
+      // Leaving the field, and nothing else — no Enter anywhere in this block.
+      await page.locator('.modal input').first().click();
       await w(200);
-      check('a ministry typed into it becomes a chip',
+      check('a ministry typed into it becomes a chip when the field is left',
         (await page.locator(`.modal .chip:has-text("${testMinistry}")`).count()) === 1);
     }
+    // Choosing a life group reveals a "Life Group Join Date" field — a fact
+    // separate from 来访日期/joined_at (migration 0023).
+    const groupSel = page.locator('.modal select').nth(1);
+    const groupOpt = await groupSel.locator('option').nth(1).getAttribute('value');
+    if (groupOpt) {
+      await groupSel.selectOption(groupOpt);
+      await w(300);
+      check('choosing a life group reveals a "Life Group Join Date" field',
+        (await page.locator('.modal label.field-label:has-text("Life Group Join Date")').count()) === 1);
+      // Back to ungrouped — this fixture member has no business in a real group.
+      await groupSel.selectOption('');
+      await w(200);
+    }
+    // 备注/Remark — new on the ADD form (it was edit-only before); the members
+    // list itself trades its old "Joined" column for this one.
+    const remarkText = `ZZ_UITEST_备注 ${testName}`;
+    const notesBox = page.locator('.modal textarea');
+    check('the add-member form offers a remark/notes field', (await notesBox.count()) === 1);
+    if (await notesBox.count()) await notesBox.fill(remarkText);
     await page.locator('.modal button:has-text("Save")').first().click();
     await w(1800);
     await page.fill('input[placeholder*="Search"]', testName);
@@ -1915,14 +2461,28 @@ async function main() {
     // the one just saved has to be an option on the page bar.
     check('the members page offers a ministry filter carrying it',
       (await page.locator(`.page-bar-filters select option[value="${testMinistry}"]`).count()) === 1);
+    // The list traded its "Joined" column for "Remark" — checked in the DOM
+    // rather than by visibility, since this suite runs at one phone viewport
+    // where the desktop table is `display:none` but still present.
+    check('the members list has traded its "Joined" column for a "Remark" one',
+      (await page.locator('th:has-text("Joined")').count()) === 0 &&
+        (await page.locator('th:has-text("Remark")').count()) === 1);
+    if (created) {
+      check('the new member’s tile shows the remark (truncated, not the old joined date)',
+        (await page.locator(`.mtile:has-text("${testName}")`).first().locator('.cell-remark').count()) === 1);
+    }
 
     if (created) {
       // capture id for API-fallback cleanup
       await page.locator(`.mtile:has-text("${testName}")`).first().click();
       await page.waitForURL(/\/members\/[0-9a-f-]+/, { timeout: 15000 });
       createdMemberId = page.url().match(/\/members\/([0-9a-f-]+)/)?.[1] ?? null;
+      // The server's answer, not the form's state: this is what proves the
+      // ministry survived a save that never saw an Enter key.
       check('the member’s profile shows the ministry as a badge',
         (await page.locator(`.fact .badge:has-text("${testMinistry}")`).count()) === 1);
+      check('…and the remark under its own "Notes" section',
+        (await page.locator('.content').innerText()).includes(remarkText));
       await page.locator('button:visible:has-text("Delete")').first().click();
       await page.locator('.modal-backdrop').waitFor({ timeout: 8000 });
       await page.locator('.modal-backdrop button:has-text("Delete")').last().click();

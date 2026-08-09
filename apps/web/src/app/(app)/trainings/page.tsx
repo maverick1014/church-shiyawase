@@ -5,7 +5,7 @@ import { useMemo, useState } from 'react';
 import { useFetch } from '@/lib/hooks';
 import { api } from '@/lib/api';
 import { usePageChrome, useMe } from '@/components/AppShell';
-import { ErrorBanner, PageBar, SkeletonCards, SkeletonScreen, useConfirm, useToast } from '@/components/ui';
+import { ErrorBanner, PageBar, RoleRestricted, SkeletonCards, SkeletonScreen, useConfirm, useToast } from '@/components/ui';
 import { TrainingModal } from '@/components/TrainingModal';
 import { can } from '@/lib/perms';
 import { TrainingRow } from '@/lib/types';
@@ -18,7 +18,7 @@ import {
 } from '@/lib/labels';
 import { endOfChurchDate } from '@/lib/time';
 import { useT } from '@/lib/i18n';
-import { TrainingKind } from '@tog/shared';
+import { AccountRole, TrainingKind } from '@tog/shared';
 
 /**
  * 培训&活动 — one catalog, two shapes (`kind`, migration 0014).
@@ -36,7 +36,8 @@ export default function TrainingsPage() {
   const t = useT();
   const toast = useToast();
   const confirm = useConfirm();
-  const perms = can(useMe().role);
+  const me = useMe();
+  const perms = can(me.role);
   const trainings = useFetch<TrainingRow[]>('/trainings');
   // Which shape to CREATE — also what tells the modal apart from an edit.
   const [adding, setAdding] = useState<TrainingKind | null>(null);
@@ -123,6 +124,10 @@ export default function TrainingsPage() {
     </div>
   );
 
+  // `trainings` is not in a group_leader's allowed API prefixes — the nav
+  // entry is already gone; this only catches a bookmark (rule G2).
+  if (me.role === AccountRole.GroupLeader) return <RoleRestricted />;
+
   // The bar and both section headings are static, so they render at once and
   // only the two catalog grids below them wait on the fetch.
   return (
@@ -145,7 +150,7 @@ export default function TrainingsPage() {
 
       <div className="section-label mb-14">
         <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--good)', display: 'inline-block' }} />
-        {t('trainings.active')} <span className="faint" style={{ fontWeight: 400 }}>{t('trainings.activeSub')}</span>
+        {t('trainings.active')}
       </div>
       {trainings.initialLoading ? (
         <SkeletonScreen>
@@ -159,7 +164,7 @@ export default function TrainingsPage() {
 
       <div className="section-label" style={{ margin: '28px 0 14px' }}>
         <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--faint)', display: 'inline-block' }} />
-        {t('trainings.ended')} <span className="faint" style={{ fontWeight: 400 }}>{t('trainings.endedSub')}</span>
+        {t('trainings.ended')}
       </div>
       {/* Bare skeletons, not a second <SkeletonScreen>: the live region above
           has already announced the wait, and announcing it twice is noise. */}

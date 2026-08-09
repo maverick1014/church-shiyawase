@@ -18,6 +18,10 @@ type Me = {
   role: string;
   member: string | null;
   hall: string | null;
+  /** Which group this session is scoped to — meaningful only for
+   *  `group_leader` (migration 0026), the same shape `hall` already has for
+   *  every hall-scoped role. Null for every other role. */
+  group: string | null;
   language: Language;
 };
 
@@ -26,10 +30,11 @@ type Me = {
  * ---------------------------------------------------------------------- */
 const MeContext = createContext<Me | null>(null);
 
-/** The logged-in account (name, role, member, hall). Only valid inside AppShell. */
+/** The logged-in account (name, role, member, hall, group). Only valid inside AppShell. */
 export function useMe(): Me {
   return (
-    useContext(MeContext) ?? { name: '', role: '', member: null, hall: null, language: 'en' }
+    useContext(MeContext) ??
+    { name: '', role: '', member: null, hall: null, group: null, language: 'zh' }
   );
 }
 
@@ -55,7 +60,16 @@ export function usePageChrome(chrome: Chrome, deps: unknown[] = []) {
 /* -------------------------------------------------------------------------
  * Navigation model
  * ---------------------------------------------------------------------- */
-type NavItem = { href: string; label: MessageKey; icon: string; role?: AccountRole };
+type NavItem = {
+  href: string;
+  label: MessageKey;
+  icon: string;
+  role?: AccountRole;
+  /** Hidden from THIS role specifically, on top of (never instead of) the
+   *  server's own path allowlist for it (`GROUP_LEADER_PREFIXES` in
+   *  `api/[...path]/route.ts`) — see `visibleItems`' own comment. */
+  hiddenFor?: AccountRole[];
+};
 const NAV: { section: MessageKey; items: NavItem[] }[] = [
   {
     section: 'nav.section.overview',
@@ -64,16 +78,26 @@ const NAV: { section: MessageKey; items: NavItem[] }[] = [
   {
     section: 'nav.section.care',
     items: [
-      { href: '/members', label: 'nav.members', icon: '👥' },
+      // A group_leader's own scope is one group, not the whole directory —
+      // it reaches its own roster through /groups (narrowed to one row
+      // server-side), never the full members list. 崇拜与祷告会 (services
+      // roll call) is outside its allowlist entirely (`events` is not one
+      // of `GROUP_LEADER_PREFIXES`), so the nav entry goes with it.
+      { href: '/members', label: 'nav.members', icon: '👥', hiddenFor: [AccountRole.GroupLeader] },
       { href: '/groups', label: 'nav.groups', icon: '🔗' },
-      { href: '/events', label: 'nav.events', icon: '📅' },
+      { href: '/events', label: 'nav.events', icon: '📅', hiddenFor: [AccountRole.GroupLeader] },
     ],
   },
   {
     section: 'nav.section.growth',
+    // None of these three is in the group_leader path allowlist either
+    // (`trainings` / `discipleship` / `happiness`) — hidden here for the
+    // same reason `/events` is, so a bookmark is the only way in, and that
+    // lands on `RoleRestricted` (see each page's own guard).
     items: [
-      { href: '/trainings', label: 'nav.trainings', icon: '📖' },
-      { href: '/discipleship', label: 'nav.discipleship', icon: '✝' },
+      { href: '/trainings', label: 'nav.trainings', icon: '📖', hiddenFor: [AccountRole.GroupLeader] },
+      { href: '/discipleship', label: 'nav.discipleship', icon: '✝', hiddenFor: [AccountRole.GroupLeader] },
+      { href: '/happiness', label: 'nav.happiness', icon: '☺', hiddenFor: [AccountRole.GroupLeader] },
     ],
   },
   {
@@ -88,9 +112,14 @@ const NAV: { section: MessageKey; items: NavItem[] }[] = [
 ];
 
 /**
- * Which nav items this session may see. Two independent gates, both of which
+ * Which nav items this session may see. THREE independent gates, all of which
  * the server enforces too (rule G2):
- *  - the account's permission role (`item.role`);
+ *  - the account's permission role (`item.role` — an allowlist: only that
+ *    role sees it);
+ *  - a role this item is explicitly hidden FROM (`item.hiddenFor` — a
+ *    denylist, for a group_leader's narrower reach, which is everyone
+ *    ELSE's normal reach minus a few pages rather than one role's own
+ *    handful of pages);
  *  - whether the add-on module owning that href is switched on for this
  *    church. The mapping href → module comes from the shared registry, so a
  *    new optional module hides itself here without touching this file.
@@ -98,6 +127,7 @@ const NAV: { section: MessageKey; items: NavItem[] }[] = [
 function visibleItems(items: NavItem[], role: string, modules: Record<string, boolean>) {
   return items.filter((it) => {
     if (it.role && it.role !== role) return false;
+    if (it.hiddenFor?.includes(role as AccountRole)) return false;
     const owner = moduleForNavHref(it.href);
     return !owner || modules[owner] !== false;
   });

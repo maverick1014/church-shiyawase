@@ -138,6 +138,74 @@ async function main() {
     ok('…and 服侍岗位 is editable, not write-once',
       JSON.stringify(patch.json?.serving_roles) === JSON.stringify(['招待']),
       JSON.stringify(patch.json?.serving_roles));
+    // 加入小组日期/group_joined_at (migration 0023) — a separate fact from
+    // 来访日期/joined_at, both plain columns with no server-side allow-list, so
+    // a round trip is the only thing worth asserting: the client just has to
+    // send the field and the `select('*')`-style read has to return it.
+    const dated = await req('PATCH', `/api/members/${memberId}`, {
+      ...H,
+      body: { joined_at: '2024-01-07', group_joined_at: '2024-06-01', notes: 'E2E remark' },
+    });
+    ok('joined_at (来访日期) and group_joined_at (加入小组日期) are both writable and independent',
+      dated.status === 200 && dated.json?.joined_at === '2024-01-07' && dated.json?.group_joined_at === '2024-06-01',
+      `status ${dated.status} joined_at=${dated.json?.joined_at} group_joined_at=${dated.json?.group_joined_at}`);
+    ok('…and 备注/notes rides along the same PATCH', dated.json?.notes === 'E2E remark', dated.json?.notes);
+    const readDated = await req('GET', `/api/members/${memberId}`, H);
+    ok('…all three read back from a fresh GET, not just echoed by the PATCH',
+      readDated.json?.joined_at === '2024-01-07' &&
+        readDated.json?.group_joined_at === '2024-06-01' &&
+        readDated.json?.notes === 'E2E remark',
+      JSON.stringify({ joined_at: readDated.json?.joined_at, group_joined_at: readDated.json?.group_joined_at, notes: readDated.json?.notes }));
+    // 地址 + 推荐人 (0021). The referrer is a member id going in and an
+    // embedded name coming back — a self-referencing embed PostgREST has to be
+    // told the direction of, so what is checked is that the RIGHT person comes
+    // back rather than a list of people this one referred.
+    const referred = await req('POST', '/api/members', {
+      ...H,
+      body: {
+        full_name: `E2E被推荐-${Date.now()}`,
+        church_role: 'visitor',
+        status: 'active',
+        hall_id: hallId,
+        address: '12, Jalan Merdeka, 43300 Seri Kembangan, Selangor',
+        referred_by: memberId,
+      },
+    });
+    // The assertion that would have caught the enum being two values short:
+    // 访客 is a value the code offers, so the database has to have it.
+    ok('create a member as 访客 → 200', referred.status === 200 && referred.json?.id,
+      `status ${referred.status} ${JSON.stringify(referred.json).slice(0, 160)}`);
+    const referredId = referred.json?.id;
+    if (referredId) {
+      const read = await req('GET', `/api/members/${referredId}`, H);
+      ok('…and reads back as a visitor', read.json?.church_role === 'visitor', read.json?.church_role);
+      ok('…with the address it was given',
+        read.json?.address === '12, Jalan Merdeka, 43300 Seri Kembangan, Selangor', read.json?.address);
+      ok('…and the 推荐人 embedded as the person who brought them',
+        read.json?.referred_by === memberId && read.json?.referrer?.id === memberId,
+        `${read.json?.referred_by} / ${JSON.stringify(read.json?.referrer)}`);
+      const unrefer = await req('PATCH', `/api/members/${referredId}`, { ...H, body: { referred_by: null } });
+      ok('…and 无推荐人 is a value, not a missing one',
+        unrefer.status === 200 && unrefer.json?.referred_by === null,
+        `status ${unrefer.status} ${unrefer.json?.referred_by}`);
+      // The database refuses this outright; the forms never offer it, and the
+      // import refuses it in words — this is the last line of that defence.
+      ok('a member cannot be their own 推荐人',
+        (await req('PATCH', `/api/members/${referredId}`, { ...H, body: { referred_by: referredId } })).status >= 400);
+      ok('delete the referred member → 200',
+        (await req('DELETE', `/api/members/${referredId}`, H)).status === 200);
+    }
+    // Every church role the app offers, created for real. The code enum and the
+    // database enum are two lists; this is the one place they meet.
+    for (const role of ['pastor', 'deacon', 'co_worker', 'member', 'visitor']) {
+      const mk = await req('POST', '/api/members', {
+        ...H,
+        body: { full_name: `E2E身份${role}-${Date.now()}`, church_role: role, status: 'active', hall_id: hallId },
+      });
+      ok(`church_role '${role}' round-trips`, mk.status === 200 && mk.json?.church_role === role,
+        `status ${mk.status} ${JSON.stringify(mk.json).slice(0, 140)}`);
+      if (mk.json?.id) await req('DELETE', `/api/members/${mk.json.id}`, H);
+    }
     const del = await req('DELETE', `/api/members/${memberId}`, H);
     ok('delete member → 200', del.status === 200);
   }
@@ -166,6 +234,7 @@ async function main() {
   // ---- 聚会点名 (the roll-call sheet) ---------------------------------------
   await rollCallSheet(admin, halls, hallId);
   await groupScopedSheet(admin, halls, hallId);
+  await groupLeaderAccountLifecycle(admin, halls, hallId);
 
   // ---- Groups CRUD (+ weekly attendance) ----------------------------------
   const mkGrp = await req('POST', '/api/groups', { ...H, body: { name: `E2E小组-${Date.now()}`, hall_id: hallId } });
@@ -228,6 +297,9 @@ async function main() {
   // ---- 培训&活动: the ACTIVITY shape --------------------------------------
   await activityShape(admin, members, hallId);
 
+  // ---- 培训&活动: a gender-restricted training (0024) ----------------------
+  await genderRestriction(admin, hallId);
+
   // ---- 培训&活动: a PAID course, from the fee to the receipt ---------------
   await paidTraining(admin, hallId);
 
@@ -270,8 +342,29 @@ async function main() {
     const token = mkPair.json?.form_token;
     if (token) {
       ok('public form GET (no auth) → 200', (await req('GET', `/api/discipleship/form/${token}`)).status === 200);
-      const prog = await req('POST', `/api/discipleship/form/${token}/progress`, { body: { day_number: 1, completed: true } });
-      ok('public form submit progress → 200', prog.status === 200, `status ${prog.status}`);
+      // entry_time (0024) rides beside entry_date exactly the same way, on the
+      // same upsert — a mentor filling in the public form can now say WHEN
+      // that day happened, not just which day.
+      const prog = await req('POST', `/api/discipleship/form/${token}/progress`, {
+        body: { day_number: 1, completed: true, entry_date: '2030-01-05', entry_time: '21:30' },
+      });
+      ok('public form submit progress with entry_time → 200', prog.status === 200, `status ${prog.status}`);
+      ok('…and both entry_date and entry_time were written',
+        String(prog.json?.entry_date).startsWith('2030-01-05') && String(prog.json?.entry_time).startsWith('21:30'),
+        JSON.stringify({ entry_date: prog.json?.entry_date, entry_time: prog.json?.entry_time }));
+    }
+    // remark (0024) is staff's own field on the pair — PATCH-able, and never
+    // touched by the public form above.
+    if (mkPair.json?.id) {
+      const remarked = await req('PATCH', `/api/discipleship/pairs/${mkPair.json.id}`, {
+        ...H,
+        body: { remark: 'E2E备注：进度良好' },
+      });
+      ok('PATCH a pair remark → 200 + stored', remarked.status === 200 && remarked.json?.remark === 'E2E备注：进度良好',
+        `status ${remarked.status} remark=${remarked.json?.remark}`);
+      const reread = await req('GET', `/api/discipleship/pairs/${mkPair.json.id}`, H);
+      ok('…and it reads back on the detail fetch',
+        reread.json?.remark === 'E2E备注：进度良好', String(reread.json?.remark));
     }
     if (mkPair.json?.id) ok('delete pair → 200', (await req('DELETE', `/api/discipleship/pairs/${mkPair.json.id}`, H)).status === 200);
 
@@ -298,6 +391,9 @@ async function main() {
     }
   }
 
+  // ---- Happiness Groups: term → group → roster + by-week attendance -------
+  await happinessGroups(admin, freeMembers, hallId);
+
   // ---- Church record + add-on modules -------------------------------------
   await churchAndModules(admin);
 
@@ -316,9 +412,11 @@ async function main() {
     if (accId) {
       ok('update account role → 200', (await req('PATCH', `/api/accounts/${accId}`, { ...H, body: { account_role: 'admin' } })).status === 200);
       ok('reset account password → 200', (await req('POST', `/api/accounts/${accId}/password`, { ...H, body: { password: 'newPass2026' } })).status === 200);
-      // Interface language: new accounts default to English, only the three
-      // shipped languages are storable, and anything else is a 400.
-      ok('new account defaults to English', mkAcc.json?.language === 'en', String(mkAcc.json?.language));
+      // Interface language: new accounts default to Chinese (0025 — the
+      // DB column's own DEFAULT changed from 'en' to 'zh', matching
+      // DEFAULT_LANGUAGE in packages/shared), only the three shipped
+      // languages are storable, and anything else is a 400.
+      ok('new account defaults to Chinese', mkAcc.json?.language === 'zh', String(mkAcc.json?.language));
       const setZh = await req('PATCH', `/api/accounts/${accId}`, { ...H, body: { language: 'zh' } });
       ok('set account language → 200 + persisted', setZh.status === 200 && setZh.json?.language === 'zh', `status ${setZh.status} ${setZh.json?.language}`);
       const badLang = await req('PATCH', `/api/accounts/${accId}`, { ...H, body: { language: 'fr' } });
@@ -446,6 +544,9 @@ async function memberImport(adminCookie, hallId) {
         { row: 5, full_name: '   ' },
         { row: 6, full_name: `${chinese}-日期`, date_of_birth: '4 May 1990' },
         { row: 7, full_name: `${chinese}-堂会`, hall: '德文堂' },
+        // 推荐人 is a NAME in a file and an id in the row, so a name nobody
+        // answers to is a refusal rather than a null quietly written.
+        { row: 8, full_name: `${chinese}-推荐`, referred_by: 'E2E查无此人' },
       ],
     },
   });
@@ -458,6 +559,7 @@ async function memberImport(adminCookie, hallId) {
   ok('…a row with no Chinese name is skipped', skipped.get(5) === 'name_missing', String(skipped.get(5)));
   ok('…an unreadable date is skipped', skipped.get(6) === 'bad_date', String(skipped.get(6)));
   ok('…an unknown congregation is skipped', skipped.get(7) === 'unknown_hall', String(skipped.get(7)));
+  ok('…and a 推荐人 nobody answers to is skipped', skipped.get(8) === 'unknown_referrer', String(skipped.get(8)));
 
   const found = (await req('GET', `/api/members?q=${encodeURIComponent(chinese)}`, H)).json || [];
   for (const m of found) made.push(m.id);
@@ -488,6 +590,31 @@ async function memberImport(adminCookie, hallId) {
     JSON.stringify(after?.serving_roles) === JSON.stringify(['敬拜', '音响']), JSON.stringify(after?.serving_roles));
   ok('…and there is still only one of them',
     ((await req('GET', `/api/members?q=${encodeURIComponent(chinese)}`, H)).json || []).length === 2);
+
+  // 地址 + 推荐人 through the import. Both people in this file share a Chinese
+  // name, which is exactly the case a referral has to be told to spell out: the
+  // bare name is refused, the pair resolves.
+  const referrals = await req('POST', '/api/members/import', {
+    ...H,
+    body: {
+      hall_id: hallId,
+      rows: [
+        { row: 2, full_name: chinese, english_name: 'Import Two', address: '88, Jalan Damai', referred_by: `${chinese} Import One` },
+        { row: 3, full_name: chinese, english_name: 'Import One', referred_by: chinese },
+      ],
+    },
+  });
+  ok('an import carrying 地址 + 推荐人 → 200', referrals.status === 200, `status ${referrals.status}`);
+  ok('…the ambiguous referral is skipped rather than guessed at',
+    (referrals.json?.skipped || []).some((s) => s.row === 3 && s.issue === 'ambiguous_referrer'),
+    JSON.stringify(referrals.json?.skipped || []));
+  const both = (await req('GET', `/api/members?q=${encodeURIComponent(chinese)}`, H)).json || [];
+  const importTwo = both.find((m) => m.english_name === 'Import Two');
+  const importOne = both.find((m) => m.english_name === 'Import One');
+  ok('…the address the file supplied was written', importTwo?.address === '88, Jalan Damai', importTwo?.address);
+  ok('…and the referral resolved to the member the pair names',
+    importTwo?.referred_by === importOne?.id && importTwo?.referrer?.id === importOne?.id,
+    `${importTwo?.referred_by} / ${JSON.stringify(importTwo?.referrer)}`);
 
   // Refusals that are about the REQUEST rather than about a row.
   ok('an import with no rows → 400',
@@ -525,6 +652,10 @@ async function selfRegistration(adminCookie, hallId) {
   const stamp = Date.now();
   const chinese = `E2E注册-${stamp}`;
   const made = [];
+  // A real member id, so the 推荐人 the body claims below is a value the server
+  // COULD have written — being ignored has to be the allow-list's doing, not a
+  // foreign key happening to fail.
+  const someone = ((await req('GET', '/api/members', H)).json || [])[0]?.id ?? null;
 
   const options = await req('GET', '/api/members/register');
   ok('public GET /members/register → 200 + halls', options.status === 200 && Array.isArray(options.json?.halls),
@@ -541,12 +672,15 @@ async function selfRegistration(adminCookie, hallId) {
       phone: '012-222 2222',
       gender: 'male',
       date_of_birth: '1990-05-04',
+      address: '3, Lorong Damai',
       hall_id: hallId,
       church_role: 'pastor',
       status: 'inactive',
       notes: 'promote me',
       serving_roles: ['敬拜'],
+      referred_by: someone,
       group_id: '00000000-0000-0000-0000-000000000000',
+      group_joined_at: '2024-01-01',
     },
   });
   ok('public registration (no session) → created', join.status === 200 && join.json?.status === 'created',
@@ -562,13 +696,21 @@ async function selfRegistration(adminCookie, hallId) {
   ok('…on the roll, not with the status it asked for', person?.status === 'active', person?.status);
   ok('…with no notes and no life group', !person?.notes && !person?.group_id,
     `${person?.notes} / ${person?.group_id}`);
+  ok('…and no 加入小组日期, refused exactly like a role or a referral',
+    person?.group_joined_at === null, String(person?.group_joined_at));
   // A ministry is something the church hands out, so the allow-list simply does
   // not read the field — the row comes back serving nowhere, not serving 敬拜.
   ok('…and serving nowhere, whatever ministry the body claimed',
     (person?.serving_roles || []).length === 0, JSON.stringify(person?.serving_roles));
+  // Who brought somebody is the CHURCH's record of how they arrived, so the
+  // allow-list does not read the field at all — exactly like `church_role`.
+  ok('…and with no 推荐人, whatever the body claimed',
+    person?.referred_by === null, String(person?.referred_by));
   ok('…and the details it WAS allowed to set',
     person?.phone === '012-222 2222' && person?.gender === 'male' && person?.date_of_birth === '1990-05-04',
     `${person?.phone} / ${person?.gender} / ${person?.date_of_birth}`);
+  ok('…including the address, which is a contact detail like the phone',
+    person?.address === '3, Lorong Damai', person?.address);
 
   // Registering again is the same person: an update, not a twin — and the page
   // is told which, in the same one-word shape.
@@ -686,6 +828,65 @@ async function activityShape(adminCookie, members, hallId) {
   } finally {
     const del = await req('DELETE', `/api/trainings/${id}`, H);
     ok('the activity fixture was deleted', del.status === 200, `status ${del.status}`);
+  }
+}
+
+/**
+ * 性别限制 (0024): a training's `gender` is a real eligibility rule enforced
+ * at enrolment, not a UI-only hint — a mismatched sign-up is REFUSED, not
+ * silently accepted.
+ */
+async function genderRestriction(adminCookie, hallId) {
+  const H = { cookie: adminCookie };
+  const mk = await req('POST', '/api/trainings', {
+    ...H,
+    body: {
+      name: `E2E男生专属-${Date.now()}`,
+      kind: 'activity',
+      is_enrollable: true,
+      starts_on: '2030-04-11',
+      ends_on: '2030-04-11',
+      gender: 'male',
+      hall_id: hallId,
+    },
+  });
+  ok('create a gender-restricted activity → 200 + gender stored',
+    mk.status === 200 && mk.json?.gender === 'male', `status ${mk.status} gender=${mk.json?.gender}`);
+  const id = mk.json?.id;
+  if (!id) return;
+
+  const mkMale = await req('POST', '/api/members', {
+    ...H,
+    body: { full_name: `E2E性别-男-${Date.now()}`, church_role: 'member', status: 'active', gender: 'male', hall_id: hallId },
+  });
+  const mkFemale = await req('POST', '/api/members', {
+    ...H,
+    body: { full_name: `E2E性别-女-${Date.now()}`, church_role: 'member', status: 'active', gender: 'female', hall_id: hallId },
+  });
+  const maleId = mkMale.json?.id;
+  const femaleId = mkFemale.json?.id;
+  ok('gender-restriction fixture members created', !!maleId && !!femaleId,
+    `male=${mkMale.status} female=${mkFemale.status}`);
+
+  try {
+    if (maleId && femaleId) {
+      const mismatched = await req('POST', `/api/trainings/enroll/${id}`, { body: { full_name: mkFemale.json.full_name } });
+      ok('a mismatched-gender sign-up → 400, refused rather than enrolled',
+        mismatched.status === 400, `status ${mismatched.status} ${JSON.stringify(mismatched.json)}`);
+      const stillEmpty = await req('GET', `/api/trainings/${id}`, H);
+      ok('…and nothing was actually enrolled',
+        (stillEmpty.json?.enrollments || []).length === 0,
+        `${(stillEmpty.json?.enrollments || []).length} enrolment(s)`);
+
+      const matched = await req('POST', `/api/trainings/enroll/${id}`, { body: { full_name: mkMale.json.full_name } });
+      ok('a matching-gender sign-up → ok', matched.json?.status === 'ok', JSON.stringify(matched.json));
+    }
+  } finally {
+    if (maleId) await req('DELETE', `/api/members/${maleId}`, H);
+    if (femaleId) await req('DELETE', `/api/members/${femaleId}`, H);
+    ok('gender-restriction fixture members cleaned up', true);
+    const del = await req('DELETE', `/api/trainings/${id}`, H);
+    ok('the gender-restricted activity fixture was deleted', del.status === 200, `status ${del.status}`);
   }
 }
 
@@ -851,20 +1052,18 @@ async function paidTraining(adminCookie, hallId) {
     }
   }
 
-  await convertShape(adminCookie, hallId);
+  await kindFixedAtCreation(adminCookie, hallId);
 }
 
 /**
- * 形态互换 (0016): a course becomes an activity and back.
- *
- * The trap is the activity's single session — it is API-created plumbing, and
- * a course may have several. Converting one way must therefore reduce to
- * exactly one session (the FIRST, so the roll call already taken on it
- * survives) and converting back must not manufacture a second. The UI asks
- * before that destroys anything; the INVARIANT is the server's, which is what
- * this asserts.
+ * `kind` is FIXED at creation (0024 retires the course↔activity conversion
+ * this endpoint used to perform on PATCH). A PATCH that sends a different
+ * `kind` must not change the stored shape or touch its sessions — the whole
+ * point of retiring it is that nothing can convert a row after it exists,
+ * whether that PATCH comes from the (now gone) UI control or straight from
+ * the API.
  */
-async function convertShape(adminCookie, hallId) {
+async function kindFixedAtCreation(adminCookie, hallId) {
   const H = { cookie: adminCookie };
   const mk = await req('POST', '/api/trainings', {
     ...H,
@@ -879,29 +1078,21 @@ async function convertShape(adminCookie, hallId) {
     const before = await req('GET', `/api/trainings/${id}`, H);
     ok('…with all three sessions on it', (before.json?.sessions || []).length === 3,
       `${(before.json?.sessions || []).length} sessions`);
-    const firstId = before.json?.sessions?.[0]?.id;
 
-    const toActivity = await req('PATCH', `/api/trainings/${id}`, { ...H, body: { kind: 'activity', starts_on: '2030-05-04' } });
-    ok('turning it into an activity → 200 + one occasion',
-      toActivity.status === 200 && toActivity.json?.kind === 'activity' && toActivity.json?.total_sessions === 1,
-      `status ${toActivity.status} ${JSON.stringify(toActivity.json).slice(0, 140)}`);
-    ok('…and an activity ends on the day it starts',
-      String(toActivity.json?.ends_on).startsWith('2030-05-04'), String(toActivity.json?.ends_on));
-    const converted = await req('GET', `/api/trainings/${id}`, H);
-    ok('the sessions above the first are gone, and the FIRST is the one kept',
-      (converted.json?.sessions || []).length === 1 && converted.json?.sessions?.[0]?.id === firstId,
-      JSON.stringify((converted.json?.sessions || []).map((s) => s.session_number)));
+    const patched = await req('PATCH', `/api/trainings/${id}`, {
+      ...H,
+      body: { kind: 'activity', name: `E2E形态-改名-${Date.now()}` },
+    });
+    ok('a PATCH carrying kind still succeeds (the rest of the body applies)',
+      patched.status === 200 && /改名/.test(patched.json?.name || ''), `status ${patched.status}`);
+    ok('…but the shape itself never changes', patched.json?.kind === 'course', String(patched.json?.kind));
 
-    const backToCourse = await req('PATCH', `/api/trainings/${id}`, { ...H, body: { kind: 'course', total_sessions: 4 } });
-    ok('turning it back into a course → 200', backToCourse.status === 200 && backToCourse.json?.kind === 'course',
-      `status ${backToCourse.status}`);
-    const back = await req('GET', `/api/trainings/${id}`, H);
-    ok('…and its one session simply becomes session 1 again — nothing manufactured',
-      (back.json?.sessions || []).length === 1 && back.json?.sessions?.[0]?.id === firstId,
-      JSON.stringify((back.json?.sessions || []).map((s) => s.session_number)));
+    const after = await req('GET', `/api/trainings/${id}`, H);
+    ok('its three sessions are untouched — no conversion ran',
+      (after.json?.sessions || []).length === 3, `${(after.json?.sessions || []).length} sessions`);
   } finally {
     const del = await req('DELETE', `/api/trainings/${id}`, H);
-    ok('the shape-conversion fixture was deleted', del.status === 200, `status ${del.status}`);
+    ok('the kind-immutability fixture was deleted', del.status === 200, `status ${del.status}`);
   }
 }
 
@@ -1322,6 +1513,172 @@ async function groupScopedSheet(adminCookie, halls, hallId) {
 }
 
 /**
+ * 小组长's auto-provisioned login (migration 0023/0026) — the fourth,
+ * group-scoped dimension of access control, end to end:
+ *
+ *  1. Promoting a member to 小组长 (`GroupPosition.Leader`) auto-creates a
+ *     `group_leader` app_users row, scoped to that group and its hall, and
+ *     the PATCH response carries the generated password ONCE.
+ *  2. That password actually signs in, and the session it gets is scoped to
+ *     exactly that group: an out-of-scope path (`/trainings`, not in the
+ *     group_leader path allowlist) is refused outright, and both
+ *     `GET /members` and `GET /groups` stay narrowed to its own group even
+ *     when the request itself asks for a different one — the same
+ *     "session always wins" precedence `hallFilter` already has.
+ *  3. Demoting the member disables the account (never deletes it) and the
+ *     generated password stops working.
+ *  4. A promotion with no email on file is a named, non-blocking event
+ *     rather than a silently missing account.
+ *
+ * Everything is fixture data, deleted in a `finally` (the account is deleted
+ * last, since a member cannot go while a login still holds it).
+ */
+async function groupLeaderAccountLifecycle(admin, halls, hallId) {
+  const H = { cookie: admin };
+  if (!hallId) { ok('group_leader account lifecycle (skipped: no congregation)', true); return; }
+
+  const mkGroup = await req('POST', '/api/groups', {
+    ...H, body: { name: `E2E小组长测试-${Date.now()}`, hall_id: hallId },
+  });
+  ok('leader-account fixture group created', mkGroup.status === 200 && mkGroup.json?.id, `status ${mkGroup.status}`);
+  const groupId = mkGroup.json?.id;
+  if (!groupId) return;
+
+  const email = `e2e-groupleader-${Date.now()}-${Math.floor(Math.random() * 1e4)}@grace.org`;
+  const mkMember = await req('POST', '/api/members', {
+    ...H,
+    body: { full_name: `E2E小组长-${Date.now()}`, church_role: 'member', status: 'active', hall_id: hallId, email },
+  });
+  ok('leader-account fixture member created', mkMember.status === 200 && mkMember.json?.id, `status ${mkMember.status}`);
+  const memberId = mkMember.json?.id;
+  let accountId;
+  let generatedPassword;
+
+  try {
+    if (!memberId) return;
+
+    // ---- 1. becoming 小组长 provisions an account, once ----------------------
+    const promote = await req('PATCH', `/api/members/${memberId}`, {
+      ...H, body: { group_id: groupId, group_position: 'leader' },
+    });
+    ok('promoting to 小组长 → 200', promote.status === 200, `status ${promote.status}`);
+    ok('…and the response carries a created leader_account_event, once',
+      promote.json?.leader_account_event?.event === 'created' &&
+        promote.json?.leader_account_event?.email === email &&
+        typeof promote.json?.leader_account_event?.password === 'string' &&
+        promote.json.leader_account_event.password.length >= 12,
+      JSON.stringify(promote.json?.leader_account_event));
+    generatedPassword = promote.json?.leader_account_event?.password;
+
+    const accountsAfter = (await req('GET', '/api/accounts', H)).json || [];
+    const account = accountsAfter.find((a) => a.member_id === memberId);
+    accountId = account?.id;
+    ok('…and an app_users row exists, scoped to the role/hall/group',
+      account?.account_role === 'group_leader' && account?.status === 'active' &&
+        account?.hall_id === hallId && account?.group_id === groupId,
+      JSON.stringify(account));
+
+    // A second write that leaves the member as leader of the SAME group must
+    // not re-provision or otherwise touch the account (it is a no-op).
+    const noop = await req('PATCH', `/api/members/${memberId}`, { ...H, body: { notes: '仍是小组长' } });
+    ok('an unrelated edit while still leader → no leader_account_event',
+      noop.status === 200 && noop.json?.leader_account_event === undefined, JSON.stringify(noop.json?.leader_account_event));
+
+    // ---- 2. the generated password signs in, scoped to this ONE group -----
+    if (!generatedPassword) { ok('group_leader session checks (skipped: no password)', true); }
+    else {
+      const cookie = await login(email, generatedPassword);
+      ok('the generated password signs in', !!cookie);
+      if (cookie) {
+        const meRes = await req('GET', '/api/auth/me', { cookie });
+        ok('…and the session is role group_leader, scoped to this group',
+          meRes.json?.role === 'group_leader' && meRes.json?.group === groupId,
+          JSON.stringify(meRes.json));
+
+        // Outside the group_leader path allowlist entirely.
+        const outOfScope = await req('GET', '/api/trainings', { cookie });
+        ok('an out-of-scope path (e.g. /trainings) → 403', outOfScope.status === 403,
+          `status ${outOfScope.status} ${JSON.stringify(outOfScope.json).slice(0, 120)}`);
+
+        // GET /members narrows to its own group even when a different one is
+        // named — the session's own scope always wins (rule G2).
+        const otherGroup = await req('POST', '/api/groups', {
+          ...H, body: { name: `E2E另一组-${Date.now()}`, hall_id: hallId },
+        });
+        const otherGroupId = otherGroup.json?.id;
+        const membersScoped = await req('GET', `/api/members?group_id=${otherGroupId || 'x'}`, { cookie });
+        const scopedIds = (membersScoped.json || []).map((m) => m.id);
+        ok('GET /members stays narrowed to its own group, even asking for another',
+          membersScoped.status === 200 && scopedIds.includes(memberId) &&
+            (membersScoped.json || []).every((m) => m.group_id === groupId),
+          `status ${membersScoped.status}, ${scopedIds.length} row(s)`);
+
+        // GET /groups: only its own group, however the request is shaped.
+        const groupsScoped = await req('GET', `/api/groups?hall_id=${hallId}`, { cookie });
+        const groupIds = (groupsScoped.json || []).map((g) => g.id);
+        ok('GET /groups lists only its own group',
+          groupsScoped.status === 200 && groupIds.length === 1 && groupIds[0] === groupId,
+          `${groupIds.length} group(s)`);
+
+        // A specific OTHER group id is refused outright, not merely absent
+        // from a list.
+        if (otherGroupId) {
+          const otherRead = await req('GET', `/api/groups/${otherGroupId}`, { cookie });
+          ok('…and reading another group by id → 403', otherRead.status === 403,
+            `status ${otherRead.status}`);
+        }
+        const ownRead = await req('GET', `/api/groups/${groupId}`, { cookie });
+        ok('…while its own group by id still answers', ownRead.status === 200, `status ${ownRead.status}`);
+
+        if (otherGroupId) await req('DELETE', `/api/groups/${otherGroupId}`, H);
+      }
+    }
+
+    // ---- 3. leaving 小组长 disables the account, and the password stops working ----
+    const demote = await req('PATCH', `/api/members/${memberId}`, {
+      ...H, body: { group_id: null, group_position: null },
+    });
+    ok('removing from the group entirely → 200', demote.status === 200, `status ${demote.status}`);
+    ok('…and the response reports the account was disabled',
+      demote.json?.leader_account_event?.event === 'disabled' &&
+        demote.json?.leader_account_event?.email === email,
+      JSON.stringify(demote.json?.leader_account_event));
+
+    const accountAfterDemote = (await req('GET', `/api/accounts/${accountId}`, H)).json;
+    ok('…and app_users now reads disabled with no group',
+      accountAfterDemote?.status === 'disabled' && accountAfterDemote?.group_id === null,
+      JSON.stringify(accountAfterDemote));
+
+    if (generatedPassword) {
+      const failedLogin = await req('POST', '/api/auth/login', { body: { email, password: generatedPassword } });
+      ok('…and the (still-correct) generated password can no longer sign in',
+        failedLogin.status === 401, `status ${failedLogin.status}`);
+    }
+
+    // ---- 4. no email on file → a named, non-blocking event ----------------
+    const mkNoEmail = await req('POST', '/api/members', {
+      ...H, body: { full_name: `E2E无邮箱组长-${Date.now()}`, church_role: 'member', status: 'active', hall_id: hallId, group_id: groupId, group_position: 'leader' },
+    });
+    ok('creating a member straight into 小组长 with no email → 200', mkNoEmail.status === 200, `status ${mkNoEmail.status}`);
+    ok('…and the event says so rather than silently skipping',
+      mkNoEmail.json?.leader_account_event?.event === 'skipped_no_email',
+      JSON.stringify(mkNoEmail.json?.leader_account_event));
+    if (mkNoEmail.json?.id) await req('DELETE', `/api/members/${mkNoEmail.json.id}`, H);
+  } finally {
+    if (accountId) {
+      const delAcc = await req('DELETE', `/api/accounts/${accountId}`, H);
+      ok('the leader-account fixture login was deleted', delAcc.status === 200, `status ${delAcc.status}`);
+    }
+    if (memberId) {
+      const delMember = await req('DELETE', `/api/members/${memberId}`, H);
+      ok('the leader-account fixture member was deleted', delMember.status === 200, `status ${delMember.status}`);
+    }
+    const delGroup = await req('DELETE', `/api/groups/${groupId}`, H);
+    ok('the leader-account fixture group was deleted', delGroup.status === 200, `status ${delGroup.status}`);
+  }
+}
+
+/**
  * The church record and the add-on module catalog (migration 0012).
  *
  * Three properties, and one of them has teeth: switching a module off must
@@ -1330,6 +1687,147 @@ async function groupScopedSheet(adminCookie, halls, hallId) {
  * everything here is restored in a `finally` — the original module state, the
  * original description, whether the assertions passed or blew up.
  */
+/**
+ * 幸福小组: 期 (term) → group → roster + weekly attendance, BY WEEK NUMBER
+ * rather than by date — the opposite convention from the 守望 pairs block
+ * above (presence-only rows, no `completed` boolean to upsert). Self-cleaning:
+ * deleting the term cascades its group, roster and every week of attendance,
+ * so nothing here needs its own teardown for those — only the fixture-named
+ * term itself has to go, in a `finally` so a mid-test failure cannot strand it.
+ */
+async function happinessGroups(adminCookie, members, hallId) {
+  const H = { cookie: adminCookie };
+  if (!hallId) { ok('happiness groups (skipped: no hall)', true); return; }
+
+  // A term number is globally unique — mint one from the clock so parallel
+  // runs (and reruns of this suite) never collide.
+  const termNo = Math.floor(Date.now() / 1000);
+  const termName = `E2E-term-${Date.now()}`;
+  const mkTerm = await req('POST', '/api/happiness/terms', {
+    ...H,
+    body: { term_no: termNo, name: termName, weeks: 4 },
+  });
+  ok('create term → 200 + id', mkTerm.status === 200 && mkTerm.json?.id, `status ${mkTerm.status} ${JSON.stringify(mkTerm.json).slice(0, 140)}`);
+  const termId = mkTerm.json?.id;
+  if (!termId) return;
+
+  try {
+    const list = await req('GET', '/api/happiness/terms', H);
+    ok('term shows up in the list, carrying a group_count',
+      list.status === 200 && list.json?.some((t) => t.id === termId && t.group_count === 0),
+      JSON.stringify(list.json?.find((t) => t.id === termId)));
+
+    const readTerm = await req('GET', `/api/happiness/terms/${termId}`, H);
+    ok('read term by id → 200', readTerm.status === 200 && readTerm.json?.weeks === 4, `status ${readTerm.status}`);
+
+    const patchTerm = await req('PATCH', `/api/happiness/terms/${termId}`, { ...H, body: { weeks: 3 } });
+    ok('update term weeks → 200 + persisted', patchTerm.status === 200 && patchTerm.json?.weeks === 3, `status ${patchTerm.status} ${JSON.stringify(patchTerm.json)}`);
+
+    const groupName = `E2E-group-${Date.now()}`;
+    const mkGroup = await req('POST', '/api/happiness/groups', {
+      ...H,
+      body: { term_id: termId, name: groupName, hall_id: hallId, meeting_day: 'tuesday', location: 'Hall B' },
+    });
+    ok('create group → 200 + id', mkGroup.status === 200 && mkGroup.json?.id, `status ${mkGroup.status} ${JSON.stringify(mkGroup.json).slice(0, 140)}`);
+    const groupId = mkGroup.json?.id;
+    if (!groupId) return;
+
+    const groupsList = await req('GET', `/api/happiness/groups?term_id=${termId}`, H);
+    ok('group list narrows by term_id and carries roster_count',
+      groupsList.status === 200 && groupsList.json?.some((g) => g.id === groupId && g.roster_count === 0),
+      JSON.stringify(groupsList.json));
+
+    const patchGroup = await req('PATCH', `/api/happiness/groups/${groupId}`, { ...H, body: { location: 'Hall C' } });
+    ok('update group → 200 + persisted', patchGroup.status === 200 && patchGroup.json?.location === 'Hall C', `status ${patchGroup.status}`);
+
+    // ---- roster: add two, remove one -----------------------------------
+    const roster = (members || []).slice(0, 2);
+    if (roster.length === 2) {
+      const addMembers = await req('POST', `/api/happiness/groups/${groupId}/members`, {
+        ...H,
+        body: { member_ids: roster.map((m) => m.id) },
+      });
+      ok('add roster members (list) → 200', addMembers.status === 200 && addMembers.json?.count === 2, `status ${addMembers.status} ${JSON.stringify(addMembers.json)}`);
+
+      const detail = await req('GET', `/api/happiness/groups/${groupId}`, H);
+      ok('group detail embeds the roster, both names each',
+        detail.status === 200 && detail.json?.members?.length === 2 &&
+          detail.json.members.every((m) => 'full_name' in m && 'english_name' in m),
+        JSON.stringify(detail.json?.members));
+      ok('group detail embeds the term (weeks travels with it)',
+        detail.json?.term?.id === termId && detail.json?.term?.weeks === 3,
+        JSON.stringify(detail.json?.term));
+
+      // Re-adding somebody already on the roster is not an error.
+      const readd = await req('POST', `/api/happiness/groups/${groupId}/members`, { ...H, body: { member_id: roster[0].id } });
+      ok('re-adding an existing roster member is a no-op, not a 4xx', readd.status === 200, `status ${readd.status}`);
+
+      // ---- attendance: week beyond the term's own `weeks` is refused ----
+      const overWeek = await req('PUT', `/api/happiness/groups/${groupId}/attendance`, {
+        ...H,
+        body: { week_number: 9, member_ids: roster.map((m) => m.id), present: true },
+      });
+      ok('a week beyond the term’s own weeks (9 > 3) → 400',
+        overWeek.status === 400, `status ${overWeek.status} ${JSON.stringify(overWeek.json)}`);
+
+      // ---- attendance: mark present, read back, then unmark ----
+      const mark = await req('PUT', `/api/happiness/groups/${groupId}/attendance`, {
+        ...H,
+        body: { week_number: 1, member_ids: roster.map((m) => m.id), present: true },
+      });
+      ok('mark week 1 present for the roster → 200', mark.status === 200 && mark.json?.count === 2, `status ${mark.status} ${JSON.stringify(mark.json)}`);
+
+      const readAttendance = await req('GET', `/api/happiness/groups/${groupId}/attendance`, H);
+      const presentWeek1 = (readAttendance.json?.records || []).filter((r) => r.week_number === 1).map((r) => r.member_id).sort();
+      ok('attendance round-trips: weeks = the term’s own 3, both members present in week 1',
+        readAttendance.json?.weeks === 3 && JSON.stringify(presentWeek1) === JSON.stringify(roster.map((m) => m.id).sort()),
+        JSON.stringify(readAttendance.json));
+
+      // Marking present again is idempotent — a no-op, not a duplicate/409.
+      const markAgain = await req('PUT', `/api/happiness/groups/${groupId}/attendance`, {
+        ...H,
+        body: { week_number: 1, member_id: roster[0].id, present: true },
+      });
+      ok('marking an already-present week again → 200, not a conflict', markAgain.status === 200, `status ${markAgain.status}`);
+
+      // Unmark one of the two — a presence-only table deletes the row.
+      const unmark = await req('PUT', `/api/happiness/groups/${groupId}/attendance`, {
+        ...H,
+        body: { week_number: 1, member_id: roster[1].id, present: false },
+      });
+      ok('unmark one member for week 1 → 200', unmark.status === 200, `status ${unmark.status}`);
+      const afterUnmark = await req('GET', `/api/happiness/groups/${groupId}/attendance`, H);
+      const stillPresent = (afterUnmark.json?.records || []).filter((r) => r.week_number === 1).map((r) => r.member_id);
+      ok('the unmarked member’s row is gone; the other stays present',
+        stillPresent.length === 1 && stillPresent[0] === roster[0].id,
+        JSON.stringify(afterUnmark.json?.records));
+
+      // ---- roster: remove one member; their week-1 record stays --------
+      const removeMember = await req('DELETE', `/api/happiness/groups/${groupId}/members/${roster[0].id}`, H);
+      ok('remove one roster member → 200', removeMember.status === 200, `status ${removeMember.status}`);
+      const afterRemove = await req('GET', `/api/happiness/groups/${groupId}`, H);
+      ok('the roster no longer lists them', !(afterRemove.json?.members || []).some((m) => m.id === roster[0].id), JSON.stringify(afterRemove.json?.members));
+      const attendanceAfterRemove = await req('GET', `/api/happiness/groups/${groupId}/attendance`, H);
+      ok('…but their recorded week-1 attendance survives the roster removal (no FK between the two)',
+        (attendanceAfterRemove.json?.records || []).some((r) => r.member_id === roster[0].id && r.week_number === 1),
+        JSON.stringify(attendanceAfterRemove.json?.records));
+    }
+
+    // ---- group delete cascades its roster and attendance ----------------
+    const delGroup = await req('DELETE', `/api/happiness/groups/${groupId}`, H);
+    ok('delete group → 200', delGroup.status === 200, `status ${delGroup.status}`);
+    const groupGone = await req('GET', `/api/happiness/groups/${groupId}`, H);
+    ok('…and it is actually gone', groupGone.status === 404, `status ${groupGone.status}`);
+  } finally {
+    // Deleting the term cascades any group left under it (there should be
+    // none by this point, but a failed assertion above must not leak one).
+    const delTerm = await req('DELETE', `/api/happiness/terms/${termId}`, H);
+    ok('delete term (teardown) → 200', delTerm.status === 200, `status ${delTerm.status}`);
+    const termGone = await req('GET', `/api/happiness/terms/${termId}`, H);
+    ok('…and the term is actually gone', termGone.status === 404, `status ${termGone.status}`);
+  }
+}
+
 async function churchAndModules(adminCookie) {
   const H = { cookie: adminCookie };
 
@@ -1361,6 +1859,8 @@ async function churchAndModules(adminCookie) {
   ok('module catalog → 200 + array', states.status === 200 && Array.isArray(states.json), `status ${states.status}`);
   const original = (states.json || []).find((m) => m.key === 'discipleship');
   ok('the catalog lists the Forty Days add-on', !!original, JSON.stringify(states.json).slice(0, 120));
+  const originalHappiness = (states.json || []).find((m) => m.key === 'happiness');
+  ok('the catalog lists the Happiness Groups add-on', !!originalHappiness, JSON.stringify(states.json).slice(0, 120));
 
   // A key that is not in the code registry must never reach the table.
   const junk = await req('PATCH', '/api/church/modules/not_a_module', { ...H, body: { enabled: false } });
@@ -1452,6 +1952,21 @@ async function churchAndModules(adminCookie) {
       ok('the church profile stays public while a module is off', (await req('GET', '/api/church')).status === 200);
       ok('the catalog itself is still readable while a module is off', (await req('GET', '/api/church/modules', H)).status === 200);
     }
+
+    // The same gate, for 幸福小组 — a second, independent module must be
+    // switchable on its own without disturbing 守望's own state.
+    if (originalHappiness) {
+      const off = await req('PATCH', '/api/church/modules/happiness', { ...H, body: { enabled: false } });
+      ok('disable happiness module → 200 + enabled:false', off.status === 200 && off.json?.enabled === false, `status ${off.status} ${JSON.stringify(off.json)}`);
+      const blockedTerms = await req('GET', '/api/happiness/terms', H);
+      ok('a disabled happiness module refuses its own API path → 404', blockedTerms.status === 404, `status ${blockedTerms.status}`);
+      const blockedGroups = await req('GET', '/api/happiness/groups', H);
+      ok('every happiness path is refused, not just the first → 404', blockedGroups.status === 404, `status ${blockedGroups.status}`);
+      // …and nothing else moved: core paths and the catalog itself stay up.
+      ok('core paths are untouched while happiness is off', (await req('GET', '/api/members', H)).status === 200);
+      ok('the church profile stays public while happiness is off', (await req('GET', '/api/church')).status === 200);
+      ok('the catalog itself is still readable while happiness is off', (await req('GET', '/api/church/modules', H)).status === 200);
+    }
   } finally {
     // This runs against the church's live site: put both back exactly as they
     // were, whatever happened above, and SAY whether it worked.
@@ -1462,6 +1977,14 @@ async function churchAndModules(adminCookie) {
         `status ${back.status} ${JSON.stringify(back.json)}`);
       if (original.enabled)
         ok('the module answers again after being re-enabled', (await req('GET', '/api/discipleship/programs', H)).status === 200);
+    }
+    if (originalHappiness) {
+      const back = await req('PATCH', `/api/church/modules/happiness`, { ...H, body: { enabled: originalHappiness.enabled } });
+      ok('the happiness module was restored to its original state',
+        back.status === 200 && back.json?.enabled === originalHappiness.enabled,
+        `status ${back.status} ${JSON.stringify(back.json)}`);
+      if (originalHappiness.enabled)
+        ok('the happiness module answers again after being re-enabled', (await req('GET', '/api/happiness/terms', H)).status === 200);
     }
     const restored = await req('PATCH', '/api/church', { ...H, body: { description: originalDescription } });
     ok('the church description was restored',
@@ -1746,6 +2269,17 @@ async function purgeResidue(H) {
   }
   for (const g of await list('/api/groups')) {
     if (FIXTURE_NAME.test(String(g?.name ?? ''))) await kill(`group ${g.name}`, `/api/groups/${g.id}`);
+  }
+  // A fixture-named term cascades its group, roster and attendance with it —
+  // deleting the term is enough. The group sweep beneath it only catches a
+  // group left behind under a REAL (non-fixture) term, which should never
+  // happen but is checked anyway, matching this function's own reason to
+  // exist (a run that died before its own `finally`).
+  for (const term of await list('/api/happiness/terms')) {
+    if (FIXTURE_NAME.test(String(term?.name ?? ''))) await kill(`happiness term ${term.name}`, `/api/happiness/terms/${term.id}`);
+  }
+  for (const g of await list('/api/happiness/groups')) {
+    if (FIXTURE_NAME.test(String(g?.name ?? ''))) await kill(`happiness group ${g.name}`, `/api/happiness/groups/${g.id}`);
   }
   // A member the suite borrowed rather than created: its email was overwritten
   // with a generated one and the restore never ran. Clearing it is right — a

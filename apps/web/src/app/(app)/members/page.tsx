@@ -8,6 +8,7 @@ import { api } from '@/lib/api';
 import { usePageChrome, useMe, useHallScope } from '@/components/AppShell';
 import {
   ChevronRightIcon,
+  Combobox,
   ErrorBanner,
   ExportButton,
   Field,
@@ -18,6 +19,7 @@ import {
   PageBar,
   PhotoPicker,
   RoleBadge,
+  RoleRestricted,
   RowChevron,
   SkeletonScreen,
   SkeletonTable,
@@ -26,6 +28,7 @@ import {
   useToast,
 } from '@/components/ui';
 import { ImportMembersModal } from '@/components/ImportMembersModal';
+import { useLeaderAccountEvent } from '@/components/LeaderAccountEvent';
 import { can } from '@/lib/perms';
 import { copyText } from '@/lib/clipboard';
 import { exportRows } from '@/lib/export';
@@ -34,7 +37,6 @@ import { GroupDetail, GroupRow, MemberRow } from '@/lib/types';
 import {
   CHURCH_ROLE_OPTIONS,
   churchRoleKey,
-  formatDate,
   genderKey,
   GROUP_POSITION_OPTIONS,
   MEMBER_ROLE_FILTERS,
@@ -42,10 +44,11 @@ import {
   memberStatusClass,
   memberStatusKey,
   positionKey,
+  referrerOptions,
   roleKey,
 } from '@/lib/labels';
 import { useT } from '@/lib/i18n';
-import { ChurchRole, GroupPosition, LEADERSHIP_POSITIONS, MemberStatus } from '@tog/shared';
+import { AccountRole, ChurchRole, GroupPosition, LEADERSHIP_POSITIONS, MemberStatus } from '@tog/shared';
 
 const UNASSIGNED = '__unassigned__';
 
@@ -53,7 +56,8 @@ export default function MembersPage() {
   const router = useRouter();
   const t = useT();
   const toast = useToast();
-  const perms = can(useMe().role);
+  const me = useMe();
+  const perms = can(me.role);
   // Only worth a column when the account can actually see more than one hall.
   const { locked: hallLocked } = useHallScope();
   const { data, initialLoading, error, reload } = useFetch<MemberRow[]>('/members');
@@ -66,6 +70,7 @@ export default function MembersPage() {
   const [servingFilter, setServingFilter] = useState<string>('all');
   const [addOpen, setAddOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const { handleLeaderAccountEvent, leaderAccountModal } = useLeaderAccountEvent();
 
   usePageChrome({ title: t('members.title') }, [t]);
 
@@ -143,8 +148,6 @@ export default function MembersPage() {
         return m.phone ?? undefined;
       case 'status':
         return t(memberStatusKey(m.status));
-      case 'joined':
-        return m.joined_at ?? undefined;
       default:
         return undefined;
     }
@@ -165,13 +168,19 @@ export default function MembersPage() {
         [t('export.group')]: m.group?.name ?? t('members.filter.ungrouped'),
         [t('export.email')]: m.email ?? '',
         [t('export.phone')]: m.phone ?? '',
+        [t(importFieldKey('address'))]: m.address ?? '',
+        // The referrer's own pair, written the way the importer reads one back
+        // — so an exported list can be edited and uploaded straight again.
+        [t(importFieldKey('referred_by'))]: m.referrer
+          ? [m.referrer.full_name, m.referrer.english_name].filter(Boolean).join(' ')
+          : '',
         [t('member.field.gender')]: m.gender ? t(genderKey(m.gender)) : '',
         // The IMPORTER's own header and the importer's own separator, so a list
         // exported here can be edited and uploaded straight back (the column
         // list in `lib/members-import.ts` is the one definition of both).
         [t(importFieldKey('serving_roles'))]: (m.serving_roles ?? []).join('、'),
         [t('export.status')]: t(memberStatusKey(m.status)),
-        [t('export.joined')]: formatDate(m.joined_at),
+        [t('member.field.notes')]: m.notes ?? '',
       })),
     );
   };
@@ -184,6 +193,14 @@ export default function MembersPage() {
     if (await copyText(link)) toast(t('members.toast.linkCopied'));
     else toast(t('common.copyFailed', { link }), 'error');
   };
+
+  // The full directory is outside a group_leader's scope — its own roster
+  // lives on `/groups/:id` instead (the nav entry is already gone; this only
+  // catches a bookmark, same shape `ModuleDisabled` uses for a switched-off
+  // module — rule G2, the server refuses nothing here since `GET /members`
+  // itself stays reachable and merely narrowed, but this whole PAGE is not
+  // the group_leader's to use).
+  if (me.role === AccountRole.GroupLeader) return <RoleRestricted />;
 
   // No early return: the filters and the actions render perfectly well against
   // an empty list, so the real chrome goes up immediately and only the rows
@@ -261,7 +278,9 @@ export default function MembersPage() {
                 <thead>
                   <tr>
                     {/* Member / identity / group / contact share the width equally;
-                        the utility columns (status / joined) + chevron stay narrow. */}
+                        the utility columns (status / remark) + chevron stay narrow —
+                        except remark, which is bounded and truncated rather than
+                        sized to its (potentially long) content. */}
                     <SortTh sortKey="name" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('members.col.member')}</SortTh>
                     <SortTh sortKey="role" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('members.col.role')}</SortTh>
                     {!hallLocked && (
@@ -270,7 +289,7 @@ export default function MembersPage() {
                     <SortTh sortKey="group" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('members.col.group')}</SortTh>
                     <SortTh sortKey="phone" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('members.col.contact')}</SortTh>
                     <SortTh sortKey="status" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('members.col.status')}</SortTh>
-                    <SortTh sortKey="joined" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('members.col.joined')}</SortTh>
+                    <th>{t('members.col.remark')}</th>
                     <th />
                   </tr>
                 </thead>
@@ -293,7 +312,12 @@ export default function MembersPage() {
                             {t(memberStatusKey(m.status))}
                           </span>
                         </td>
-                        <td className="muted tnum">{formatDate(m.joined_at)}</td>
+                        {/* Remarks are free text and can run long, unlike every other
+                            column here — bounded and ellipsised, with the full text
+                            still reachable through the native `title` tooltip. */}
+                        <td className="muted cell-remark" title={m.notes ?? undefined}>
+                          {m.notes ?? ''}
+                        </td>
                         <td style={{ textAlign: 'right' }}>
                           <RowChevron title={t('members.viewProfile')} onClick={() => router.push(`/members/${m.id}`)} />
                         </td>
@@ -327,17 +351,19 @@ export default function MembersPage() {
                     <span className="mtile-cta"><ChevronRightIcon /></span>
                   </div>
                   {/* Only render detail lines that have real content — a tile with no
-                      phone/date shouldn't show bare “—” placeholder rows. */}
+                      phone/remark shouldn't show bare “—” placeholder rows. */}
                   {m.phone && <div className="mtile-line">{m.phone}</div>}
-                  {(m.status !== MemberStatus.Active || m.joined_at) && (
+                  {/* Active is the norm — only surface the status when it isn't. */}
+                  {m.status !== MemberStatus.Active && (
                     <div className="mtile-line">
-                      {/* Active is the norm — only surface the status when it isn't. */}
-                      {m.status !== MemberStatus.Active && (
-                        <span className={`badge ${memberStatusClass(m.status)}`}>
-                          {t(memberStatusKey(m.status))}
-                        </span>
-                      )}
-                      {m.joined_at && <span>{formatDate(m.joined_at)}</span>}
+                      <span className={`badge ${memberStatusClass(m.status)}`}>
+                        {t(memberStatusKey(m.status))}
+                      </span>
+                    </div>
+                  )}
+                  {m.notes && (
+                    <div className="mtile-line cell-remark" title={m.notes}>
+                      {m.notes}
                     </div>
                   )}
                 </div>
@@ -352,15 +378,18 @@ export default function MembersPage() {
 
       {addOpen && (
         <AddMemberModal
+          members={members}
           servingSuggestions={allServing}
           onClose={() => setAddOpen(false)}
-          onSaved={() => {
+          onSaved={(leaderEvent, name) => {
             setAddOpen(false);
             toast(t('members.toast.created'));
+            handleLeaderAccountEvent(leaderEvent, name);
             reload();
           }}
         />
       )}
+      {leaderAccountModal}
 
       {importOpen && (
         <ImportMembersModal onClose={() => setImportOpen(false)} onDone={reload} />
@@ -370,15 +399,21 @@ export default function MembersPage() {
 }
 
 function AddMemberModal({
+  members,
   servingSuggestions,
   onClose,
   onSaved,
 }: {
+  /** The roll this page already fetched — the 推荐人 picker's options (G5). */
+  members: MemberRow[];
   /** The 服侍岗位 the church already uses — the list is free text, so the only
    *  thing standing between 敬拜 and 敬拜团 is what somebody typed last time. */
   servingSuggestions: string[];
   onClose: () => void;
-  onSaved: () => void;
+  /** See `MemberEditModal`'s own `onSaved` — this create path can equally
+   *  place a brand-new member straight into 小组长, so it reports the same
+   *  event, for the one member a create can ever produce it for. */
+  onSaved: (leaderEvent?: MemberRow['leader_account_event'], name?: string) => void;
 }) {
   const t = useT();
   const toast = useToast();
@@ -389,7 +424,15 @@ function AddMemberModal({
     english_name: '',
     phone: '',
     email: '',
+    address: '',
+    // '' = 无推荐人, and that is what the column stores: nobody referred them is
+    // the ordinary case, not a value the church has still to fill in.
+    referred_by: '',
     group_id: '',
+    // 加入小组日期 — a separate fact from `joined_at` (when they joined the
+    // church); nullable, like every other date field here.
+    group_joined_at: '',
+    notes: '',
     // Default to the hall currently being viewed; a hall-scoped account only
     // ever has one option anyway (the server pins it regardless).
     hall_id: (hallId || null) as string | null,
@@ -410,6 +453,10 @@ function AddMemberModal({
   // only one option, use it without making the user pick.
   const effectiveHallId = form.hall_id ?? (halls.length === 1 ? halls[0].id : null);
 
+  // Nobody to exclude: the person does not exist yet, so they cannot be their
+  // own referrer.
+  const referrerOpts = useMemo(() => referrerOptions(members, t), [members, t]);
+
   const save = async () => {
     if (!form.full_name.trim()) {
       setErr(t('members.err.name'));
@@ -421,24 +468,36 @@ function AddMemberModal({
     }
     setSaving(true);
     setErr(null);
+    // At most one incumbent gets bumped, so a single slot (rather than
+    // MemberEditModal's array) is enough here — the newly created member's
+    // own event, reported right after, is handled separately by `onSaved`.
+    let incumbentEvent: { event: MemberRow['leader_account_event']; name: string } | null = null;
     try {
       if (form.group_id && LEADERSHIP_POSITIONS.includes(form.group_position)) {
         const incumbent = (groupDetail.data?.members ?? []).find(
           (m) => m.group_position === form.group_position,
         );
         if (incumbent) {
-          await api.patch(`/members/${incumbent.id}`, { group_position: GroupPosition.CoreMember });
+          const demoted = await api.patch<MemberRow>(`/members/${incumbent.id}`, {
+            group_position: GroupPosition.CoreMember,
+          });
+          if (demoted.leader_account_event)
+            incumbentEvent = { event: demoted.leader_account_event, name: incumbent.full_name };
         }
       }
-      const created = await api.post<{ id: string }>('/members', {
+      const created = await api.post<MemberRow>('/members', {
         full_name: form.full_name.trim(),
         english_name: form.english_name || undefined,
         phone: form.phone || undefined,
         email: form.email || undefined,
+        address: form.address || undefined,
+        referred_by: form.referred_by || null,
         hall_id: effectiveHallId,
         church_role: form.church_role,
         group_id: form.group_id || undefined,
         group_position: form.group_id ? form.group_position : undefined,
+        group_joined_at: form.group_joined_at || undefined,
+        notes: form.notes || undefined,
         serving_roles: serving,
       });
       // The photo goes through the SAME endpoint the member's own profile page
@@ -449,7 +508,13 @@ function AddMemberModal({
         fd.append('file', photo);
         await api.upload(`/members/${created.id}/avatar`, fd);
       }
-      onSaved();
+      // The incumbent's own event (only ever `disabled`, never `created`) is
+      // shown right here as a toast rather than threaded through `onSaved` —
+      // simpler than a second event slot for a case that can only ever be one
+      // of the two non-modal outcomes.
+      if (incumbentEvent?.event?.event === 'disabled')
+        toast(t('leaderAccount.toast.disabled', { name: incumbentEvent.name }));
+      onSaved(created.leader_account_event, form.full_name.trim());
     } catch (e) {
       setErr((e as Error).message);
       toast((e as Error).message, 'error');
@@ -489,6 +554,22 @@ function AddMemberModal({
         </Field>
       </div>
       <div className="form-row">
+        <Field label={t('members.field.address')}>
+          <input value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} />
+        </Field>
+        <Field label={t('members.field.referrer')}>
+          {/* A member picker is a Combobox, never a `<select>` (rule G4) — and
+              its first option is the default rather than an empty field, so
+              「无推荐人」is something the church chose, not something it forgot. */}
+          <Combobox
+            value={form.referred_by}
+            onChange={(id) => setForm({ ...form, referred_by: id })}
+            options={referrerOpts}
+            ariaLabel={t('members.field.referrer')}
+          />
+        </Field>
+      </div>
+      <div className="form-row">
         <Field label={t('hall.label')}>
           <HallSelect value={effectiveHallId} onChange={(id) => setForm({ ...form, hall_id: id })} />
         </Field>
@@ -522,6 +603,20 @@ function AddMemberModal({
           </Field>
         )}
       </div>
+      {/* Only meaningful once a group is chosen — same rule as the group
+          position field right above it. */}
+      {form.group_id && (
+        <div className="form-row">
+          <Field label={t('member.field.groupJoinedAt')}>
+            <input
+              type="date"
+              className={form.group_joined_at ? undefined : 'date-empty'}
+              value={form.group_joined_at}
+              onChange={(e) => setForm({ ...form, group_joined_at: e.target.value })}
+            />
+          </Field>
+        </div>
+      )}
       <Field label={t('members.field.serving')}>
         <TagsInput
           value={serving}
@@ -529,6 +624,9 @@ function AddMemberModal({
           suggestions={servingSuggestions}
           placeholder={t('members.servingPlaceholder')}
         />
+      </Field>
+      <Field label={t('member.field.notes')}>
+        <textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} rows={2} />
       </Field>
       <Field label={t('members.field.photo')}>
         <PhotoPicker file={photo} onChange={setPhoto} name={form.full_name} />

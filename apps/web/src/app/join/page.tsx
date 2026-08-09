@@ -49,6 +49,7 @@ export default function JoinPage() {
     email: '',
     gender: '' as Gender | '',
     date_of_birth: '',
+    address: '',
     hall_id: '',
   });
   const [photo, setPhoto] = useState<File | null>(null);
@@ -93,6 +94,7 @@ export default function JoinPage() {
         email: form.email.trim(),
         gender: form.gender,
         date_of_birth: form.date_of_birth,
+        address: form.address.trim(),
         hall_id: hallId,
       };
       let r: { status: RegisterStatus };
@@ -142,7 +144,7 @@ export default function JoinPage() {
                 className="btn ghost"
                 onClick={() => {
                   setResult(null);
-                  setForm({ full_name: '', english_name: '', phone: '', email: '', gender: '', date_of_birth: '', hall_id: form.hall_id });
+                  setForm({ full_name: '', english_name: '', phone: '', email: '', gender: '', date_of_birth: '', address: '', hall_id: form.hall_id });
                   setPhoto(null);
                 }}
               >
@@ -212,6 +214,15 @@ export default function JoinPage() {
                   />
                 </Field>
               </div>
+              {/* Where the church would visit them or post something — theirs
+                  to give, unlike 推荐人, which is the church's own record of how
+                  somebody arrived and is not on this form at all. */}
+              <Field label={t('join.field.address')}>
+                <input
+                  value={form.address}
+                  onChange={(e) => setForm({ ...form, address: e.target.value })}
+                />
+              </Field>
               {/* Only asked when there is something to choose between: a church
                   with one congregation files everyone in it anyway. */}
               {halls.length > 1 && (

@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   isOptionalModule,
   MODULE_DISCIPLESHIP,
+  MODULE_HAPPINESS,
   moduleForApiPath,
   moduleForNavHref,
   OPTIONAL_MODULES,
@@ -16,8 +17,12 @@ import { en } from '@/lib/i18n/en';
  * path must never be answerable at all.
  */
 describe('optional module registry', () => {
-  it('ships the Forty Days add-on and nothing that is core', () => {
+  it('ships the Forty Days and Happiness Groups add-ons, and nothing that is core', () => {
     expect(OPTIONAL_MODULE_KEYS).toContain(MODULE_DISCIPLESHIP);
+    expect(OPTIONAL_MODULE_KEYS).toContain(MODULE_HAPPINESS);
+    // The seed row in migration 0022 names this exact string — a mismatch
+    // here would orphan it, so the constant is pinned rather than just typed.
+    expect(MODULE_HAPPINESS).toBe('happiness');
     // Dashboard, members, groups, events, trainings, accounts and the profile
     // are not switchable — a church cannot turn its own member list off.
     for (const core of ['', 'members', 'groups', 'events', 'trainings', 'accounts', 'profile'])
@@ -73,6 +78,13 @@ describe('moduleForApiPath — which module owns an API path', () => {
     expect(moduleForApiPath('discipleship')).toBe(MODULE_DISCIPLESHIP);
   });
 
+  it('claims 幸福小组 — terms, groups and everything under a group', () => {
+    expect(moduleForApiPath(['happiness'])).toBe(MODULE_HAPPINESS);
+    expect(moduleForApiPath(['happiness', 'terms'])).toBe(MODULE_HAPPINESS);
+    expect(moduleForApiPath(['happiness', 'groups', 'abc', 'attendance'])).toBe(MODULE_HAPPINESS);
+    expect(moduleForApiPath(['happiness', 'groups', 'abc', 'members', 'def'])).toBe(MODULE_HAPPINESS);
+  });
+
   it('never claims a core path — the gate must not be able to lock the app out', () => {
     for (const path of [
       [],
@@ -106,5 +118,11 @@ describe('moduleForNavHref — which module owns a sidebar entry', () => {
   it('leaves the core nav entries alone, the dashboard root included', () => {
     for (const href of ['/', '/members', '/groups', '/events', '/trainings', '/settings', '/church'])
       expect(moduleForNavHref(href)).toBeNull();
+  });
+
+  it('claims /happiness and anything below it', () => {
+    expect(moduleForNavHref('/happiness')).toBe(MODULE_HAPPINESS);
+    expect(moduleForNavHref('/happiness/term-1')).toBe(MODULE_HAPPINESS);
+    expect(moduleForNavHref('/happiness/group/abc')).toBe(MODULE_HAPPINESS);
   });
 });

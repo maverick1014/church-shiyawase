@@ -1,118 +1,78 @@
 'use client';
 
-import Link from 'next/link';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useFetch } from '@/lib/hooks';
-import { usePageChrome } from '@/components/AppShell';
-import { Card, ErrorBanner, Skeleton, SkeletonCard, SkeletonCards, SkeletonScreen } from '@/components/ui';
-import { EventRow, MemberRow, OverviewRow, ProgramRow } from '@/lib/types';
-import {
-  eventBadgeClass,
-  eventTypeKey,
-  formatDateTime,
-  memberRole,
-  roleDot,
-  roleKey,
-  roleTagStyle,
-  ROLE_ORDER,
-} from '@/lib/labels';
-import { useModuleEnabled } from '@/lib/church';
+import { usePageChrome, useMe } from '@/components/AppShell';
+import { Card, ErrorBanner, Skeleton, SkeletonScreen, SkeletonTable } from '@/components/ui';
+import { EventRow, MemberRow } from '@/lib/types';
+import { formatDateTime } from '@/lib/labels';
+import { monthlyVisitAndActiveTrend } from '@/lib/dashboard';
 import { useT } from '@/lib/i18n';
-import { MemberStatus, MODULE_DISCIPLESHIP } from '@tog/shared';
+import { AccountRole, MemberStatus, ChurchRole } from '@tog/shared';
+
+/** Trailing months the trend chart covers. */
+const TREND_MONTHS = 6;
 
 export default function DashboardPage() {
   const t = useT();
   usePageChrome({ title: t('dash.title') }, [t]);
 
+  // `events` is NOT in a group_leader's allowed API prefixes (`events/services
+  // roll call` is out of its scope entirely) — `GET /members` narrows to its
+  // own group on its own (server-side), so that half of the dashboard needs
+  // no page-specific change, but `/events` would otherwise 403 on every load
+  // and paint a scary error banner where the upcoming-events table goes.
+  const isGroupLeader = useMe().role === AccountRole.GroupLeader;
   const members = useFetch<MemberRow[]>('/members');
-  const events = useFetch<EventRow[]>('/events');
-  // 四十天守望 is an add-on: a church that does not run it gets neither the
-  // KPI nor the panel — and, crucially, neither of its fetches, which the API
-  // would (correctly) refuse.
-  const discipleshipOn = useModuleEnabled(MODULE_DISCIPLESHIP);
-  const programs = useFetch<ProgramRow[]>(discipleshipOn ? '/discipleship/programs' : null);
-  // The 守望 KPI reads the FIRST 守望模块 — the church runs one, and the
-  // dashboard deliberately carries no module picker (that lives on
-  // /discipleship). If a second module is ever added, this tile needs a
-  // decision — sum every module, or say which one it is counting.
-  const firstProgram = programs.data?.[0]?.id;
-  const overview = useFetch<OverviewRow[]>(
-    discipleshipOn && firstProgram ? `/discipleship/programs/${firstProgram}/overview` : null,
-  );
+  const events = useFetch<EventRow[]>(isGroupLeader ? null : '/events');
 
-  const loading = members.initialLoading || events.initialLoading;
-  const error = members.error || events.error;
+  const [showVisits, setShowVisits] = useState(true);
+  const [showActive, setShowActive] = useState(true);
+
+  const loading = members.initialLoading || (!isGroupLeader && events.initialLoading);
+  const error = members.error || (isGroupLeader ? null : events.error);
 
   const memberList = members.data ?? [];
-  const overviewList = overview.data ?? [];
 
-  const activeCount = memberList.filter((m) => m.status === MemberStatus.Active).length;
+  // Excludes visitors, for the same headline definition of "active member"
+  // this page uses everywhere else on it (the trend's own Active Members
+  // series makes the same exclusion, right below).
+  const activeCount = memberList.filter(
+    (m) => m.status === MemberStatus.Active && m.church_role !== ChurchRole.Visitor,
+  ).length;
+
+  const trend = useMemo(
+    () => monthlyVisitAndActiveTrend(memberList, TREND_MONTHS),
+    [memberList],
+  );
 
   const upcoming = useMemo(
     () =>
       (events.data ?? [])
         .filter((e) => new Date(e.starts_at) >= new Date())
-        .sort((a, b) => +new Date(a.starts_at) - +new Date(b.starts_at)),
+        .sort((a, b) => +new Date(a.starts_at) - +new Date(b.starts_at))
+        .slice(0, 5),
     [events.data],
   );
 
-  const activePairs = overviewList.filter((o) => Number(o.percent_complete) < 100).length;
-
-  const roleChart = useMemo(() => {
-    const counts: Record<string, number> = {};
-    ROLE_ORDER.forEach((r) => (counts[r] = 0));
-    for (const m of memberList) {
-      const r = memberRole(m);
-      if (counts[r] != null) counts[r]++;
-    }
-    const max = Math.max(1, ...Object.values(counts));
-    return ROLE_ORDER.map((r) => ({
-      key: r,
-      label: t(roleKey(r)),
-      count: counts[r],
-      width: `${(counts[r] / max) * 100}%`,
-      // The role's dot colour at ~65% alpha — same palette as the badges but
-      // with real presence (the pale tag background alone was too faint).
-      fill: `${roleDot(r)}A6`,
-      fg: roleTagStyle(r).color,
-    }));
-  }, [memberList, t]);
-
-  const discFocus = useMemo(
-    () =>
-      [...overviewList]
-        .sort((a, b) => Number(a.percent_complete) - Number(b.percent_complete))
-        .slice(0, 5),
-    [overviewList],
-  );
-
-  const kpis = [
-    { label: t('dash.kpi.members'), value: memberList.length, suffix: t('dash.unit.people') },
-    { label: t('dash.kpi.active'), value: activeCount, suffix: t('dash.unit.people') },
-    { label: t('dash.kpi.events'), value: upcoming.length, suffix: t('dash.unit.events') },
-    // Only when the church runs the module — a tile that always reads 0 would
-    // be worse than no tile.
-    ...(discipleshipOn
-      ? [{ label: t('dash.kpi.discipleship'), value: activePairs, suffix: t('dash.unit.pairs') }]
-      : []),
-  ];
-
-  // The dashboard is four KPI tiles over three panels — the skeleton lays out
-  // exactly that, so the numbers land in tiles that are already there.
+  // The page is three sections now: the trend chart, the upcoming-events
+  // table, and one KPI tile — the skeleton lays out exactly that.
   if (loading)
     return (
       <SkeletonScreen>
-        <div className="grid g4">
-          {kpis.map((k) => (
-            <div className="stat" key={k.label}>
-              <Skeleton width={92} height={11} />
-              <Skeleton width={64} height={28} style={{ marginTop: 10 }} />
-            </div>
-          ))}
+        <div className="card" aria-hidden="true">
+          <div className="card-head">
+            <Skeleton width="42%" height={16} />
+            <Skeleton width={160} height={26} radius={999} />
+          </div>
+          <Skeleton height={220} radius={10} />
         </div>
-        <SkeletonCards className="grid g2-wide mt-16" count={2} lines={5} />
         <div className="mt-16">
-          <SkeletonCard lines={5} />
+          <SkeletonTable rows={5} columns={3} />
+        </div>
+        <div className="stat mt-16" style={{ maxWidth: 260 }}>
+          <Skeleton width={120} height={11} />
+          <Skeleton width={64} height={28} style={{ marginTop: 10 }} />
         </div>
       </SkeletonScreen>
     );
@@ -121,109 +81,164 @@ export default function DashboardPage() {
     <>
       <ErrorBanner message={error} />
 
-      <div className="grid g4">
-        {kpis.map((k) => (
-          <div className="stat" key={k.label}>
-            <div className="label">{k.label}</div>
-            <div className="value">
-              {k.value}
-              {k.suffix && <span className="unit">{k.suffix}</span>}
-            </div>
-          </div>
-        ))}
-      </div>
+      <TrendCard trend={trend} showVisits={showVisits} showActive={showActive} onToggleVisits={() => setShowVisits((v) => !v)} onToggleActive={() => setShowActive((v) => !v)} />
 
-      <div className="grid g2-wide mt-16">
-        <Card
-          title={t('dash.roleChart')}
-          right={<span className="muted" style={{ fontSize: 12 }}>{t('dash.memberTotal', { n: memberList.length })}</span>}
-        >
-          {roleChart.map((r) => (
-            <div
-              key={r.key}
-              style={{
-                display: 'grid',
-                gridTemplateColumns: '96px 1fr 34px',
-                alignItems: 'center',
-                gap: 12,
-                padding: '5px 0',
-              }}
-            >
-              <div style={{ fontSize: 12.5 }}>{r.label}</div>
-              <div style={{ height: 22, borderRadius: 6, background: 'var(--surface-2)', overflow: 'hidden' }}>
-                <div style={{ height: '100%', borderRadius: 6, width: r.width, background: r.fill }} />
-              </div>
-              <div style={{ fontSize: 13, fontWeight: 600, textAlign: 'right', color: r.count ? r.fg : 'var(--muted)' }} className="tnum">
-                {r.count}
-              </div>
-            </div>
-          ))}
-        </Card>
-
-        <Card
-          title={t('dash.upcoming')}
-          right={
-            <Link className="muted" href="/events" style={{ fontSize: 12, fontWeight: 600 }}>
-              {t('dash.viewAll')}
-            </Link>
-          }
-        >
-          {upcoming.length === 0 ? (
-            <p className="faint" style={{ fontSize: 13 }}>{t('dash.noUpcoming')}</p>
-          ) : (
-            upcoming.slice(0, 5).map((e) => (
-              <div key={e.id} className="flex items-center gap-10 flex-wrap" style={{ padding: '11px 0', borderBottom: '1px solid var(--border)' }}>
-                <span className={`badge ${eventBadgeClass(e.event_type)}`}>
-                  {t(eventTypeKey(e.event_type))}
-                </span>
-                <strong style={{ fontSize: 13 }}>{e.title}</strong>
-                <div className="grow" />
-                <span className="muted" style={{ fontSize: 12.5, whiteSpace: 'nowrap' }}>
-                  {formatDateTime(e.starts_at)}{e.location ? ` · ${e.location}` : ''}
-                </span>
-              </div>
-            ))
-          )}
-        </Card>
-      </div>
-
-      {discipleshipOn && (
       <div className="mt-16">
-        <Card
-          title={t('dash.discProgress')}
-          right={
-            <Link className="muted" href="/discipleship" style={{ fontSize: 12, fontWeight: 600 }}>
-              {t('dash.pastorOverview')}
-            </Link>
-          }
+        <UpcomingEventsCard events={upcoming} />
+      </div>
+
+      <div className="stat mt-16" style={{ maxWidth: 260 }}>
+        <div className="label">{t('dash.kpi.totalActive')}</div>
+        <div className="value">{activeCount}</div>
+      </div>
+    </>
+  );
+}
+
+/**
+ * A. The "New Visits" vs "Active Members" line chart — hand-rolled SVG, like
+ * every other chart in this codebase (there is no charting library here and
+ * this does not add one). Two independent toggle chips, reusing this app's
+ * own chip pattern (the state filters on `/discipleship`) rather than
+ * inventing new toggle markup (rule G4); both default on.
+ */
+function TrendCard({
+  trend,
+  showVisits,
+  showActive,
+  onToggleVisits,
+  onToggleActive,
+}: {
+  trend: { month: string; visits: number; active: number }[];
+  showVisits: boolean;
+  showActive: boolean;
+  onToggleVisits: () => void;
+  onToggleActive: () => void;
+}) {
+  const t = useT();
+
+  const svgW = 640;
+  const svgH = 220;
+  const padL = 30;
+  const padR = 12;
+  const padT = 14;
+  const padB = 26;
+  const plotW = svgW - padL - padR;
+  const plotH = svgH - padT - padB;
+
+  const visible = [
+    ...(showVisits ? trend.map((p) => p.visits) : []),
+    ...(showActive ? trend.map((p) => p.active) : []),
+  ];
+  const maxVal = Math.max(1, ...visible);
+
+  const xFor = (i: number) => (trend.length <= 1 ? padL + plotW / 2 : padL + (i / (trend.length - 1)) * plotW);
+  const yFor = (v: number) => padT + plotH - (v / maxVal) * plotH;
+
+  const pointsFor = (key: 'visits' | 'active') =>
+    trend.map((p, i) => `${xFor(i)},${yFor(p[key])}`).join(' ');
+
+  const nothingSelected = !showVisits && !showActive;
+
+  return (
+    <Card
+      title={t('dash.trend.title')}
+      right={
+        <div className="flex gap-6 flex-wrap">
+          <button className={`chip ${showVisits ? 'on' : ''}`} onClick={onToggleVisits} aria-pressed={showVisits}>
+            <i style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--brand)', display: 'inline-block' }} />
+            {t('dash.trend.visits')}
+          </button>
+          <button className={`chip ${showActive ? 'on' : ''}`} onClick={onToggleActive} aria-pressed={showActive}>
+            <i style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--accent)', display: 'inline-block' }} />
+            {t('dash.trend.active')}
+          </button>
+        </div>
+      }
+    >
+      {nothingSelected ? (
+        <p className="faint" style={{ fontSize: 13 }}>{t('dash.trend.empty')}</p>
+      ) : (
+        <svg
+          viewBox={`0 0 ${svgW} ${svgH}`}
+          style={{ width: '100%', height: 220, display: 'block' }}
+          preserveAspectRatio="none"
+          role="img"
+          aria-label={t('dash.trend.title')}
         >
-          {discFocus.length === 0 ? (
-            <p className="faint" style={{ fontSize: 13 }}>{t('dash.noDisc')}</p>
-          ) : (
-            discFocus.map((d) => (
-              <div key={d.pair_id} className="flex items-center gap-12" style={{ padding: '9px 0', borderBottom: '1px solid var(--border)' }}>
-                {/* One line per pair, and the Chinese name only: this KPI card
-                    reads off `discipleship_pair_summary`, a database VIEW that
-                    aggregates a pair down to two names and a percentage. The
-                    English name lives on the member row, which this summary
-                    never joins — 守望配对 itself, one tap away, shows both. */}
-                <div className="grow" style={{ fontSize: 13 }}>
-                  {d.trainee_name} <span className="faint">← {d.mentor_name}</span>
+          <line x1={padL} y1={padT + plotH} x2={svgW - padR} y2={padT + plotH} stroke="var(--border)" strokeWidth="1" />
+          {showVisits && (
+            <polyline points={pointsFor('visits')} fill="none" stroke="var(--brand)" strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
+          )}
+          {showActive && (
+            <polyline points={pointsFor('active')} fill="none" stroke="var(--accent)" strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
+          )}
+          {showVisits &&
+            trend.map((p, i) => (
+              <circle key={`v-${p.month}`} cx={xFor(i)} cy={yFor(p.visits)} r={3} fill="var(--brand)" />
+            ))}
+          {showActive &&
+            trend.map((p, i) => (
+              <circle key={`a-${p.month}`} cx={xFor(i)} cy={yFor(p.active)} r={3} fill="var(--accent)" />
+            ))}
+          {trend.map((p, i) => (
+            <text key={p.month} x={xFor(i)} y={svgH - 8} fontSize="10" textAnchor="middle" fill="var(--muted)">
+              {p.month.slice(5)}
+            </text>
+          ))}
+        </svg>
+      )}
+    </Card>
+  );
+}
+
+/**
+ * B. The next 5 upcoming events, as an actual table — desktop table + mobile
+ * tile fallback, the same split every list in this app uses (rule G7).
+ */
+function UpcomingEventsCard({ events }: { events: EventRow[] }) {
+  const t = useT();
+  return (
+    <Card title={t('dash.upcoming')}>
+      {events.length === 0 ? (
+        <p className="faint" style={{ fontSize: 13 }}>{t('dash.noUpcoming')}</p>
+      ) : (
+        <>
+          <div className="table-wrap only-desktop">
+            <table className="table-fixed">
+              <thead>
+                <tr>
+                  <th>{t('events.field.date')}</th>
+                  <th>{t('events.field.title')}</th>
+                  <th>{t('events.field.location')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {events.map((e) => (
+                  <tr key={e.id}>
+                    <td className="muted tnum">{formatDateTime(e.starts_at)}</td>
+                    <td>{e.title}</td>
+                    <td className="muted">{e.location ?? '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="only-mobile">
+            {events.map((e) => (
+              <div key={e.id} className="mtile">
+                <div className="mtile-row1">
+                  <strong style={{ fontSize: 13 }}>{e.title}</strong>
                 </div>
-                <div className="flex items-center gap-10" style={{ width: 150 }}>
-                  <div className="bar thin">
-                    <span style={{ width: `${d.percent_complete}%` }} />
-                  </div>
-                  <span className="muted tnum" style={{ fontSize: 12, minWidth: 34 }}>
-                    {d.days_completed}/{d.total_days}
-                  </span>
+                <div className="mtile-line">
+                  {formatDateTime(e.starts_at)}
+                  {e.location ? ` · ${e.location}` : ''}
                 </div>
               </div>
-            ))
-          )}
-        </Card>
-      </div>
+            ))}
+          </div>
+        </>
       )}
-    </>
+    </Card>
   );
 }

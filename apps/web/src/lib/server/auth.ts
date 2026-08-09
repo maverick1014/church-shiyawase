@@ -50,6 +50,14 @@ export interface Session {
   member: string | null;
   /** Hall this account is scoped to; null = 全堂权限 (all halls). */
   hall: string | null;
+  /**
+   * Group this account is scoped to — meaningful only for `group_leader`
+   * (migration 0026), mirroring how `hall` works for a hall-scoped account:
+   * read straight off `app_users.group_id` at login, never re-derived from
+   * the linked member, so it stays whatever `syncGroupLeaderAccount` last set
+   * it to. Null for every other role.
+   */
+  group: string | null;
   name: string;
   exp: number;
 }
@@ -100,6 +108,33 @@ export async function hashPassword(pw: string): Promise<string> {
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const bits = await pbkdf2(pw, salt, PBKDF2_ITERS, 32);
   return `pbkdf2$${PBKDF2_ITERS}$${b64url(salt)}$${b64url(bits)}`;
+}
+
+/**
+ * An alphabet a human can read off a screen and retype without ambiguity:
+ * no `0`/`O`, no `1`/`l`/`I` — the four characters that look alike in most
+ * fonts. Mixed case + digits, same as every other password this app accepts.
+ */
+const PASSWORD_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
+
+/**
+ * A random plaintext password for an account the SERVER creates on somebody's
+ * behalf (today: a 小组长's auto-provisioned login — `syncGroupLeaderAccount`
+ * in `api/[...path]/route.ts`). Web Crypto only (`crypto.getRandomValues`),
+ * same as `hashPassword`'s own salt — there is no Node `crypto` module inside
+ * a Cloudflare Worker.
+ *
+ * Returns PLAINTEXT. The caller must hash it with `hashPassword` immediately
+ * and must never persist, log, or echo it anywhere except the one API
+ * response that creates the account — rule G6 ("never stored/logged in
+ * plaintext") applies to a generated password exactly as it does to one a
+ * human typed.
+ */
+export function generateRandomPassword(length = 12): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(length));
+  let out = '';
+  for (let i = 0; i < length; i++) out += PASSWORD_ALPHABET[bytes[i] % PASSWORD_ALPHABET.length];
+  return out;
 }
 
 function timingSafeEqual(a: Uint8Array, b: Uint8Array): boolean {

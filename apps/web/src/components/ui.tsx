@@ -13,7 +13,9 @@ import {
 } from 'react';
 import { initialOf, roleDot, roleKey, roleTagStyle } from '@/lib/labels';
 import { comboboxFilter, nextActiveIndex, type ComboOption } from '@/lib/combobox';
+import { isListSeparatorKey, parseList } from '@/lib/members-import';
 import { useHallScope } from '@/lib/hall';
+import { compressImage } from '@/lib/imageCompress';
 import type { ColumnTickState } from '@/lib/sheet';
 import { useLang, useT } from '@/lib/i18n';
 
@@ -274,6 +276,25 @@ export function ModuleDisabled({ name }: { name: string }) {
   );
 }
 
+/**
+ * The role-boundary analogue of `ModuleDisabled`, same shape (a stated
+ * reason, never a crash or a blank list): what a group_leader account lands
+ * on if it reaches a page outside its own scope by URL — the nav entry is
+ * already gone (`AppShell.visibleItems`' `hiddenFor`), so this only catches a
+ * bookmark or a pasted link. The API refuses the same paths regardless (the
+ * group_leader prefix allowlist in `api/[...path]/route.ts`); this is only
+ * the explanation.
+ */
+export function RoleRestricted() {
+  const t = useT();
+  return (
+    <Empty>
+      <div style={{ fontWeight: 600, marginBottom: 6 }}>{t('access.restricted.title')}</div>
+      <div style={{ fontSize: 13 }}>{t('access.restricted.body')}</div>
+    </Empty>
+  );
+}
+
 /* -------------------------------------------------------------------------
  * Avatar, badges
  * ---------------------------------------------------------------------- */
@@ -406,7 +427,10 @@ export function PhotoPicker({
           type="file"
           accept="image/*"
           aria-label={t('photo.choose')}
-          onChange={(e) => onChange(e.target.files?.[0] ?? null)}
+          onChange={async (e) => {
+            const picked = e.target.files?.[0] ?? null;
+            onChange(picked ? await compressImage(picked) : null);
+          }}
           style={{ display: 'none' }}
         />
       </div>
@@ -1072,10 +1096,28 @@ export function Combobox({
 }
 
 /**
- * Free-form tag entry: type a tag + Enter/comma to add it as a removable
- * chip. Reuses the existing `.chip` filter-chip look (no new CSS). Optional
- * `suggestions` (e.g. every tag already used elsewhere) power a native
- * `<datalist>` autocomplete so admins don't fragment spellings.
+ * Free-form tag entry: type a tag and it becomes a removable chip. Reuses the
+ * existing `.chip` filter-chip look (no new CSS). Optional `suggestions` (e.g.
+ * every tag already used elsewhere) power a native `<datalist>` autocomplete so
+ * admins don't fragment spellings.
+ *
+ * WHAT ENDS A TAG is the whole design of this control, and it used to be Enter
+ * or a comma and nothing else — so typing a ministry and going straight to Save
+ * left the text sitting in this input while the form dutifully saved an empty
+ * list. On a phone the on-screen key says 完成 / next rather than Enter, which
+ * made the silent loss the ORDINARY way to use it. So:
+ *
+ *  - leaving the field commits what is in it, because that is what finishing
+ *    typing looks like;
+ *  - every separator a church might reach for ends a tag too, read from the
+ *    one place that already decides where an item ends (`LIST_SEPARATORS` in
+ *    `lib/members-import.ts`), so a list is entered the same way here as it is
+ *    written into a spreadsheet cell (rule G4);
+ *  - and a pasted `敬拜、音响` becomes two chips rather than one long one.
+ *
+ * The chip's own × takes focus away from the input, which would commit the
+ * draft first — so it refuses the mousedown and the field never blurs, exactly
+ * as the `Combobox`'s clear button does.
  */
 let tagsInputId = 0;
 export function TagsInput({
@@ -1094,8 +1136,8 @@ export function TagsInput({
   const [listId] = useState(() => `tags-suggest-${tagsInputId++}`);
 
   const commit = (raw: string) => {
-    const t = raw.trim();
-    if (t && !value.includes(t)) onChange([...value, t]);
+    const added = parseList(raw).filter((tag) => !value.includes(tag));
+    if (added.length > 0) onChange([...value, ...added]);
     setDraft('');
   };
 
@@ -1108,6 +1150,10 @@ export function TagsInput({
               {t}
               <button
                 type="button"
+                // Keep the focus where it is: blurring the input would commit
+                // whatever is half-typed in it as a new chip on the way to
+                // removing this one.
+                onMouseDown={(e) => e.preventDefault()}
                 onClick={() => onChange(value.filter((x) => x !== t))}
                 aria-label={tr('common.removeTag', { name: t })}
                 style={{
@@ -1131,11 +1177,12 @@ export function TagsInput({
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
         onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ',') {
+          if (e.key === 'Enter' || isListSeparatorKey(e.key)) {
             e.preventDefault();
             commit(draft);
           }
         }}
+        onBlur={() => commit(draft)}
         list={suggestions?.length ? listId : undefined}
         placeholder={placeholder ?? tr('common.tagsPlaceholder')}
       />

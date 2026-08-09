@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import { useFetch } from '@/lib/hooks';
 import { api } from '@/lib/api';
+import { compressImage } from '@/lib/imageCompress';
 import { usePageChrome, useMe } from '@/components/AppShell';
 import { useChurchScope } from '@/lib/church';
 import {
@@ -142,11 +143,12 @@ function ChurchProfileCard({
   // storage bucket → the URL onto the row), so there is one mechanism for
   // images rather than two (rule G4).
   const onPickLogo = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const picked = e.target.files?.[0];
+    if (!picked) return;
     setUploading(true);
     setErr(null);
     try {
+      const file = await compressImage(picked);
       const fd = new FormData();
       fd.append('file', file);
       await api.upload('/church/logo', fd);

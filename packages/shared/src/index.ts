@@ -57,11 +57,21 @@ export interface OptionalModule {
  */
 /** The 四十天守望 add-on. Named so call sites don't retype a magic string. */
 export const MODULE_DISCIPLESHIP = 'discipleship';
+/**
+ * The 幸福小组 add-on (migration 0022). The key MUST stay exactly `'happiness'`
+ * — a church's `church_modules` row is seeded with that string, and a
+ * mismatch here would orphan it (the row would name a module this code never
+ * registers, so the switch on `/church` could never turn it back on).
+ */
+export const MODULE_HAPPINESS = 'happiness';
 
 export const OPTIONAL_MODULES: readonly OptionalModule[] = [
   // 四十天守望 — the forty-day one-to-one discipleship section. Only some
   // churches run it, which is why it is the first module to become optional.
   { key: MODULE_DISCIPLESHIP, nav: '/discipleship', api: ['discipleship'] },
+  // 幸福小组 — term-based small groups: 期 (term) → group → roster + weekly
+  // roll call. Staff/leader-only, no public form (unlike 守望's mentor link).
+  { key: MODULE_HAPPINESS, nav: '/happiness', api: ['happiness'] },
 ];
 
 /** Every registered module key, in catalog order. */
@@ -285,6 +295,13 @@ export enum ChurchRole {
   Deacon = 'deacon', // 执事
   CoWorker = 'co_worker', // 同工
   Member = 'member', // 一般成员 (real rank derived from group position)
+  /**
+   * 访客 — somebody who comes but has not joined (migration 0021). A church
+   * ROLE rather than a status: "visitor" is what they are to the church, not
+   * whether their record is active, so a visitor who stops coming is an
+   * inactive visitor and both facts survive.
+   */
+  Visitor = 'visitor',
 }
 
 /**
@@ -338,6 +355,10 @@ export const DISPLAY_ROLE_ORDER: DisplayRole[] = [
   DisplayRole.CoreMember,
   DisplayRole.RegularMember,
   DisplayRole.NewMember,
+  // Last, because it is where somebody starts: a visitor holds no rank in a
+  // group, and reading the list top to bottom is reading it from the pulpit
+  // to the door.
+  DisplayRole.Visitor,
 ];
 
 /** A group position maps 1:1 onto the display role of the same rank. */
@@ -358,6 +379,10 @@ export function displayRole(m: {
   if (m.church_role === ChurchRole.Pastor) return DisplayRole.Pastor;
   if (m.church_role === ChurchRole.Deacon) return DisplayRole.Deacon;
   if (m.church_role === ChurchRole.CoWorker) return DisplayRole.CoWorker;
+  // Before the group position, like every other church-wide role: a visitor
+  // sitting in on a life group is still a visitor, which is the whole reason
+  // this is a role rather than a status.
+  if (m.church_role === ChurchRole.Visitor) return DisplayRole.Visitor;
   if (m.group_position) return POSITION_DISPLAY_ROLE[m.group_position];
   return DisplayRole.Ungrouped;
 }
@@ -394,16 +419,43 @@ export interface Member {
   english_name: string | null;
   email: string | null;
   phone: string | null;
+  /**
+   * Free text, as you would write it on an envelope (migration 0021).
+   * Deliberately not street / unit / postcode / state: every attempt to model
+   * a Malaysian address that way leaves half the rows working around it.
+   */
+  address: string | null;
+  /**
+   * 推荐人 — the member who brought this person, or null for the ordinary case
+   * of nobody (migration 0021). The church's record of how somebody arrived,
+   * which is why it is the church's to write and not the person's.
+   */
+  referred_by: string | null;
   gender: Gender | null;
   date_of_birth: string | null;
   church_role: ChurchRole;
   status: MemberStatus;
   group_id: string | null;
   group_position: GroupPosition | null;
-  household_id: string | null;
   hall_id: string;
+  /** 来访日期 — when this person first came (label only; the column is unchanged). */
   joined_at: string | null;
+  /**
+   * 加入小组日期 — when they joined their CURRENT group (migration 0023). A
+   * separate fact from `joined_at`: a person can join the church years before
+   * joining a group, or the other way round. Nullable and excluded from any
+   * report built on it, the same as `joined_at`.
+   */
+  group_joined_at: string | null;
   notes: string | null;
+  /**
+   * 服侍岗位 — the ministries this person serves in (migration 0019). Free text,
+   * several per person, `groups.tags`'s own shape. Empty = serves nowhere,
+   * which is a fact rather than a missing value; never null (defaults to `{}`).
+   */
+  serving_roles: string[];
+  /** Public URL of the uploaded avatar photo; null = none. */
+  avatar_url: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -644,6 +696,80 @@ export interface DiscipleshipPair {
 }
 
 // ---------------------------------------------------------------------------
+// 幸福小组 (Happiness Groups): 期 (term) → group → roster + weekly attendance
+// (migration 0022)
+// ---------------------------------------------------------------------------
+
+/**
+ * 期 — a term of 幸福小组. Church-wide, not per-congregation: several terms
+ * may overlap (an old one finishing while the next begins is normal), and
+ * every group inside one runs the same `weeks` — which is what makes "week 5"
+ * mean one thing across the term's groups and what makes one term comparable
+ * against the last.
+ */
+export interface HappinessTerm {
+  id: string;
+  term_no: number;
+  name: string | null;
+  /** How many weeks every group in this term runs. 1..52, default 8. */
+  weeks: number;
+  starts_on: string | null;
+  ends_on: string | null;
+  created_at: string;
+}
+
+/**
+ * One 幸福小组 inside a term. `hall_id` is a direct, required column — exactly
+ * like `groups` — because a 幸福小组 meets somewhere and belongs to a
+ * congregation (the hall gate reads it, rule G2); its LENGTH, unlike a life
+ * group's, comes from the term rather than being its own. `leader_id` is set
+ * null (never cascaded) if that member is deleted, so losing the leader's
+ * name never deletes the group and its roster with it.
+ */
+export interface HappinessGroup {
+  id: string;
+  term_id: string;
+  name: string;
+  hall_id: string;
+  leader_id: string | null;
+  meeting_day: Weekday | null;
+  meeting_time: string | null; // "HH:MM:SS" (Postgres `time`)
+  location: string | null;
+  created_at: string;
+}
+
+/**
+ * The roster: who is in a 幸福小组 — 教会成员 and 福友 alike. A 福友 is simply a
+ * `members` row carrying the 访客 church role (0021), so this is an ordinary
+ * join table rather than a second list of names.
+ */
+export interface HappinessGroupMember {
+  id: string;
+  group_id: string;
+  member_id: string;
+  created_at: string;
+}
+
+/**
+ * One week's roll call, PRESENCE-ONLY: a row means "present that week" — there
+ * is no boolean to flip. Marking present INSERTs; marking absent DELETES the
+ * row. This is the opposite convention from `DiscipleshipProgress` (which
+ * upserts a `completed` boolean) — do not copy that shape here.
+ *
+ * `week_number` is checked 1..52 by the database; the API additionally
+ * refuses a week beyond the TERM's own `weeks`, a bound the check constraint
+ * cannot reach. Weeks are counted by NUMBER, not by calendar date — the one
+ * roll call in the app that is not date-based.
+ */
+export interface HappinessAttendance {
+  id: string;
+  group_id: string;
+  member_id: string;
+  week_number: number;
+  created_at: string;
+}
+
+// ---------------------------------------------------------------------------
 // App users / login accounts (用户管理)
 // ---------------------------------------------------------------------------
 
@@ -655,6 +781,17 @@ export enum AccountRole {
   SuperAdmin = 'super_admin', // 超级管理员
   Admin = 'admin', // 管理员
   Coworker = 'coworker', // 同工
+  /**
+   * 小组长's auto-provisioned login (migration 0023/0026) — granted and
+   * revoked by the server itself (`syncGroupLeaderAccount`) whenever a
+   * member's `group_position` becomes or stops being `leader`, never created
+   * by hand through the accounts page. Scoped to exactly ONE group
+   * (`app_users.group_id`), which is narrower than every other role's
+   * hall-wide reach — a deliberate exception, not an oversight. Sits between
+   * `coworker` and `readonly` in the database enum (0023): real writes, but
+   * only inside its own group.
+   */
+  GroupLeader = 'group_leader', // 小组长（自动开通）
   ReadOnly = 'readonly', // 只读
 }
 
@@ -669,7 +806,7 @@ export enum AccountStatus {
  */
 export const LANGUAGES = ['en', 'zh', 'ms'] as const;
 export type Language = (typeof LANGUAGES)[number];
-export const DEFAULT_LANGUAGE: Language = 'en';
+export const DEFAULT_LANGUAGE: Language = 'zh';
 
 /** Coerce a stored/browser language tag (`zh-CN`, `en-US`, …) to a supported one. */
 export function normalizeLanguage(value: string | null | undefined): Language {

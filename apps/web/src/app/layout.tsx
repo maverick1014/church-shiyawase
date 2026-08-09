@@ -45,7 +45,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
+    <html lang="zh">
       <head>
         {/* The church's two theme colours, applied BEFORE the first paint from
             the pair this device last saw, so a themed church does not flash

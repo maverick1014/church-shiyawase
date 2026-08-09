@@ -13,6 +13,7 @@ import {
   Modal,
   MonthPicker,
   PageBar,
+  RoleRestricted,
   SheetTick,
   SheetTickAll,
   SheetTotals,
@@ -35,7 +36,7 @@ import { sheetColumnStates, sheetColumnWrites } from '@/lib/sheet';
 import { sheetTickKey } from '@/lib/labels';
 import { churchParts, fromChurchInput, toChurchInput } from '@/lib/time';
 import { useT } from '@/lib/i18n';
-import { EventType } from '@tog/shared';
+import { AccountRole, EventType } from '@tog/shared';
 
 /**
  * 崇拜与祷告会 — ONE roll-call sheet for the month.
@@ -57,7 +58,8 @@ export default function EventsPage() {
   const t = useT();
   const toast = useToast();
   const confirm = useConfirm();
-  const perms = can(useMe().role);
+  const me = useMe();
+  const perms = can(me.role);
 
   // Which month, defaulting to Malaysia's own calendar — on a UTC Worker the
   // first 8 hours of a new month still read as the old one (rule G6a).
@@ -74,26 +76,11 @@ export default function EventsPage() {
   // carries only the month.
   const sheet = useFetch<RollCallSheet>(`/attendance/sheet?year=${year}&month=${month}`);
   const columns = sheet.data?.columns ?? [];
+  // Every member, unfiltered — the same shape a life group's own card lists
+  // its roster in. A search box here would narrow what is DRAWN while leaving
+  // 全员到齐 and the totals row covering everybody, which read as a
+  // contradiction; simpler to list the whole congregation, always.
   const rows = sheet.data?.rows ?? [];
-  /**
-   * Finding one person on a sheet of the whole congregation.
-   *
-   * It narrows what is DRAWN and nothing else: the check-all still fills the
-   * column for everybody, and the footer still counts everybody, because
-   * "全员到齐" must not quietly come to mean "everyone matching what I typed"
-   * and an occasion's attendance is a fact about the occasion, not about a
-   * filter. The line under the bar says so whenever a search is on.
-   */
-  const [query, setQuery] = useState('');
-  const visibleRows = useMemo(() => {
-    const q2 = query.trim().toLowerCase();
-    if (!q2) return rows;
-    // Either name finds a person (0018) — the sheet lists everybody, and half
-    // the congregation is looked for by the English name they answer to.
-    return rows.filter((r) =>
-      `${r.member.full_name} ${r.member.english_name ?? ''}`.toLowerCase().includes(q2),
-    );
-  }, [rows, query]);
 
   const toggle = async (row: RollCallSheetRow, column: SheetColumn, tick: SheetTickName) => {
     const current = row.cells[column.key] ?? {};
@@ -231,32 +218,26 @@ export default function EventsPage() {
     }
   };
 
+  // Outside a group_leader's allowed API prefixes entirely (`events` is not
+  // in `GROUP_LEADER_PREFIXES`) — the nav entry is already gone; this only
+  // catches a bookmark (rule G2, same shape as `ModuleDisabled`).
+  if (me.role === AccountRole.GroupLeader) return <RoleRestricted />;
+
   return (
     <>
       <ErrorBanner message={sheet.error} />
 
       <PageBar
         filters={
-          <>
-            {/* Search first, then the dropdowns — the filter order every list
-                page uses (rule G7a). The placeholder is the members page's own
-                string: it is the same question. */}
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder={t('members.searchPlaceholder')}
-              aria-label={t('common.search')}
-            />
-            <MonthPicker
-              year={year}
-              month={month}
-              years={[nowParts.year, nowParts.year - 1]}
-              onChange={(next) => {
-                setYear(next.year);
-                setMonth(next.month);
-              }}
-            />
-          </>
+          <MonthPicker
+            year={year}
+            month={month}
+            years={[nowParts.year, nowParts.year - 1]}
+            onChange={(next) => {
+              setYear(next.year);
+              setMonth(next.month);
+            }}
+          />
         }
         actions={
           <>
@@ -282,23 +263,12 @@ export default function EventsPage() {
           </div>
         </div>
 
-        {/* Said out loud, because the numbers below do NOT follow the search:
-            the footer counts the whole congregation and the check-all fills it
-            for everybody. */}
-        {query.trim() && rows.length > 0 && (
-          <div className="faint mb-14" style={{ fontSize: 12 }}>
-            {t('events.searchCount', { n: visibleRows.length, total: rows.length })}
-          </div>
-        )}
-
         {sheet.initialLoading ? (
           <SkeletonScreen>
             <SkeletonTable rows={5} columns={7} bare />
           </SkeletonScreen>
         ) : rows.length === 0 ? (
           <div className="empty-inline">{t('events.sheetEmpty')}</div>
-        ) : visibleRows.length === 0 ? (
-          <div className="empty-inline">{t('events.searchEmpty', { q: query.trim() })}</div>
         ) : (
           <div className="table-wrap">
             <table className="sheet-table">
@@ -362,7 +332,7 @@ export default function EventsPage() {
                 </tr>
               </thead>
               <tbody>
-                {visibleRows.map((r) => (
+                {rows.map((r) => (
                   <tr key={r.member.id}>
                     <td><MemberName member={r.member} /></td>
                     {columns.map((c) => (

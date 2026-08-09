@@ -1,6 +1,7 @@
 import { getDb, HttpError, json, unwrap, unwrapWrite } from '@/lib/server/db';
 import {
   clearCookie,
+  generateRandomPassword,
   getSession,
   hashPassword,
   sessionCookie,
@@ -25,7 +26,10 @@ import {
   type PlannedRow,
 } from '@/lib/members-import';
 import {
+  AccountRole,
+  AccountStatus,
   ChurchRole,
+  GroupPosition,
   isOptionalModule,
   isTrainingKind,
   isUsableBrand,
@@ -55,7 +59,16 @@ export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 export const fetchCache = 'force-no-store';
 
-const MEMBER_SELECT = '*, group:groups(id,name), hall:halls(id,name)';
+/**
+ * 推荐人 is a foreign key from `members` back to `members`, so the embed has to
+ * say WHICH direction it means: `!referred_by` names the FK column, which is
+ * the many-to-one — the person who brought them, never the list of people they
+ * brought. The constraint name is not enough for a self-reference (PostgREST
+ * answers PGRST200 for it), and the row comes back null whenever nobody did,
+ * which is the ordinary case every reader has to guard (rule G6).
+ */
+const MEMBER_SELECT =
+  '*, group:groups(id,name), hall:halls(id,name), referrer:members!referred_by(id,full_name,english_name)';
 /**
  * A person, everywhere a name is only shown: the CHINESE name and the English
  * one under it (0018). Both travel together in every brief, because every list,
@@ -70,6 +83,13 @@ const PAIR_SELECT =
 const PAIR_SELECT_SCOPED =
   `*, mentor:members!discipleship_pairs_mentor_id_fkey!inner(${MEMBER_BRIEF}), trainee:members!discipleship_pairs_trainee_id_fkey(${MEMBER_BRIEF})`;
 const ACCOUNT_SELECT = `*, member:members(${ACCOUNT_MEMBER_BRIEF}), hall:halls(id,name)`;
+/**
+ * A 幸福小组, with its congregation, its leader (nullable) and its term's own
+ * length — every list/detail read below shares this shape, so a group never
+ * comes back missing the piece the page needs (rule G6: guard every join).
+ */
+const HAPPINESS_GROUP_SELECT =
+  '*, hall:halls(id,name), leader:members(id,full_name,english_name), term:happiness_terms(id,term_no,name,weeks)';
 
 /**
  * One value inside a PostgREST `or(…)` filter, quoted.
@@ -98,7 +118,7 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
     }
   };
 
-  const [r0, r1, r2, r3] = p;
+  const [r0, r1, r2, r3, r4] = p;
 
   // ---- Auth + access control ------------------------------------------------
   if (r0 === 'auth') return authRoute(method, req, p, db);
@@ -134,6 +154,12 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
   // to it and writes are forced onto it, server-side — the client never gets
   // to choose (rule G2: the server is authoritative).
   let hallScope: string | null = null;
+  // Group scope — meaningful only for a `group_leader` session (migration
+  // 0026), the same idea as `hallScope` but one dimension narrower: a
+  // group_leader sees and may write only its OWN group, never the whole hall
+  // its account happens to inherit. Read straight off the session (kept in
+  // sync by `syncGroupLeaderAccount`), never re-derived from the member.
+  let groupScope: string | null = null;
   // The account's permission role, for the handful of paths whose rule is more
   // than "may this role write at all" — a bulk import is one (see /members/
   // import). Null on the public forms, which have no account behind them.
@@ -142,6 +168,7 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
     const session = await getSession(req);
     if (!session) throw new HttpError(401, 'Not signed in');
     hallScope = session.hall ?? null;
+    groupScope = session.group ?? null;
     sessionRole = session.role;
     // Login accounts (emails, roles, sign-in history) are super_admin-only —
     // for reads as well as writes (rule G2), so the account list never leaks.
@@ -159,6 +186,40 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
       if (method === 'DELETE' && !['super_admin', 'admin'].includes(session.role))
         throw new HttpError(403, 'This role may not delete records');
     }
+  }
+
+  // ---- Group scope path allowlist (group_leader only) -----------------------
+  // A FOURTH dimension of access control, beside role/hall/module (rule G2):
+  // a group_leader's login is auto-provisioned for exactly one group
+  // (`syncGroupLeaderAccount`) and has no business anywhere outside it —
+  // narrower than every other role's hall-wide reach, on purpose. Rather than
+  // threading a scoping check through every handler below (error-prone, hard
+  // to audit), ONE early gate — the same shape as the module-enablement gate
+  // above — refuses any path this role has no reason to touch at all; the
+  // finer per-row group check (mirroring `hallFilter`'s own "session always
+  // wins" precedence) happens inside the members/groups/attendance handlers
+  // themselves, below.
+  if (sessionRole === AccountRole.GroupLeader) {
+    // `church` is included even though it owns nothing group-scoped: G2
+    // already guarantees `GET /church` (name/logo/theme) is readable by any
+    // signed-in account regardless of role, since the shell paints itself
+    // from it on every load — excluding it here would not deny anything a
+    // group_leader shouldn't see, it would just silently break their own
+    // sidebar's branding. Writing to `/church` stays gated to super_admin by
+    // its own existing role check, unaffected by this allowlist.
+    const GROUP_LEADER_PREFIXES = ['members', 'groups', 'attendance', 'auth', 'church'];
+    if (!GROUP_LEADER_PREFIXES.includes(r0 ?? ''))
+      throw new HttpError(403, 'A group leader account may not reach this part of the app');
+    // `app_users.group_id` is `on delete set null` — a group leader whose
+    // group was deleted has nothing left to be scoped to. Refused outright
+    // rather than silently falling through to "no narrowing", which is what a
+    // null `groupScope` would otherwise read as everywhere below (the same
+    // reasoning `hallScope` never needs, because a member's hall never goes
+    // away from under it). `church` is exempt for the same branding reason
+    // as above — a group leader stuck between reassignments should not also
+    // lose the sidebar's own colours.
+    if (!groupScope && r0 !== 'auth' && r0 !== 'church')
+      throw new HttpError(403, 'This account is not linked to a group — ask a church admin to reassign it');
   }
 
   // ---- Module enablement ----------------------------------------------------
@@ -199,6 +260,15 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
   const hallFilter: string | null = hallScope ?? (q.get('hall_id') || null);
 
   /**
+   * The group-scope analogue of `hallFilter`, same precedence rule: a
+   * group_leader's own group ALWAYS wins over whatever `?group_id=` a
+   * request carries, so it can never widen its view by sending a different
+   * one. For every other role this is simply the client's own `?group_id=`
+   * (or none), unchanged from before this feature existed.
+   */
+  const groupFilter: string | null = groupScope ?? (q.get('group_id') || null);
+
+  /**
    * Body for a hall-scoped INSERT. A single-hall account always writes into
    * its own hall (any hall_id the client sent is discarded); a full-access
    * account may pass one explicitly, and for trainings/events may leave it
@@ -206,6 +276,15 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
    */
   const withHall = (dto: Record<string, unknown>): Record<string, unknown> =>
     hallScope ? { ...dto, hall_id: hallScope } : dto;
+
+  /**
+   * Body for a group-scoped INSERT — the group-scope analogue of `withHall`:
+   * a group_leader always creates members into its OWN group (any group_id
+   * the client sent is discarded server-side, rule G2), the same "session
+   * always wins" reasoning `withHall` already applies to the hall.
+   */
+  const withGroupScope = (dto: Record<string, unknown>): Record<string, unknown> =>
+    groupScope ? { ...dto, group_id: groupScope } : dto;
 
   /** Reject an update that would move a record out of the caller's hall. */
   const assertHallWritable = (dto: Record<string, unknown>) => {
@@ -241,6 +320,65 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
     );
     if (row.hall_id !== null && row.hall_id !== hallScope)
       throw new HttpError(403, 'No permission to view another congregation\u2019s records');
+  };
+
+  /**
+   * For a group_leader session, the only `groups` row id it may ever address \u2014
+   * the group-scope analogue of `assertOwnsRow`/`assertRowReadable`, called
+   * ALONGSIDE them (never instead of \u2014 the hall check still applies too)
+   * wherever a `groups` row is read or written by id.
+   */
+  const assertGroupScope = (id: string) => {
+    if (groupScope && id !== groupScope)
+      throw new HttpError(403, 'No permission to access another group\u2019s records');
+  };
+
+  /**
+   * The same idea for a `members` row read: a group_leader may only open a
+   * member who currently belongs to its own group. Reads are guarded here
+   * because "GET is harmless" is not a defence (rule G2) \u2014 the list query
+   * already narrows by `groupFilter`, so a detail route must not hand the
+   * same row back by id regardless.
+   */
+  const assertMemberGroupReadable = async (id: string) => {
+    if (!groupScope) return;
+    const row = unwrap<{ group_id: string | null }>(
+      await db.from('members').select('group_id').eq('id', id).single(),
+    );
+    if (row.group_id !== groupScope)
+      throw new HttpError(403, 'No permission to view another group\u2019s records');
+  };
+
+  /**
+   * Reads a member's group state before a PATCH, and \u2014 for a group_leader
+   * session \u2014 asserts the write stays inside its own group. Unlike hall
+   * (which a member's `assertHallWritable` refuses to ever change),
+   * moving between groups is the ORDINARY shape of this write \u2014 that is what
+   * "add a member to my roster" and "remove one" both are \u2014 so the rule is
+   * nuanced rather than "must already match": a group_leader may touch a
+   * member whose CURRENT group is its own, or whose write is ADMITTING them
+   * into it, and the destination it names (if it names one) must be its own
+   * group or null (leaving) \u2014 never anywhere else, which is what stops a
+   * group_leader from re-homing somebody into a group that isn't theirs.
+   *
+   * Runs for every PATCH /members/:id regardless of role \u2014 the row it reads
+   * is reused as `previousPosition`/`previousGroupId` for
+   * `syncGroupLeaderAccount`, so this replaces what would otherwise be a
+   * second "before" read rather than adding one.
+   */
+  const beforeMemberWrite = async (id: string, dto: Record<string, unknown>) => {
+    const row = unwrap<{ group_id: string | null; group_position: string | null }>(
+      await db.from('members').select('group_id,group_position').eq('id', id).single(),
+    );
+    if (groupScope) {
+      const current = row.group_id;
+      const next = 'group_id' in dto ? (dto.group_id as string | null) : current;
+      if (current !== groupScope && next !== groupScope)
+        throw new HttpError(403, 'No permission to modify another group\u2019s records');
+      if (next !== null && next !== groupScope)
+        throw new HttpError(403, 'A group leader may only add members into their own group');
+    }
+    return row;
   };
 
   /**
@@ -365,13 +503,14 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
     // in their own details instead of somebody typing them off a paper slip.
     //
     // What this path CAN do, deliberately and exhaustively: add one member
-    // carrying a name pair, a phone, an email, a gender, a birthday, a
-    // congregation and one photo — or, when that pair is already on the roll,
-    // update those same contact details on that one row. What it CANNOT do:
-    // set a church role (every registration is an ordinary member), a status,
-    // a life group, a group position, notes, or a 服侍岗位 — a ministry is
-    // something the church hands out, never something a visitor claims for
-    // themselves. The fields are read by name from an allow-list, so a body
+    // carrying a name pair, a phone, an email, an address, a gender, a
+    // birthday, a congregation and one photo — or, when that pair is already on
+    // the roll, update those same contact details on that one row. What it
+    // CANNOT do: set a church role (every registration is an ordinary member),
+    // a status, a life group, a group position, notes, a 服侍岗位, or a 推荐人
+    // — a ministry is something the church hands out and a referral is the
+    // church's record of how somebody arrived, never something a visitor claims
+    // for themselves. The fields are read by name from an allow-list, so a body
     // carrying `church_role: 'pastor'` or `serving_roles: ['敬拜']` has it
     // ignored rather than obeyed; it can touch nobody but the single person
     // whose name pair was typed; and it reads nothing back — the answer is one
@@ -413,7 +552,7 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
       // again HERE, against the database as it is right now, because that
       // preview is a courtesy and this is the decision (rule G2).
       const plan = planImport(rows.map(incomingImportRow), ctx);
-      return json(await applyImport(db, plan));
+      return json(await applyImport(db, plan, ctx));
     }
     if (!r1) {
       if (method === 'GET') {
@@ -424,7 +563,7 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
         if (hallFilter) query = query.eq('hall_id', hallFilter);
         if (q.get('church_role')) query = query.eq('church_role', q.get('church_role'));
         if (q.get('group_position')) query = query.eq('group_position', q.get('group_position'));
-        if (q.get('group_id')) query = query.eq('group_id', q.get('group_id'));
+        if (groupFilter) query = query.eq('group_id', groupFilter);
         // Either name finds a person (0018): somebody who is filed as 陈约翰
         // is looked for as "John" just as often. The term is quoted, so a
         // comma or a parenthesis in it stays part of the search rather than
@@ -437,10 +576,27 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
         return json(unwrap(await query));
       }
       if (method === 'POST') {
-        return json(unwrap(await db.from('members').insert(withHall(await body())).select().single()));
+        const created = unwrap<
+          Record<string, unknown> & { id: string; group_id: string | null; group_position: string | null }
+        >(
+          await db
+            .from('members')
+            .insert(withGroupScope(withHall(await body())))
+            .select()
+            .single(),
+        );
+        const event = await syncGroupLeaderAccount(db, {
+          memberId: created.id,
+          previousPosition: null,
+          previousGroupId: null,
+          newPosition: created.group_position,
+          groupId: created.group_id,
+        });
+        return json({ ...created, leader_account_event: leaderEventForClient(event) });
       }
     } else if (r2 === 'trainings' && method === 'GET') {
       await assertRowReadable('members', r1);
+      await assertMemberGroupReadable(r1);
       return json(
         unwrap(
           await db
@@ -467,13 +623,30 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
     } else if (!r2) {
       if (method === 'GET') {
         await assertRowReadable('members', r1);
+        await assertMemberGroupReadable(r1);
         return json(unwrap(await db.from('members').select(MEMBER_SELECT).eq('id', r1).single()));
       }
       if (method === 'PATCH') {
         const dto = await body();
         assertHallWritable(dto);
         await assertOwnsRow('members', r1);
-        return json(unwrap(await db.from('members').update(dto).eq('id', r1).select().single()));
+        // Reads the row's group state before the write and, for a
+        // group_leader session, asserts the write stays inside its own
+        // group (see the function's own comment for the exact rule) —
+        // `before` is then reused as the sync hook's `previousPosition`/
+        // `previousGroupId` rather than reading the row a second time.
+        const before = await beforeMemberWrite(r1, dto);
+        const updated = unwrap<
+          Record<string, unknown> & { group_id: string | null; group_position: string | null }
+        >(await db.from('members').update(dto).eq('id', r1).select().single());
+        const event = await syncGroupLeaderAccount(db, {
+          memberId: r1,
+          previousPosition: before.group_position,
+          previousGroupId: before.group_id,
+          newPosition: updated.group_position,
+          groupId: updated.group_id,
+        });
+        return json({ ...updated, leader_account_event: leaderEventForClient(event) });
       }
       if (method === 'DELETE') {
         await assertOwnsRow('members', r1);
@@ -494,11 +667,12 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
    * one place, and there is no ambiguous-relationship shape to get wrong.
    */
   const assertGroupMeetingWritable = async (meetingId: string) => {
-    if (!hallScope) return;
+    if (!hallScope && !groupScope) return;
     const row = unwrap<{ group_id: string }>(
       await db.from('group_meetings').select('group_id').eq('id', meetingId).single(),
     );
     await assertOwnsRow('groups', row.group_id);
+    assertGroupScope(row.group_id);
   };
 
   // ---- Groups ---------------------------------------------------------------
@@ -522,6 +696,20 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
           if (!memberId) throw new HttpError(400, 'every record needs a member_id');
           return { meeting_id: r2, member_id: memberId, status: r.status ?? 'present' };
         });
+        // `assertGroupMeetingWritable` above only confirms the MEETING
+        // belongs to this group_leader's own group — the member ids inside
+        // `records` are addressed directly, so a hand-crafted request could
+        // otherwise write attendance for somebody outside it. Same guard as
+        // the services sheet's own member-addressed write, just for this
+        // group's meeting instead.
+        if (groupScope) {
+          const memberIds = records.map((r) => r.member_id);
+          const members = unwrap<Array<{ id: string; group_id: string | null }>>(
+            await db.from('members').select('id,group_id').in('id', memberIds),
+          );
+          if (members.some((m) => m.group_id !== groupScope))
+            throw new HttpError(403, 'No permission to modify another group’s records');
+        }
         return json(
           unwrap(
             await db
@@ -540,17 +728,29 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
       if (method === 'GET') {
         let query = db.from('groups').select('*, hall:halls(id,name)').order('name');
         if (hallFilter) query = query.eq('hall_id', hallFilter);
+        // A group_leader's own group is the only row it may ever see in this
+        // list — forced, exactly like `withGroupScope` forces an insert,
+        // never merely offered as an optional narrowing.
+        if (groupScope) query = query.eq('id', groupScope);
         return json(unwrap(await query));
       }
-      if (method === 'POST')
+      if (method === 'POST') {
+        // A group_leader has exactly one group by definition — creating a
+        // second one is not a narrower version of that group, it is a new
+        // one nothing scopes it to. Refused outright rather than silently
+        // widening what "its own group" means.
+        if (groupScope) throw new HttpError(403, 'No permission to create a group');
         return json(unwrap(await db.from('groups').insert(withHall(await body())).select().single()));
+      }
     } else if (r2 === 'attendance' && method === 'GET') {
       await assertRowReadable('groups', r1);
+      assertGroupScope(r1);
       return json(await groupAttendance(db, r1));
     } else if (r2 === 'meetings' && method === 'POST') {
       // The roll call creates the week's meeting row lazily, so this is a
       // write into the group and follows the same hall rule as editing it.
       await assertOwnsRow('groups', r1);
+      assertGroupScope(r1);
       const dto = await body();
       return json(
         unwrap(
@@ -564,6 +764,7 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
     } else if (!r2) {
       if (method === 'GET') {
         await assertRowReadable('groups', r1);
+        assertGroupScope(r1);
         const group = unwrap<Record<string, unknown>>(
           await db.from('groups').select('*, hall:halls(id,name)').eq('id', r1).single(),
         );
@@ -580,6 +781,7 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
         const dto = await body();
         assertHallWritable(dto);
         await assertOwnsRow('groups', r1);
+        assertGroupScope(r1);
         return json(unwrap(await db.from('groups').update(dto).eq('id', r1).select().single()));
       }
       if (method === 'DELETE') {
@@ -622,8 +824,16 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
       // the same guard the group's own detail route uses (rule G2): the hall
       // rules above still come first, and this parameter cannot be used to see
       // another congregation's roster.
-      const groupId = q.get('group_id') || null;
-      if (groupId) await assertRowReadable('groups', groupId);
+      //
+      // `groupFilter` rather than a bare `q.get('group_id')`: for a
+      // group_leader session its own group ALWAYS wins (the same precedence
+      // `hallFilter` uses), so it can never reach the unscoped, whole-
+      // congregation sheet just by omitting the parameter.
+      const groupId = groupFilter;
+      if (groupId) {
+        await assertRowReadable('groups', groupId);
+        assertGroupScope(groupId);
+      }
       return json(await rollCallSheet(db, hallFilter, year, month, groupId));
     }
     // ONE cell, or one whole column, through the SAME call.
@@ -641,6 +851,13 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
       const column = parseColumnKey(String(dto.column ?? ''));
       if (!column)
         throw new HttpError(400, `Unknown sheet column: ${String(dto.column ?? '')}`);
+      // A group_leader's card has no meeting columns at all (`rollCallSheet`
+      // returns none when `groupId` is set — a congregation meeting is not
+      // the group's to roll, per CLAUDE.md) — this refuses a hand-crafted PUT
+      // that names one directly, rather than relying on the GET response
+      // simply never offering the key.
+      if (groupScope && column.kind !== 'sunday')
+        throw new HttpError(403, 'A group leader may only mark Sunday attendance');
       const asked = Array.isArray(dto.member_ids)
         ? dto.member_ids
         : dto.member_id !== undefined
@@ -659,13 +876,20 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
       // hall_id), and a hall-pinned account may only tick its own hall's
       // members, exactly like every other write (rule G2). Read once for the
       // whole list, so a column of thirteen is still one lookup.
-      const members = unwrap<Array<{ id: string; hall_id: string }>>(
-        await db.from('members').select('id,hall_id').in('id', memberIds),
+      const members = unwrap<Array<{ id: string; hall_id: string; group_id: string | null }>>(
+        await db.from('members').select('id,hall_id,group_id').in('id', memberIds),
       );
       if (members.length !== memberIds.length)
         throw new HttpError(400, 'One of those members does not exist');
       if (hallScope && members.some((m) => m.hall_id !== hallScope))
         throw new HttpError(403, 'No permission to modify another congregation’s records');
+      // `groupFilter`/`groupScope` above already forces which ROSTER a
+      // group_leader is looking at, but the write is member-addressed rather
+      // than roster-addressed — this is what stops it from ticking a member
+      // id outside its own group even if one were hand-crafted into the
+      // request body.
+      if (groupScope && members.some((m) => m.group_id !== groupScope))
+        throw new HttpError(403, 'No permission to modify another group’s records');
 
       if (column.kind === 'sunday') {
         const serviceDate = column.date;
@@ -878,8 +1102,8 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
         // member, and that member must not already be on the list.
         if (!training.is_enrollable) return json({ status: 'closed' });
         if (!fullName) return json({ status: 'no_member' });
-        const matches = unwrap<Array<{ id: string; full_name: string }>>(
-          await db.from('members').select('id,full_name').eq('full_name', fullName),
+        const matches = unwrap<Array<{ id: string; full_name: string; gender: string | null }>>(
+          await db.from('members').select('id,full_name,gender').eq('full_name', fullName),
         );
         if (matches.length === 0) return json({ status: 'no_member' });
         if (matches.length > 1) return json({ status: 'ambiguous' });
@@ -892,6 +1116,12 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
             .eq('member_id', member.id),
         );
         if (existing.length > 0) return json({ status: 'already', name: member.full_name });
+
+        // 性别限制 (0024) — a real eligibility rule, not a UI hint, so a
+        // mismatch is refused here regardless of what the live "does this
+        // match?" check told the visitor while they were still typing.
+        if (training.gender && member.gender !== training.gender)
+          throw new HttpError(400, `This training is open to ${training.gender} members only`);
 
         // A 报名费 makes the receipt part of the sign-up, not an afterthought:
         // without it there is nothing for the admin to check before approving,
@@ -1029,24 +1259,22 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
         return json({ ...training, sessions, enrollments });
       }
       if (method === 'PATCH') {
-        const dto = trainingWrite(await body());
+        // `kind` is fixed at creation (0024 retires the course↔activity
+        // conversion this endpoint used to perform): trainingWrite() still
+        // 400s a junk value if one is sent, but `applyKindEffects: false`
+        // skips the total_sessions/ends_on mutation that value would
+        // otherwise carry (that only belongs to a CREATE), and the `kind`
+        // key itself is deleted below so it can never reach the update —
+        // there is no client left that sends it (the create path is the
+        // separate POST branch below, still using ensureSingleSession for
+        // its own, still-needed, invariant).
+        const dto = trainingWrite(await body(), { applyKindEffects: false });
+        delete dto.kind;
         assertHallWritable(dto);
         await assertOwnsRow('trainings', r1);
         const row = unwrap<{ id: string; kind: string }>(
           await db.from('trainings').update(dto).eq('id', r1).select().single(),
         );
-        // 形态可以互换 (0016): a course that turns out to be one afternoon
-        // becomes an activity, and an activity that grows becomes a course.
-        // Only one direction has anything to reconcile — an activity is ONE
-        // occasion, so its sessions above the first are removed here, taking
-        // their attendance with them (`training_attendance.session_id` is
-        // `on delete cascade`). The page names exactly what goes and asks
-        // first (rule G3); the invariant itself is the SERVER's, so a stale
-        // client can never leave a four-session activity behind (rule G2).
-        // The other way round needs nothing: the single session simply becomes
-        // session 1 of the course, keeping the roll call already taken.
-        if (dto.kind !== undefined && row.kind === TrainingKind.Activity)
-          await ensureSingleSession(db, row.id);
         return json(row);
       }
       if (method === 'DELETE') {
@@ -1262,6 +1490,143 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
     }
   }
 
+  // ---- 幸福小组 (Happiness Groups) --------------------------------------------
+  // 期 (term) → group → roster + weekly attendance. An add-on module (the gate
+  // above already refuses every /happiness/* path while it is off), staff/
+  // leader-only — no public form, unlike 守望's mentor link.
+  //
+  // Terms are church-wide (no hall column) and NOT create-once: several may
+  // overlap, and full CRUD applies. Groups carry `hall_id` directly — exactly
+  // like `groups` — so they use the same hall helpers as that section, never
+  // the more roundabout "hall comes from a joined member" pattern discipleship
+  // pairs need.
+  if (r0 === 'happiness') {
+    if (r1 === 'terms') {
+      if (!r2) {
+        if (method === 'GET') return json(await happinessTerms(db));
+        if (method === 'POST')
+          return json(unwrap(await db.from('happiness_terms').insert(await body()).select().single()));
+      } else if (!r3) {
+        if (method === 'GET')
+          return json(unwrap(await db.from('happiness_terms').select('*').eq('id', r2).single()));
+        if (method === 'PATCH')
+          return json(
+            unwrap(
+              await db.from('happiness_terms').update(await body()).eq('id', r2).select().single(),
+            ),
+          );
+        if (method === 'DELETE') {
+          // Cascades its groups, their rosters and every week of attendance
+          // (the FKs are `on delete cascade`, migration 0022). The DELETE
+          // method gate above is already super_admin/admin only; the CLIENT
+          // is what names the blast radius before this ever runs (rule G3).
+          unwrap(await db.from('happiness_terms').delete().eq('id', r2).select().single());
+          return json({ id: r2 });
+        }
+      }
+    } else if (r1 === 'groups') {
+      if (!r2) {
+        if (method === 'GET') {
+          let query = db.from('happiness_groups').select(HAPPINESS_GROUP_SELECT).order('created_at');
+          if (hallFilter) query = query.eq('hall_id', hallFilter);
+          if (q.get('term_id')) query = query.eq('term_id', q.get('term_id'));
+          return json(
+            await withRosterCounts(db, unwrap<Array<Record<string, unknown>>>(await query)),
+          );
+        }
+        if (method === 'POST')
+          return json(
+            unwrap(
+              await db
+                .from('happiness_groups')
+                .insert(withHall(await body()))
+                .select(HAPPINESS_GROUP_SELECT)
+                .single(),
+            ),
+          );
+      } else if (r3 === 'members') {
+        if (!r4 && method === 'POST') {
+          // Add one or several to the roster in one call — the same
+          // singular/list dual-accept the roll-call sheet uses
+          // (`member_ids` general, `member_id` its alias). Duplicates
+          // (already on the roster) are silently skipped rather than refused:
+          // re-adding somebody who is already there is not an error.
+          await assertOwnsRow('happiness_groups', r2);
+          const dto = await body();
+          const asked = Array.isArray(dto.member_ids)
+            ? dto.member_ids
+            : dto.member_id !== undefined
+              ? [dto.member_id]
+              : [];
+          const memberIds = [...new Set(asked.map((v) => String(v ?? '')).filter(Boolean))];
+          if (memberIds.length === 0)
+            throw new HttpError(400, 'member_id (or a non-empty member_ids) is required');
+          unwrap(
+            await db
+              .from('happiness_group_members')
+              .upsert(
+                memberIds.map((id) => ({ group_id: r2, member_id: id })),
+                { onConflict: 'group_id,member_id', ignoreDuplicates: true },
+              )
+              .select('id'),
+          );
+          return json({ group_id: r2, member_ids: memberIds, count: memberIds.length });
+        }
+        if (r4 && method === 'DELETE') {
+          // Deletes the ROSTER row only — `happiness_attendance` carries no FK
+          // to `happiness_group_members`, so a week they attended stays on the
+          // record even after they leave the roster (by design, per 0022).
+          await assertOwnsRow('happiness_groups', r2);
+          unwrap(
+            await db
+              .from('happiness_group_members')
+              .delete()
+              .eq('group_id', r2)
+              .eq('member_id', r4)
+              .select()
+              .single(),
+          );
+          return json({ group_id: r2, member_id: r4 });
+        }
+      } else if (r3 === 'attendance' && !r4) {
+        if (method === 'GET') {
+          await assertRowReadable('happiness_groups', r2);
+          return json(await happinessAttendance(db, r2));
+        }
+        if (method === 'PUT') {
+          await assertOwnsRow('happiness_groups', r2);
+          return json(await putHappinessAttendance(db, r2, await body()));
+        }
+      } else if (!r3) {
+        if (method === 'GET') {
+          await assertRowReadable('happiness_groups', r2);
+          return json(await happinessGroupDetail(db, r2));
+        }
+        if (method === 'PATCH') {
+          const dto = await body();
+          assertHallWritable(dto);
+          await assertOwnsRow('happiness_groups', r2);
+          return json(
+            unwrap(
+              await db
+                .from('happiness_groups')
+                .update(dto)
+                .eq('id', r2)
+                .select(HAPPINESS_GROUP_SELECT)
+                .single(),
+            ),
+          );
+        }
+        if (method === 'DELETE') {
+          // Cascades the roster and every week of attendance (0022).
+          await assertOwnsRow('happiness_groups', r2);
+          unwrap(await db.from('happiness_groups').delete().eq('id', r2).select().single());
+          return json({ id: r2 });
+        }
+      }
+    }
+  }
+
   // ---- Accounts -------------------------------------------------------------
   if (r0 === 'accounts') {
     if (!r1) {
@@ -1340,6 +1705,9 @@ const IMPORT_ISSUE_MESSAGE: Record<ImportIssue, string> = {
   unknown_hall: 'No congregation goes by that name',
   unknown_group: 'No life group goes by that name',
   unknown_role: 'That is not a church role this app knows',
+  unknown_referrer: 'Nobody on the roll goes by that name',
+  ambiguous_referrer: 'More than one member goes by that name — write the English name too',
+  self_referrer: 'Somebody cannot have referred themselves',
   unknown_gender: 'That is not a gender this app knows',
   unknown_status: 'That is not a member status this app knows',
   bad_date: 'That is not a date — write it as YYYY-MM-DD',
@@ -1379,7 +1747,7 @@ async function importContext(
   const [hallRes, groupRes, memberRes] = await Promise.all([
     db.from('halls').select('id,name').order('sort_order'),
     db.from('groups').select('id,name,hall_id'),
-    db.from('members').select('id,full_name,english_name,hall_id,group_position'),
+    db.from('members').select('id,full_name,english_name,hall_id,group_position,group_id'),
   ]);
   const halls = unwrap<Array<{ id: string; name: string }>>(hallRes);
   const groups = unwrap<Array<{ id: string; name: string; hall_id: string }>>(groupRes);
@@ -1427,10 +1795,28 @@ function incomingImportRow(raw: unknown, index: number): ImportRow {
  * at a time so a re-import of a whole congregation is seconds rather than
  * minutes.
  */
-async function applyImport(db: ReturnType<typeof getDb>, plan: ReturnType<typeof planImport>) {
+/** Enough of a written member row to feed `syncGroupLeaderAccount` after an import write. */
+type ImportedMemberRow = { id: string; group_id: string | null; group_position: string | null };
+
+async function applyImport(
+  db: ReturnType<typeof getDb>,
+  plan: ReturnType<typeof planImport>,
+  ctx: ImportContext,
+) {
   const failures: Array<{ row: number; message: string }> = [];
   let created = 0;
   let updated = 0;
+  // Every generated password this import produced — the ONE place its
+  // plaintext is ever available, exactly as a single promotion's own
+  // `leader_account_event: { event: 'created' }` is. An import cannot
+  // actually PROMOTE anyone today (`planImport` only ever assigns
+  // `GroupPosition.NewMember`, never `Leader`), so in practice this stays
+  // empty — kept here so the mechanism is correct the moment that changes,
+  // rather than needing a second pass through this function later.
+  const leaderAccounts: Array<{ row: number; email: string; password: string }> = [];
+  // Previous group state per existing member, for the sync hook's
+  // `previousPosition`/`previousGroupId` — read once rather than per row.
+  const existingById = new Map(ctx.existing.map((m) => [m.id, m]));
 
   const chunks = <T,>(list: T[], size: number): T[][] =>
     Array.from({ length: Math.ceil(list.length / size) }, (_, i) =>
@@ -1440,6 +1826,23 @@ async function applyImport(db: ReturnType<typeof getDb>, plan: ReturnType<typeof
   const updates = plan.rows.filter(
     (r): r is PlannedRow & { member_id: string } => r.action === 'update' && !!r.member_id,
   );
+
+  /** Sync the leader account for a just-written row, and record a generated password if any. */
+  const syncImportedRow = async (
+    row: ImportedMemberRow,
+    previousPosition: string | null,
+    previousGroupId: string | null,
+    spreadsheetRow: number,
+  ) => {
+    const event = await syncGroupLeaderAccount(db, {
+      memberId: row.id,
+      previousPosition,
+      previousGroupId,
+      newPosition: row.group_position,
+      groupId: row.group_id,
+    });
+    if (event.event === 'created') leaderAccounts.push({ row: spreadsheetRow, email: event.email, password: event.password });
+  };
 
   for (const chunk of chunks(creates, 50)) {
     // PostgREST refuses a bulk insert whose objects do not all carry the same
@@ -1459,37 +1862,66 @@ async function applyImport(db: ReturnType<typeof getDb>, plan: ReturnType<typeof
         columns.map((c) => [c, r.values[c] ?? (c === 'serving_roles' ? [] : null)]),
       ),
     );
-    const res = await db.from('members').insert(widened).select('id');
+    const res = await db.from('members').insert(widened).select('id,group_id,group_position');
     if (!res.error) {
       created += chunk.length;
+      const inserted = (res.data ?? []) as ImportedMemberRow[];
+      // A single INSERT ... VALUES (…), (…) returns its rows in the same
+      // order they were given, so this zips 1:1 with `chunk` by index.
+      for (let i = 0; i < chunk.length; i++) {
+        const row = inserted[i];
+        if (row) await syncImportedRow(row, null, null, chunk[i].row);
+      }
       continue;
     }
     for (const row of chunk) {
       try {
-        unwrap(await db.from('members').insert(row.values).select('id').single());
+        const inserted = unwrap<ImportedMemberRow>(
+          await db.from('members').insert(row.values).select('id,group_id,group_position').single(),
+        );
         created++;
+        await syncImportedRow(inserted, null, null, row.row);
       } catch (e) {
         failures.push({ row: row.row, message: rowFailure(e) });
       }
     }
   }
 
+  type UpdateResult =
+    | { ok: true; row: PlannedRow & { member_id: string }; updatedRow: ImportedMemberRow }
+    | { ok: false; row: PlannedRow & { member_id: string }; error: string };
+
   for (const chunk of chunks(updates, 10)) {
     const results = await Promise.all(
-      chunk.map(async (row) => {
+      chunk.map(async (row): Promise<UpdateResult> => {
         try {
-          unwrap(
-            await db.from('members').update(row.values).eq('id', row.member_id).select('id').single(),
+          const updatedRow = unwrap<ImportedMemberRow>(
+            await db
+              .from('members')
+              .update(row.values)
+              .eq('id', row.member_id)
+              .select('id,group_id,group_position')
+              .single(),
           );
-          return null;
+          return { ok: true, row, updatedRow };
         } catch (e) {
-          return { row: row.row, message: rowFailure(e) };
+          return { ok: false, row, error: rowFailure(e) };
         }
       }),
     );
     for (const result of results) {
-      if (result) failures.push(result);
-      else updated++;
+      if (!result.ok) {
+        failures.push({ row: result.row.row, message: result.error });
+        continue;
+      }
+      updated++;
+      const before = existingById.get(result.row.member_id);
+      await syncImportedRow(
+        result.updatedRow,
+        before?.group_position ?? null,
+        before?.group_id ?? null,
+        result.row.row,
+      );
     }
   }
 
@@ -1509,6 +1941,11 @@ async function applyImport(db: ReturnType<typeof getDb>, plan: ReturnType<typeof
         message: r.issue ? IMPORT_ISSUE_MESSAGE[r.issue] : 'Skipped',
       })),
     failures,
+    // A 小组长 login this import generated, per row — see the comment above
+    // `leaderAccounts`. Always present (possibly empty), the same "additive
+    // field, existing consumers ignore it" contract `leader_account_event`
+    // follows on the single-member write paths.
+    leader_accounts: leaderAccounts,
   };
 }
 
@@ -1518,6 +1955,12 @@ const REGISTER_FIELDS = [
   'english_name',
   'phone',
   'email',
+  // An address is a contact detail like the two above it — the church visits
+  // people and posts them things, and the person themselves is the one who
+  // knows it. `referred_by` is deliberately NOT here: who brought somebody is
+  // the CHURCH's record of how they arrived, not a claim the arriving person
+  // gets to make about themselves — the same reason `church_role` is absent.
+  'address',
   'gender',
   'date_of_birth',
 ] as const;
@@ -1799,6 +2242,7 @@ async function upsertProgress(
           completed: dto.completed ?? false,
           notes: dto.notes ?? null,
           entry_date: dto.entry_date ?? undefined,
+          entry_time: dto.entry_time ?? undefined,
         },
         { onConflict: 'pair_id,day_number' },
       )
@@ -1973,6 +2417,154 @@ async function groupAttendance(db: ReturnType<typeof getDb>, groupId: string) {
 }
 
 /**
+ * Every 幸福小组 term, newest first, each carrying how many groups run inside
+ * it — ONE extra query for the whole list rather than one per row (rule G6),
+ * so the term list and its delete confirmation both read a real count instead
+ * of an N+1 client-side fetch.
+ */
+async function happinessTerms(db: ReturnType<typeof getDb>) {
+  const [termsRes, groupsRes] = await Promise.all([
+    db.from('happiness_terms').select('*').order('term_no', { ascending: false }),
+    db.from('happiness_groups').select('id, term_id'),
+  ]);
+  const terms = unwrap<Array<Record<string, unknown>>>(termsRes);
+  const groups = unwrap<Array<{ id: string; term_id: string }>>(groupsRes);
+  const counts = new Map<string, number>();
+  for (const g of groups) counts.set(g.term_id, (counts.get(g.term_id) ?? 0) + 1);
+  return terms.map((t) => ({ ...t, group_count: counts.get(t.id as string) ?? 0 }));
+}
+
+/**
+ * The same "count once, for the whole list" shape for a group's roster size —
+ * read by the group list and by its own delete confirmation.
+ */
+async function withRosterCounts(
+  db: ReturnType<typeof getDb>,
+  groups: Array<Record<string, unknown>>,
+) {
+  if (groups.length === 0) return [];
+  const ids = groups.map((g) => g.id as string);
+  const rosterRows = unwrap<Array<{ group_id: string }>>(
+    await db.from('happiness_group_members').select('group_id').in('group_id', ids),
+  );
+  const counts = new Map<string, number>();
+  for (const r of rosterRows) counts.set(r.group_id, (counts.get(r.group_id) ?? 0) + 1);
+  return groups.map((g) => ({ ...g, roster_count: counts.get(g.id as string) ?? 0 }));
+}
+
+/** One 幸福小组's detail: its own record plus its roster, both names included
+ *  (rule G4 — every roster embeds `MEMBER_BRIEF`, never `full_name` alone). */
+async function happinessGroupDetail(db: ReturnType<typeof getDb>, groupId: string) {
+  const [groupRes, rosterRes] = await Promise.all([
+    db.from('happiness_groups').select(HAPPINESS_GROUP_SELECT).eq('id', groupId).single(),
+    db
+      .from('happiness_group_members')
+      .select(`member:members(${MEMBER_BRIEF})`)
+      .eq('group_id', groupId)
+      .order('created_at'),
+  ]);
+  const group = unwrap<Record<string, unknown>>(groupRes);
+  // The embed's cardinality (one member per roster row) is a runtime fact
+  // PostgREST gets right; the untyped client's own select-string parser
+  // cannot know it without generated Database types, so it is force-cast
+  // here rather than fought with a narrower generic on `unwrap`.
+  const rosterRows = unwrap(rosterRes) as unknown as Array<{ member: Record<string, unknown> | null }>;
+  // Guarded (rule G6): a roster row whose member was somehow left dangling
+  // would otherwise crash the page instead of just being one fewer name.
+  const members = rosterRows.map((r) => r.member).filter((m): m is Record<string, unknown> => !!m);
+  return { ...group, members };
+}
+
+/**
+ * One group's whole roll call: `weeks` (the TERM's own length, read off the
+ * group's `term`) and the flat list of `{ week_number, member_id }` pairs that
+ * are actually recorded. Presence-only (0022) — a pair's absence from
+ * `records` means "not marked", never "absent"; the page builds its own
+ * member × week matrix from the roster it already has plus this list.
+ */
+async function happinessAttendance(db: ReturnType<typeof getDb>, groupId: string) {
+  const group = unwrap<{ term: { weeks: number } | null }>(
+    await db
+      .from('happiness_groups')
+      .select('term:happiness_terms(weeks)')
+      .eq('id', groupId)
+      .single(),
+  );
+  const records = unwrap<Array<{ week_number: number; member_id: string }>>(
+    await db.from('happiness_attendance').select('week_number, member_id').eq('group_id', groupId),
+  );
+  return { weeks: group.term?.weeks ?? 8, records };
+}
+
+/**
+ * ONE week, for a LIST of members — the same shape the services sheet's
+ * column write takes (`member_ids` general, `member_id` its singular alias),
+ * so a single cell and a whole-column 全员到齐 go down the same path. `present`
+ * decides the direction: true upserts (marking present when already present
+ * is a no-op — `ignoreDuplicates`), false DELETES those rows, which is what an
+ * untick means for a presence-only table (0022).
+ *
+ * `week_number` is checked against the TERM's own `weeks`, not the database's
+ * blanket 1..52 — a week 9 tick on an 8-week term is refused with a clear 400
+ * rather than silently accepted by the looser table constraint.
+ */
+async function putHappinessAttendance(
+  db: ReturnType<typeof getDb>,
+  groupId: string,
+  dto: Record<string, unknown>,
+) {
+  const weekNumber = Math.trunc(Number(dto.week_number));
+  if (!Number.isInteger(weekNumber) || weekNumber < 1)
+    throw new HttpError(400, 'week_number must be a positive integer');
+
+  const group = unwrap<{ term: { weeks: number } | null }>(
+    await db
+      .from('happiness_groups')
+      .select('term:happiness_terms(weeks)')
+      .eq('id', groupId)
+      .single(),
+  );
+  const termWeeks = group.term?.weeks ?? 8;
+  if (weekNumber > termWeeks)
+    throw new HttpError(400, `week_number must be between 1 and ${termWeeks} for this term`);
+
+  const asked = Array.isArray(dto.member_ids)
+    ? dto.member_ids
+    : dto.member_id !== undefined
+      ? [dto.member_id]
+      : [];
+  const memberIds = [...new Set(asked.map((v) => String(v ?? '')).filter(Boolean))];
+  if (memberIds.length === 0)
+    throw new HttpError(400, 'member_id (or a non-empty member_ids) is required');
+  if (memberIds.length > 1000)
+    throw new HttpError(400, 'Too many members in one write — 1000 at most');
+
+  const present = dto.present !== false;
+  if (present) {
+    unwrap(
+      await db
+        .from('happiness_attendance')
+        .upsert(
+          memberIds.map((id) => ({ group_id: groupId, member_id: id, week_number: weekNumber })),
+          { onConflict: 'group_id,member_id,week_number', ignoreDuplicates: true },
+        )
+        .select('id'),
+    );
+  } else {
+    unwrap(
+      await db
+        .from('happiness_attendance')
+        .delete()
+        .eq('group_id', groupId)
+        .eq('week_number', weekNumber)
+        .in('member_id', memberIds)
+        .select('id'),
+    );
+  }
+  return { week_number: weekNumber, member_ids: memberIds, count: memberIds.length, present };
+}
+
+/**
  * What the PUBLIC sign-up page (`/enroll/:id`) is told about a training.
  *
  * An explicit list, never `*`: this endpoint answers with no session at all, so
@@ -1981,7 +2573,7 @@ async function groupAttendance(db: ReturnType<typeof getDb>, groupId: string) {
  * where, who to ring, and the 报名费 with the instructions and QR to settle it.
  */
 const PUBLIC_TRAINING_SELECT =
-  'id,name,kind,is_enrollable,total_sessions,starts_on,ends_on,start_time,location,pic,pic_contact,fee,payment_instructions,payment_qr_url';
+  'id,name,kind,is_enrollable,total_sessions,starts_on,ends_on,start_time,location,pic,pic_contact,gender,fee,payment_instructions,payment_qr_url';
 
 type PublicTraining = {
   id: string;
@@ -1995,6 +2587,8 @@ type PublicTraining = {
   location: string | null;
   pic: string | null;
   pic_contact: string | null;
+  /** null = open to everyone; else the sign-up is refused for a mismatch (0024). */
+  gender: string | null;
   fee: string | number | null;
   payment_instructions: string | null;
   payment_qr_url: string | null;
@@ -2021,12 +2615,22 @@ function isPaid(fee: string | number | null | undefined): boolean {
  *  - the free-text fields are trimmed, and an empty one is stored as null, so
  *    "has a PIC" is one question rather than two.
  */
-function trainingWrite(dto: Record<string, unknown>): Record<string, unknown> {
+function trainingWrite(
+  dto: Record<string, unknown>,
+  opts: { applyKindEffects?: boolean } = {},
+): Record<string, unknown> {
+  // A junk `kind` is always refused, on both POST and PATCH — but the
+  // activity-shape side effects below (forcing total_sessions to 1, ends_on
+  // to starts_on) only make sense at CREATION. `kind` is fixed after that
+  // (0024), so an edit still gets the same validation but never the
+  // mutation — the PATCH handler deletes `kind` from the result afterward,
+  // and must not have this quietly truncated total_sessions on its way there.
+  const applyKindEffects = opts.applyKindEffects ?? true;
   const patch = { ...dto };
   if (patch.kind !== undefined) {
     if (!isTrainingKind(patch.kind))
       throw new HttpError(400, `Unknown kind: ${String(patch.kind)} — expected course or activity`);
-    if (patch.kind === TrainingKind.Activity) {
+    if (applyKindEffects && patch.kind === TrainingKind.Activity) {
       patch.total_sessions = 1;
       // One occasion: the same day twice, so "has it finished?" stays one
       // question for both shapes and there is no second date to edit.
@@ -2043,6 +2647,11 @@ function trainingWrite(dto: Record<string, unknown>): Record<string, unknown> {
       patch.fee = amount;
     }
   }
+  // '' (the form's "open to all" option) stores NULL, same as every other
+  // optional select in this app. The column is the same gender_type
+  // members.gender uses, so the database enforces the value shape; the form
+  // just never offers 'other' as a choice (see TrainingModal.tsx).
+  if ('gender' in patch && patch.gender === '') patch.gender = null;
   for (const key of ['pic', 'pic_contact', 'location', 'payment_instructions', 'payment_qr_url', 'start_time'] as const) {
     if (key in patch) {
       const value = String(patch[key] ?? '').trim();
@@ -2056,11 +2665,13 @@ function trainingWrite(dto: Record<string, unknown>): Record<string, unknown> {
  * An ACTIVITY is one occasion, and that occasion IS exactly one
  * `training_sessions` row — the single column its roll call ticks.
  *
- * Called when an activity is created and when a course is converted into one,
- * so the invariant lives in a single place rather than being re-derived at each
- * write. Sessions beyond the first are deleted, which takes their attendance
- * with them (`training_attendance.session_id` is `on delete cascade`); a
- * conversion that would destroy anything is confirmed in the UI first (G3).
+ * Called once, when an activity is created (`kind` is fixed after that, 0024
+ * — there is no longer a conversion path that would need to call this a
+ * second time). Sessions beyond the first are deleted, which takes their
+ * attendance with them (`training_attendance.session_id` is `on delete
+ * cascade`) — relevant only if a row is ever inserted with more than one
+ * session already attached, which nothing in this app does, but the
+ * invariant is enforced here rather than assumed.
  */
 async function ensureSingleSession(db: ReturnType<typeof getDb>, trainingId: string) {
   const sessions = unwrap<Array<{ id: string; session_number: number }>>(
@@ -2239,7 +2850,7 @@ async function authRoute(
     const dto = (await req.json().catch(() => ({}))) as { email?: string; password?: string };
     const res = await db
       .from('app_users')
-      .select('id, email, account_role, status, hall_id, password_hash, member:members(id,full_name)')
+      .select('id, email, account_role, status, hall_id, group_id, password_hash, member:members(id,full_name)')
       .eq('email', (dto.email ?? '').toLowerCase().trim())
       .maybeSingle();
     if (res.error) throw new HttpError(500, res.error.message);
@@ -2249,6 +2860,7 @@ async function authRoute(
       account_role: string;
       status: string;
       hall_id: string | null;
+      group_id: string | null;
       password_hash: string | null;
       member: { id: string; full_name: string } | null;
     } | null;
@@ -2265,6 +2877,7 @@ async function authRoute(
       role: user.account_role,
       member: user.member?.id ?? null,
       hall: user.hall_id ?? null,
+      group: user.group_id ?? null,
       name,
     });
     return new Response(
@@ -2292,6 +2905,7 @@ async function authRoute(
       role: s.role,
       member: s.member,
       hall: s.hall ?? null,
+      group: s.group ?? null,
       name: s.name,
       language: normalizeLanguage(row?.language),
     });
@@ -2336,6 +2950,10 @@ const SELF_MEMBER_FIELDS = [
   'english_name',
   'email',
   'phone',
+  // Where they live is theirs to keep current, exactly like their phone number.
+  // `referred_by` is not: who brought somebody into the church is the church's
+  // record of how they arrived, not something a person asserts about themselves.
+  'address',
   'gender',
   'date_of_birth',
 ] as const;
@@ -2478,6 +3096,192 @@ async function accountWrite(
   }
   if (rest.language !== undefined) assertSupportedLanguage(rest.language);
   return rest;
+}
+
+/**
+ * What `syncGroupLeaderAccount` did, and — for `created` — the ONE place a
+ * generated password's plaintext is ever available. `moved`/`noop` are
+ * reported for completeness but nothing on screen needs them; the three
+ * others are surfaced to the client (see `leaderEventForClient`).
+ */
+type LeaderAccountEvent =
+  | { event: 'created'; email: string; password: string }
+  | { event: 'disabled'; email: string }
+  | { event: 'skipped_no_email' }
+  | { event: 'unchanged_existing_account' }
+  | { event: 'moved' }
+  | { event: 'noop' };
+
+/**
+ * Keeps a group's 小组长 (`GroupPosition.Leader`) in sync with an
+ * auto-provisioned `group_leader` login — grant on promotion, disable on
+ * demotion. This IS the sync mechanism (there is no trigger): every write
+ * surface that can change a member's `group_position` — `POST /members`,
+ * `PATCH /members/:id`, and `applyImport()`'s insert/update loop — calls it
+ * with the position and group as they were immediately before this write and
+ * as they are after it.
+ *
+ * It only ever touches an account it would itself have created: a `member_id`
+ * that already has ANY login (whatever its role) is left completely alone on
+ * promotion — this mechanism manages what it manages, and silently
+ * upgrading/touching a human-set-up account that happens to belong to
+ * somebody who also leads a group would be a surprising side effect, not a
+ * feature. Symmetrically, demotion only ever disables an account whose role
+ * is specifically `group_leader` — never a super_admin/admin/coworker/
+ * readonly account, even one belonging to a former leader.
+ */
+async function syncGroupLeaderAccount(
+  db: ReturnType<typeof getDb>,
+  params: {
+    memberId: string;
+    previousPosition: string | null;
+    newPosition: string | null;
+    /** The member's group BEFORE this write — used only to tell "stayed in
+     *  the same group" apart from "moved to a different one" while staying
+     *  leader; every other case is decided by position alone. */
+    previousGroupId: string | null;
+    /** The member's group AFTER this write; null if removed from a group
+     *  entirely. */
+    groupId: string | null;
+  },
+): Promise<LeaderAccountEvent> {
+  const { memberId, previousPosition, newPosition, previousGroupId, groupId } = params;
+  const wasLeader = previousPosition === GroupPosition.Leader;
+  const isLeader = newPosition === GroupPosition.Leader;
+
+  // Never was and still isn't, or was already leader and stays leader of the
+  // SAME group: nothing for this mechanism to do. Checked before touching the
+  // database at all — this is the overwhelmingly common case (an ordinary
+  // profile edit that has nothing to do with leadership).
+  if (!wasLeader && !isLeader) return { event: 'noop' };
+  if (wasLeader && isLeader && previousGroupId === groupId) return { event: 'noop' };
+
+  const accountRes = await db
+    .from('app_users')
+    .select('id,account_role,status')
+    .eq('member_id', memberId)
+    .maybeSingle();
+  if (accountRes.error) throw new HttpError(500, accountRes.error.message);
+  const existingAccount = accountRes.data as { id: string; account_role: string; status: string } | null;
+
+  // ---- Becoming 小组长 -------------------------------------------------------
+  if (!wasLeader && isLeader) {
+    // A DISABLED account of our own making is not "existing" in the sense
+    // that matters here — it is exactly the account this mechanism itself
+    // turned off on a previous demotion, and re-promoting the same person
+    // must not leave them locked out forever with no way back in. Its old
+    // password is unrecoverable (only ever the hash was kept, rule G6), so
+    // re-enabling it also issues a fresh one, same as a brand-new account.
+    if (existingAccount) {
+      if (existingAccount.account_role !== AccountRole.GroupLeader || existingAccount.status !== AccountStatus.Disabled)
+        return { event: 'unchanged_existing_account' };
+      if (!groupId) return { event: 'noop' };
+      const member = unwrap<{ email: string | null }>(
+        await db.from('members').select('email').eq('id', memberId).single(),
+      );
+      if (!member.email) return { event: 'skipped_no_email' };
+      const email = normalizeEmail(member.email);
+      const group = unwrap<{ hall_id: string }>(
+        await db.from('groups').select('hall_id').eq('id', groupId).single(),
+      );
+      const password = generateRandomPassword();
+      unwrap(
+        await db
+          .from('app_users')
+          .update({
+            email,
+            status: AccountStatus.Active,
+            hall_id: group.hall_id,
+            group_id: groupId,
+            password_hash: await hashPassword(password),
+          })
+          .eq('id', existingAccount.id)
+          .select('id')
+          .single(),
+      );
+      return { event: 'created', email, password };
+    }
+    // A leader with no group at all is not a state the UI can produce, but a
+    // raw API call could send one — nothing to scope an account to, so this
+    // is a no-op rather than a half-provisioned account.
+    if (!groupId) return { event: 'noop' };
+    const member = unwrap<{ email: string | null }>(
+      await db.from('members').select('email').eq('id', memberId).single(),
+    );
+    if (!member.email) return { event: 'skipped_no_email' };
+    const email = normalizeEmail(member.email);
+    const group = unwrap<{ hall_id: string }>(
+      await db.from('groups').select('hall_id').eq('id', groupId).single(),
+    );
+    const password = generateRandomPassword();
+    unwrap(
+      await db
+        .from('app_users')
+        .insert({
+          member_id: memberId,
+          email,
+          account_role: AccountRole.GroupLeader,
+          status: AccountStatus.Active,
+          hall_id: group.hall_id,
+          group_id: groupId,
+          // Hashed immediately, exactly as `accountWrite` hashes a
+          // human-chosen password — the plaintext above is returned to the
+          // caller and never written anywhere (rule G6).
+          password_hash: await hashPassword(password),
+        })
+        .select('id')
+        .single(),
+    );
+    return { event: 'created', email, password };
+  }
+
+  // ---- Leaving 小组长 (including the group being cleared entirely) ----------
+  if (wasLeader && !isLeader) {
+    if (!existingAccount || existingAccount.account_role !== AccountRole.GroupLeader) return { event: 'noop' };
+    const member = unwrap<{ email: string | null }>(
+      await db.from('members').select('email').eq('id', memberId).single(),
+    );
+    unwrap(
+      await db
+        .from('app_users')
+        .update({ status: AccountStatus.Disabled, group_id: null })
+        .eq('id', existingAccount.id)
+        .select('id')
+        .single(),
+    );
+    return { event: 'disabled', email: member.email ?? '' };
+  }
+
+  // ---- Staying 小组长, but of a DIFFERENT group ------------------------------
+  if (!existingAccount || existingAccount.account_role !== AccountRole.GroupLeader) return { event: 'noop' };
+  if (!groupId) return { event: 'noop' };
+  const group = unwrap<{ hall_id: string }>(
+    await db.from('groups').select('hall_id').eq('id', groupId).single(),
+  );
+  unwrap(
+    await db
+      .from('app_users')
+      .update({ group_id: groupId, hall_id: group.hall_id })
+      .eq('id', existingAccount.id)
+      .select('id')
+      .single(),
+  );
+  return { event: 'moved' };
+}
+
+/**
+ * Which of `syncGroupLeaderAccount`'s events the CLIENT needs to know about —
+ * `moved`/`noop`/`unchanged_existing_account` are internal bookkeeping with
+ * nothing for a person to act on. Shared by every write surface that merges
+ * `leader_account_event` onto its response, so the three that matter can
+ * never drift from one call site to the next.
+ */
+function leaderEventForClient(
+  event: LeaderAccountEvent | undefined,
+): Extract<LeaderAccountEvent, { event: 'created' | 'disabled' | 'skipped_no_email' }> | undefined {
+  if (event && (event.event === 'created' || event.event === 'disabled' || event.event === 'skipped_no_email'))
+    return event;
+  return undefined;
 }
 
 // --- HTTP method entry points ----------------------------------------------

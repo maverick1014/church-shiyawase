@@ -5,7 +5,7 @@ import { useFetch } from '@/lib/hooks';
 import { useSortableRows } from '@/lib/sort';
 import { api } from '@/lib/api';
 import { usePageChrome, useMe } from '@/components/AppShell';
-import { Combobox, ErrorBanner, ExportButton, Field, LinkIcon, MemberName, Modal, ModuleDisabled, PageBar, Skeleton, SkeletonScreen, SkeletonTable, SkeletonText, SortTh, useConfirm, useToast } from '@/components/ui';
+import { Combobox, ErrorBanner, ExportButton, Field, MemberName, Modal, ModuleDisabled, PageBar, RoleRestricted, Skeleton, SkeletonScreen, SkeletonTable, SkeletonText, SortTh, useConfirm, useToast } from '@/components/ui';
 import { PairProgressModal } from '@/components/PairProgressModal';
 import { can } from '@/lib/perms';
 import { useModuleEnabled } from '@/lib/church';
@@ -20,7 +20,7 @@ import {
   roleTagStyle,
 } from '@/lib/labels';
 import { useT, type Translate } from '@/lib/i18n';
-import { DisplayRole, MODULE_DISCIPLESHIP } from '@tog/shared';
+import { AccountRole, DisplayRole, MODULE_DISCIPLESHIP } from '@tog/shared';
 
 type Filter = 'active' | 'done' | 'pending';
 
@@ -40,7 +40,13 @@ export default function DiscipleshipPage() {
   const t = useT();
   const toast = useToast();
   const confirm = useConfirm();
-  const perms = can(useMe().role);
+  const me = useMe();
+  const perms = can(me.role);
+  // `discipleship` is not in a group_leader's allowed API prefixes at all —
+  // every fetch below is gated off for it too, exactly as it already is for
+  // a switched-off module, so a group_leader session never fires a request
+  // this role is refused anyway.
+  const isGroupLeader = me.role === AccountRole.GroupLeader;
   // 四十天守望 is an ADD-ON module: a church may not run it at all. The nav
   // entry is already gone when it is off, so this only catches a bookmark or a
   // pasted link — and nothing below may fetch, or the page would paint an
@@ -52,13 +58,13 @@ export default function DiscipleshipPage() {
   // nothing visible. This line is the boundary — an API row goes in, module
   // wording comes out. (Not to be confused with the ADD-ON module above: that
   // is the whole 四十天守望 section, this is one 守望模块 inside it.)
-  const modules = useFetch<ProgramRow[]>(discipleshipOn ? '/discipleship/programs' : null);
+  const modules = useFetch<ProgramRow[]>(discipleshipOn && !isGroupLeader ? '/discipleship/programs' : null);
   // Deliberately unfiltered: the page shows ONE module's pairs but needs every
   // module's pair count, for the module list and for the delete confirmation's
   // blast radius — so it is fetched once and grouped here rather than costing
   // a round-trip per module.
-  const pairs = useFetch<PairRow[]>(discipleshipOn ? '/discipleship/pairs' : null);
-  const members = useFetch<MemberRow[]>(discipleshipOn ? '/members' : null);
+  const pairs = useFetch<PairRow[]>(discipleshipOn && !isGroupLeader ? '/discipleship/pairs' : null);
+  const members = useFetch<MemberRow[]>(discipleshipOn && !isGroupLeader ? '/members' : null);
 
   const [filter, setFilter] = useState<Filter>('active');
   const [popup, setPopup] = useState<Node | null>(null);
@@ -168,6 +174,9 @@ export default function DiscipleshipPage() {
   const doneList = nodes.filter((n) => classify(n) === 'done');
   const pendingList = nodes.filter((n) => classify(n) === 'pending');
 
+  // Trainee is the default sort — the same primary identity the table used to
+  // sort by implicitly when mentor and trainee still shared one cell. Mentor
+  // is its own key now that it is its own column.
   const { sorted: sortedNodes, sortKey: nodeSortKey, sortDir: nodeSortDir, toggleSort: toggleNodeSort } =
     useSortableRows(
       nodes,
@@ -177,11 +186,13 @@ export default function DiscipleshipPage() {
             return n.pct;
           case 'status':
             return t(pairStatusKey(n.pair.status));
+          case 'mentor':
+            return n.pair.mentor?.full_name;
           default:
             return n.pair.trainee?.full_name;
         }
       },
-      { key: 'name', dir: 'asc' },
+      { key: 'trainee', dir: 'asc' },
     );
 
   const exportPairs = () => {
@@ -279,6 +290,10 @@ export default function DiscipleshipPage() {
   // page's action row does not, so it renders straight away and only the two
   // sections below it are skeletons.
   const booting = pairs.initialLoading || modules.initialLoading;
+
+  // Outside a group_leader's scope entirely — checked before the module
+  // state, so its own reason wins over "module is off" if somehow both apply.
+  if (isGroupLeader) return <RoleRestricted />;
 
   // The module is switched off for this church — say so plainly. The API
   // refuses every /discipleship path regardless (rule G2); this is the reason,
@@ -408,7 +423,7 @@ export default function DiscipleshipPage() {
         // The skeleton brings its own card on desktop and its own tiles on a
         // phone, so it stands in for the whole panel rather than nesting a
         // second card inside this one.
-        <SkeletonTable rows={5} columns={4} />
+        <SkeletonTable rows={5} columns={6} />
       ) : (
         <div className="card">
           {/* Desktop — table */}
@@ -416,25 +431,22 @@ export default function DiscipleshipPage() {
             <table>
               <thead>
                 <tr>
-                  <SortTh sortKey="name" activeKey={nodeSortKey} dir={nodeSortDir} onSort={toggleNodeSort}>{t('disc.col.pair')}</SortTh>
+                  <SortTh sortKey="trainee" activeKey={nodeSortKey} dir={nodeSortDir} onSort={toggleNodeSort}>{t('disc.col.trainee')}</SortTh>
+                  <SortTh sortKey="mentor" activeKey={nodeSortKey} dir={nodeSortDir} onSort={toggleNodeSort}>{t('disc.col.mentor')}</SortTh>
                   <SortTh sortKey="pct" activeKey={nodeSortKey} dir={nodeSortDir} onSort={toggleNodeSort} style={{ width: 200 }}>{t('disc.col.progress')}</SortTh>
                   <SortTh sortKey="status" activeKey={nodeSortKey} dir={nodeSortDir} onSort={toggleNodeSort}>{t('groups.col.status')}</SortTh>
+                  <th>{t('disc.col.remark')}</th>
                   <th />
                 </tr>
               </thead>
               <tbody>
                 {sortedNodes.map((n) => (
                   <tr key={n.pair.id}>
-                    <td>
-                      {/* Both halves of the pair carry both names — the mentor
-                          stays faint, so the row still reads "this trainee,
-                          under that mentor". */}
-                      <div className="flex items-baseline gap-6 flex-wrap">
-                        <MemberName member={n.pair.trainee} fallback="" />
-                        <span className="faint">←</span>
-                        <span className="faint"><MemberName member={n.pair.mentor} fallback="" /></span>
-                      </div>
-                    </td>
+                    {/* Mentor and trainee are their own columns now — each is
+                        just the one name, no arrow needed once they're not
+                        sharing a cell. */}
+                    <td><MemberName member={n.pair.trainee} fallback="" /></td>
+                    <td><MemberName member={n.pair.mentor} fallback="" /></td>
                     <td>
                       <div className="progress-row">
                         <div className="bar"><span style={{ width: `${n.pct}%` }} /></div>
@@ -442,20 +454,29 @@ export default function DiscipleshipPage() {
                       </div>
                     </td>
                     <td><span className={`badge ${pairStatusClass(n.pair.status)}`}>{t(pairStatusKey(n.pair.status))}</span></td>
+                    {/* Free text and can run long, unlike every other column
+                        here — bounded and ellipsised, full text still reachable
+                        through the native `title` tooltip (same pattern the
+                        members list uses for its own remark column). */}
+                    <td className="muted cell-remark" title={n.pair.remark ?? undefined}>
+                      {n.pair.remark ?? ''}
+                    </td>
                     <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
-                      <button className="btn ghost sm" style={{ marginRight: 6 }} onClick={() => setPopup(n)}>{t('disc.progressBtn')}</button>
-                      <button className="btn ghost sm" style={{ color: 'var(--brand)' }} onClick={() => window.open(`/d/${n.pair.form_token}`, '_blank')}><LinkIcon size={14} />{t('disc.form')}</button>
+                      {/* One button: the dialog it opens now edits progress
+                          directly, so there is nothing left for a separate
+                          "Form" shortcut to do that this doesn't already. */}
+                      <button className="btn ghost sm" onClick={() => setPopup(n)}>{t('disc.progressBtn')}</button>
                     </td>
                   </tr>
                 ))}
                 {sortedNodes.length === 0 && (
-                  <tr><td colSpan={4} className="empty-inline">{t('disc.empty')}</td></tr>
+                  <tr><td colSpan={6} className="empty-inline">{t('disc.empty')}</td></tr>
                 )}
               </tbody>
             </table>
           </div>
 
-          {/* Mobile — list tiles: trainee ← mentor + form, then progress · status */}
+          {/* Mobile — list tiles: trainee ← mentor, then progress · status · remark */}
           <div className="only-mobile" style={{ marginTop: 4 }}>
             {sortedNodes.map((n) => (
               <div key={n.pair.id} className="mtile" onClick={() => setPopup(n)}>
@@ -465,24 +486,17 @@ export default function DiscipleshipPage() {
                     <span className="faint">←</span>
                     <span className="faint"><MemberName member={n.pair.mentor} fallback="" /></span>
                   </div>
-                  <div className="flex gap-10" style={{ flexShrink: 0 }}>
-                    <button
-                      className="tile-action"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        window.open(`/d/${n.pair.form_token}`, '_blank');
-                      }}
-                    >
-                      <LinkIcon size={14} />
-                      {t('disc.form')}
-                    </button>
-                  </div>
                 </div>
                 <div className="mtile-line" style={{ marginTop: 9 }}>
                   <div className="bar" style={{ flex: 1 }}><span style={{ width: `${n.pct}%` }} /></div>
                   <span className="pct" style={{ whiteSpace: 'nowrap' }}>{n.days}/{n.total}</span>
                   <span className={`badge ${pairStatusClass(n.pair.status)}`}>{t(pairStatusKey(n.pair.status))}</span>
                 </div>
+                {n.pair.remark && (
+                  <div className="mtile-line cell-remark" title={n.pair.remark}>
+                    {n.pair.remark}
+                  </div>
+                )}
               </div>
             ))}
             {sortedNodes.length === 0 && (
@@ -495,6 +509,7 @@ export default function DiscipleshipPage() {
       {popup && (
         <PairProgressModal
           pairId={popup.pair.id}
+          canEdit={perms.write}
           onClose={() => setPopup(null)}
           onDelete={
             perms.delete
@@ -842,6 +857,7 @@ function AddPairModal({
   const [mentorId, setMentorId] = useState('');
   const [traineeId, setTraineeId] = useState('');
   const [backfillDays, setBackfillDays] = useState('');
+  const [remark, setRemark] = useState('');
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -867,6 +883,7 @@ function AddPairModal({
         trainee_id: traineeId,
         parent_pair_id: parent?.id,
         backfill_days: backfillDays ? Number(backfillDays) : undefined,
+        remark: remark.trim() || null,
       });
       onSaved();
     } catch (e) {
@@ -884,36 +901,53 @@ function AddPairModal({
         {t('disc.new.intro')}
       </p>
       {/* Both pickers are type-to-search: with the whole church in the list,
-          scrolling to find one person is the slow way (rule G4). */}
-      <Field label={t('disc.field.mentor')}>
-        <Combobox
-          value={mentorId}
-          onChange={setMentorId}
-          options={members.map((m) => ({
-            value: m.id,
-            label: m.full_name,
-            sub: m.english_name,
-            hint: t(roleKey(memberRole(m))),
-          }))}
-          placeholder={t('disc.chooseMember')}
-          ariaLabel={t('disc.field.mentor')}
-        />
-      </Field>
-      <div style={{ textAlign: 'center', color: 'var(--accent)', fontSize: 16, fontWeight: 700, margin: '-2px 0 8px' }}>↓</div>
-      <Field label={t('disc.field.traineeHint')}>
-        <Combobox
-          value={traineeId}
-          onChange={setTraineeId}
-          options={members
-            .filter((m) => !takenTrainees.has(m.id) && m.id !== mentorId)
-            .map((m) => ({
-              value: m.id,
-              label: m.full_name,
-              sub: m.english_name,
-              hint: t(roleKey(memberRole(m))),
-            }))}
-          placeholder={t('disc.chooseMember')}
-          ariaLabel={t('disc.field.traineeHint')}
+          scrolling to find one person is the slow way (rule G4). One row,
+          mentor ➜ trainee — the same shape the progress modal's own header
+          reads a finished pair in, just with pickers instead of names.
+          flex-wrap keeps it usable at phone width (rule G7). */}
+      <div className="flex items-end gap-10 flex-wrap" style={{ marginBottom: 14 }}>
+        <div style={{ flex: '1 1 200px', minWidth: 0 }}>
+          <Field label={t('disc.field.mentor')}>
+            <Combobox
+              value={mentorId}
+              onChange={setMentorId}
+              options={members.map((m) => ({
+                value: m.id,
+                label: m.full_name,
+                sub: m.english_name,
+                hint: t(roleKey(memberRole(m))),
+              }))}
+              placeholder={t('disc.chooseMember')}
+              ariaLabel={t('disc.field.mentor')}
+            />
+          </Field>
+        </div>
+        <div style={{ flexShrink: 0, color: 'var(--accent)', fontWeight: 700, fontSize: 16, paddingBottom: 10 }}>➜</div>
+        <div style={{ flex: '1 1 200px', minWidth: 0 }}>
+          <Field label={t('disc.field.traineeHint')}>
+            <Combobox
+              value={traineeId}
+              onChange={setTraineeId}
+              options={members
+                .filter((m) => !takenTrainees.has(m.id) && m.id !== mentorId)
+                .map((m) => ({
+                  value: m.id,
+                  label: m.full_name,
+                  sub: m.english_name,
+                  hint: t(roleKey(memberRole(m))),
+                }))}
+              placeholder={t('disc.chooseMember')}
+              ariaLabel={t('disc.field.traineeHint')}
+            />
+          </Field>
+        </div>
+      </div>
+      <Field label={t('disc.field.remark')}>
+        <textarea
+          rows={2}
+          value={remark}
+          onChange={(e) => setRemark(e.target.value)}
+          placeholder={t('disc.field.remarkPlaceholder')}
         />
       </Field>
       <Field label={t('disc.field.backfillLabel', { total: totalDays })}>

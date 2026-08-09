@@ -5,20 +5,20 @@ import type { MetadataRoute } from 'next';
  * standalone app with the church logo. Next serves this at
  * /manifest.webmanifest and injects the <link rel="manifest"> automatically.
  *
- * The manifest is static, so it uses the app's default language (English)
- * regardless of the language an individual account has chosen — and, for the
- * same reason, the church name below is a build-time literal rather than the
- * `church` record every screen inside the app reads from: a manifest is
- * generated once at build time, with no request and no database. It is the
- * one place (with the <title> in app/layout.tsx) where the church is still
- * baked in per deployment.
+ * The manifest is static, so it uses the app's default language (Chinese —
+ * `DEFAULT_LANGUAGE` in packages/shared) regardless of the language an
+ * individual account has chosen — and, for the same reason, the church name
+ * below is a build-time literal rather than the `church` record every screen
+ * inside the app reads from: a manifest is generated once at build time, with
+ * no request and no database. It is the one place (with the <title> in
+ * app/layout.tsx) where the church is still baked in per deployment.
  */
 export default function manifest(): MetadataRoute.Manifest {
   return {
     name: 'Tabernacle of Grace · Church Management',
     short_name: 'Tabernacle of Grace',
     description: 'Members · events · trainings · forty-day one-to-one discipleship',
-    lang: 'en',
+    lang: 'zh',
     start_url: '/',
     scope: '/',
     display: 'standalone',

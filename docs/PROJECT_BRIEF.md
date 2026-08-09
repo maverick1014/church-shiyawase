@@ -35,9 +35,16 @@ with a distinctive **40-day one-on-one discipleship (四十天一对一守望)**
 
 - **Church:** Tabernacle of Grace (中文名用「恩典会幕」). Tagline: *Discipling the Church to Disciple the World*（门训教会，广传世界）.
 - **Users:** pastor (牧师), group leaders (小组长), assistant/intern leaders, admins/co-workers.
-- **UI language:** **three languages — English (default), 简体中文, Bahasa
+- **UI language:** **three languages — 简体中文 (default), English, Bahasa
   Melayu** — chosen per login account in 用户管理 and applied across the whole
   interface. Member/group/course names are data and are never translated.
+  `DEFAULT_LANGUAGE` in `packages/shared` is `'zh'` (migration 0025 flipped
+  `app_users.language`'s DB column DEFAULT from `'en'` to `'zh'` to match); the
+  three shell-less public pages (`/login`, `/d/[token]`, `/enroll/[id]`,
+  `/join`) and a fresh account with no language chosen all render Chinese.
+  English remains the i18n **type base** — `MessageKey = keyof typeof en` and
+  the fallback for a key missing from `zh.ts`/`ms.ts` — which is a separate
+  concern from which language loads by default.
 - **Auth:** **None yet** (open app). Design/build must leave room to add Supabase Auth + role-based permissions later.
 
 ### Core goals
@@ -128,6 +135,40 @@ member **inside a group**, and that is the single source of truth:
 
 > The member directory's "身份" column is **read-only / derived**. All rank editing happens in the group page.
 
+### 3.3 Login account role (`AccountRole`) — a SEPARATE dimension, added not changed
+
+Everything in §3.1/§3.2 is who a person **IS** to the church — it is stored on
+the `members` row and nothing there is touched by this section. `AccountRole`
+is a different axis entirely: what a **login** (`app_users`) may **DO** in the
+app. `super_admin` / `admin` / `coworker` / `readonly` existed already; one
+value was added — `group_leader` (migration 0023/0026) — and it behaves
+differently from all four of the others on purpose:
+
+- **Provisioning is automatic, not a form.** Becoming 小组长
+  (`group_position = 'leader'` specifically — never the assistant/intern
+  seats) auto-creates a `group_leader` login for that member (if they have an
+  email; if not, the promotion still succeeds and the admin is told why no
+  login could be made) and shows a randomly generated password **once**, in a
+  modal, never persisted or logged in plaintext. Leaving 小组长 — demoted,
+  replaced, or removed from the group — auto-**disables** that same login
+  (never deletes it: `app_users.status = 'disabled'` preserves the account for
+  a later re-enable). This is `syncGroupLeaderAccount`, called from every
+  place a member's `group_position` can change (`POST /members`,
+  `PATCH /members/:id`, the member import).
+- **Scope is narrower than every other role's.** Every other role is scoped
+  by hall at most (`app_users.hall_id`, null = every hall). A `group_leader`
+  account is scoped to exactly **one group** (`app_users.group_id`, migration
+  0026) — narrower than its own hall. Server-side this is a fourth, additive
+  dimension of access control beside role/hall/module (see §8's own note): an
+  early path allowlist restricts it to `members` / `groups` / `attendance` /
+  `auth` API prefixes at all, and within those, its own group always wins
+  over anything a request asks for — the same "session's own scope always
+  wins" precedence the congregation switcher's `hall_id` already has.
+- **It is data, not a form field.** Nobody picks `group_leader` from the
+  账户 create/edit dropdown expecting it to work like the other four — the
+  mechanism above is the only path that pairs it with a `hall_id`/`group_id`
+  correctly.
+
 ---
 
 ## 4. Tech stack & architecture
@@ -158,7 +199,16 @@ tog/
 ## 5. Modules & features
 
 ### 5.1 Members directory (成员目录)
-- Fields: 姓名(中/英)、邮箱、电话、性别、出生日期、**church_role**(牧师/一般成员)、状态(在册/慕道/停止聚会)、所属小组、加入日期、**服侍岗位**、备注、照片.
+- Fields: 姓名(中/英)、邮箱、电话、性别、出生日期、**church_role**(牧师/一般成员)、状态(在册/慕道/停止聚会)、所属小组、来访日期(`joined_at`)、**加入小组日期**(`group_joined_at`, migration 0023)、**服侍岗位**、备注、照片.
+- **来访日期 is a display-only rename** (rule G8): the column is still `joined_at`
+  everywhere in code — only the on-screen label changed from "Joined" to
+  "Visit Date" (来访日期), on both member forms and every fact grid that shows
+  it. **加入小组日期** (`group_joined_at`) is a separate, nullable date — when
+  somebody joined their CURRENT group, not the church — wired into both member
+  forms beside `joined_at`, with no server-side change needed (`PATCH`/`POST
+  /members` are raw passthroughs). 备注 is now on the ADD form too, not just
+  edit; the members list itself trades its own "Joined" column for a
+  "Remark" one (`notes`, truncated with an ellipsis and a `title` tooltip).
 - **A member IS the pair of names** (migration 0018): the Chinese `full_name` and the
   nullable `english_name`, unique together (trimmed, case-insensitive, "no English name"
   counting as a value). Everything that puts a person on the roll — the form, an import, the
@@ -183,9 +233,20 @@ tog/
   - **A public self-registration link** (`/join`, copied from this page): people fill in their
     own contact details and photo. See §5.7.
 - Photos use the shared `<PhotoPicker />` — `accept="image/*"` and deliberately **no `capture`**,
-  so a phone offers both the camera and the gallery.
+  so a phone offers both the camera and the gallery. Every picked image is compressed client-side
+  (`lib/imageCompress.ts`) before upload, so a full-size camera photo clears the server's 5MB cap
+  without the user doing anything.
 - **Member detail** = profile + **personal training record** (5.5) + discipleship pairs they're in.
+  The profile facts are grouped into several small `FactGrid`s under section
+  headers (Contact / Church / Ministry / Notes / Referral) rather than one long
+  undifferentiated one — `FactGrid` itself is unchanged, the page just calls it
+  more than once. Each discipleship pair reads as one sentence, **Leading X**
+  or **Led by X**, aligned with how `/discipleship` phrases the same
+  relationship, rather than a bare Mentor/Trainee badge.
 - The 身份 shown is **derived** (see §3); it is not edited here.
+- The member-EDIT form is a single shared component, `<MemberEditModal />`
+  (`components/MemberEditModal.tsx`) — `/members/[id]` and the roster's own
+  **Edit** button on `/groups/[id]` (§5.2) both open the same one.
 
 ### 5.2 Groups (小组管理) — listing + detail
 - `/groups` lists every group (leader name, group name, member count, **新成员人数**, **小组状态**, meeting day/time/location); click a row → `/groups/[id]`.
@@ -195,7 +256,11 @@ tog/
   **可分植** when total > 10 and new-member count ≤ 2; **可加人** when total < 10 and new-member count ≤ old-member count; otherwise **刚好**.
 - Detail page: **create / delete** the group, **allocate members** into / out of it.
 - **铁三角 (leadership team)**: pick who holds 小组长/副组长/实习组长 directly here (rules 2 & 3 enforced — one holder per slot, auto-demote the incumbent). This is the only identity assignment on this page.
-- The member list itself is a simple name + remove list — no per-member position dropdown; 核心成员/普通成员/新成员 are set on the member's own profile page instead.
+- The member list is a name + role badge + **Edit** / **Remove** pair — no
+  per-member position dropdown; 核心成员/普通成员/新成员 are set on the member's
+  own profile page instead. **Edit** opens the same shared `<MemberEditModal />`
+  `/members/[id]` uses, so a leader can fix a roster member's details without
+  leaving the group page; **Remove** stays behind a danger confirmation (G3).
 
 ### 5.3 Services & attendance (崇拜与祷告会 · `/events`)
 **Every Sunday simply happens — nobody creates one.** The page is ONE SHEET for
@@ -236,26 +301,62 @@ followed, in date order, by every meeting someone added for it.
 
 ### 5.5 Trainings & Activities (培训&活动) + personal record
 - **Two shapes, one catalog** (`kind`, migration 0014): a **course** runs over several sessions; an **activity** (兄弟团爬山, 姐妹团做蛋糕) is ONE occasion people sign up for and get ticked off at. Everything else — sign-ups, the roll call, the public link, the hall rule — is shared, so they are the same record and the same pages. An activity's single occasion is the one `training_sessions` row the API creates with it (it is what the roll call ticks); its **date, time and meeting point** are the record's own `starts_on`/`ends_on`, `start_time` and `location` (0016), and `total_sessions` is forced to 1 server-side.
-- **The shape is convertible** (0016). course → activity keeps only the FIRST session and deletes the rest **with their attendance**, behind a `useConfirm({ danger: true })` that names how many sessions and how many ticks go; activity → course simply lets the single session become session 1. The invariant lives in `ensureSingleSession` on the server, so a stale client can never leave a four-session activity behind.
-- **Catalog:** name, 说明, **kind**, **pic + pic_contact** (负责人 and a number to ring — free text since 0016, because the person in charge is often an outsider), **total_sessions**, **is_enrollable**, start/end dates, an activity's time + place, and the 报名费 block. 类别 is **gone** (0016): it was a display tag that described none of an activity. The catalog lists both shapes together — no kind filter, since every card carries its own shape badge. On screen the `course` shape is a **培训 / Training**; `kind` keeps the `course` code on the wire.
-- **报名费 (0016):** `fee` null/0 = free and nothing below appears. A fee carries `payment_instructions` (free text — bank account, TnG number, a note; ONE column, because a church invents methods nobody modelled) and an optional uploaded `payment_qr_url`. Sign-ups then carry `training_enrollments.payment_slip_url` — the receipt, uploaded **with** the sign-up and opened by the admin **from the review row, beside Approve**, because approving a paid sign-up means somebody checked that the money arrived.
+- **The shape is FIXED at creation** (migration 0024 retired the course↔activity conversion this used to offer — church feedback: "easier, and will not confuse"). `TrainingModal`'s segmented shape picker only renders while creating; editing shows the shape as plain read-only text. The server enforces the same thing independently (rule G2): `trainingWrite()`'s `applyKindEffects` option is `false` on every `PATCH`, so `kind` is stripped before the update runs and never mutates `total_sessions`/`ends_on` on an edit — `ensureSingleSession` only ever runs once, from the `POST` that creates an activity.
+- **Gender restriction** (`trainings.gender`, migration 0024, nullable `gender_type` — the same enum `members.gender` uses): the form offers only 不限 / 男 / 女, deliberately never "other" as a restriction even though the column allows it, because a training's restriction is meaningfully binary in this church's actual use. Shown on the catalog card and the detail header via `trainingMeta`. **Enforced server-side at enrollment**: `POST /trainings/enroll/[id]` refuses a mismatched member with a 400 after resolving the name — a real business rule, not a UI hint.
+- **Catalog:** name, 说明, **kind**, **pic + pic_contact** (负责人 and a number to ring — free text since 0016, because the person in charge is often an outsider), **total_sessions**, **is_enrollable**, start/end dates, an activity's time + place, **gender restriction**, and the 报名费 block. 类别 is **gone** (0016): it was a display tag that described none of an activity. The catalog lists both shapes together — no kind filter, since every card carries its own shape badge. On screen the `course` shape is a **培训 / Training**; `kind` keeps the `course` code on the wire. Role (church-wide rank) no longer shows anywhere on this page's three spots (enrollee-picker hint, enrolled-member row, printable namelist's role column).
+- **Form layout:** an activity pairs its meeting point with the congregation/hall select in one row; a course pairs its session count with the hall select in one row and start/end date in a separate row — the hall select renders branch-locally now (same `form.hall_id` state) instead of once, shared, after both branches.
+- **报名费 (0016):** `fee` null/0 = free and nothing below appears. A fee carries `payment_instructions` (free text — bank account, TnG number, a note; ONE column, because a church invents methods nobody modelled) and an optional uploaded `payment_qr_url` — **now pickable during CREATE too**: the file is compressed client-side and held in the form, then chained onto the row with a follow-up `POST /trainings/[id]/payment-qr` right after `POST /trainings` creates it (one action from the user's side, two requests underneath; a failed chained upload does not roll back the successful creation, it toasts a distinct warning). Sign-ups then carry `training_enrollments.payment_slip_url` — the receipt, uploaded **with** the sign-up and opened by the admin **from the review row, beside Approve**, because approving a paid sign-up means somebody checked that the money arrived.
 - **Sessions:** a course can have **multiple sessions** (number, title, time, location, notes); an activity shows no session list at all.
 - **Enrollment:** member enrolls → `pending`; **admin approves** and tracks status (待审核/已通过/进行中/已完成/已退出). The 报名审核 progress bar shows each enrollee's **real attendance rate** (attended ÷ total sessions from the namelist).
-- **Public self-enrollment link (no login):** `/enroll/[id]` — sharable when the course **or activity** is 开放报名; the public payload is an allow-list carrying `kind`, the date/time/place, the PIC and their contact, and the fee block, so an activity reads as "On <date> <time> at <place>" instead of "1 sessions" and a payer can see what to pay and where. On a PAID one the form shows the amount, the instructions and the QR **above a required receipt upload** (image or PDF, 5MB), and the receipt is posted as one multipart request WITH the sign-up — nothing reaches storage until the name has matched exactly one member, so the app's only unauthenticated upload path cannot be used as file storage. A visitor types their **full Chinese name**; the server enrolls them (`pending`) only if it matches **exactly one** existing member. No match / multiple matches → "请联系牧师加入成员系统" (never auto-creates a member, avoiding duplicates). Copy the link from the 培训详情 header (「🔗 报名链接」).
-- **Attendance / namelist:** admin marks attended per session; system **generates a checking namelist** (members × sessions grid with ✓).
+- **Public self-enrollment link (no login):** `/enroll/[id]` — sharable when the course **or activity** is 开放报名; the public payload is an allow-list carrying `kind`, the date/time/place, the PIC and their contact, `gender`, and the fee block, so an activity reads as "On <date> <time> at <place>" instead of "1 sessions" and a payer can see what to pay and where. On a PAID one the form shows the amount, the instructions and the QR **above a required receipt upload** (image or PDF, 5MB), and the receipt is posted as one multipart request WITH the sign-up — nothing reaches storage until the name has matched exactly one member (and its gender, if the training restricts one), so the app's only unauthenticated upload path cannot be used as file storage. A visitor types their **full Chinese name**; the server enrolls them (`pending`) only if it matches **exactly one** existing member whose gender (if restricted) matches. No match / multiple matches / gender mismatch → refused (never auto-creates a member, avoiding duplicates). Copy the link from the 培训详情 header (「🔗 报名链接」).
+- **Attendance / namelist:** admin marks attended per session; system **generates a checking namelist** (members × sessions grid with ✓) — no role column any more.
 - **Personal training record:** on each member's detail page — every training they enrolled in + status + progress.
 
 ### 5.6 40-day one-on-one discipleship (四十天一对一守望) — flagship
 - **Program:** e.g. "四十天一对一守望", total_days = 40.
 - **Cascade:** pastor mentors a group leader → that leader mentors the assistant → each trained person mentors the next, until everyone has done it. Lineage tracked by `parent_pair_id`.
-- **Pair:** `mentor → trainee` (one-to-one). A mentor may have multiple trainees (multiple pairs). One position per pair.
-- **Pastor overview:** all pairs with % complete (days done / 40), status; real-time (DB view `discipleship_pair_summary`).
+- **Pair:** `mentor → trainee` (one-to-one). A mentor may have multiple trainees (multiple pairs). One position per pair. Carries an optional staff-only **`remark`** (migration 0024, free text).
+- **`AddPairModal`:** mentor and trainee `Combobox`es sit **side by side in one row** now, a "➜" divider between them (flex-wrap for mobile) — replacing the old vertical stack with a centred "↓". An optional **remark** textarea writes to `discipleship_pairs.remark` at creation.
+- **Pastor overview:** mentor and trainee are now their own **separate columns** (not one combined "trainee ← mentor" cell), plus a **Remark** column (truncated + `title` tooltip, same pattern as the members list) immediately before the actions column; all pairs with % complete (days done / 40), status; real-time (DB view `discipleship_pair_summary`). The table's default sort is trainee (the old implicit primary identity); mentor is its own sort key.
 - **Cascade view:** a visual chain (第1棒 → 第2棒 → …) with each person's progress.
-- **Daily form (standalone, private link — IMPORTANT):**
-  - Each pair has an unguessable `form_token`. The mentor opens a **dedicated, mobile-first form page** at `/d/<token>` — **no login**.
-  - The pastor-overview and the pair page provide **复制链接 / 打开表单** for each pair.
+- **`PairProgressModal` is now editable, and is the ONE dialog staff open** — clicking "Progress" on a pastor-overview row (the old separate "Form" button is retired: since staff can fill in an entry right in this dialog, a button that only navigated to the public form had nothing left to do). A day cell expands into a **completed checkbox, a notes textarea, and entry date/time inputs** (`entry_date`/`entry_time` — the latter a migration 0024 `time` column, mirrored exactly on `entry_date`'s own upsert pattern); the pair's own `remark` is editable near the header too. Nothing auto-saves on a keystroke or a toggle — a **Save** button persists the pair remark (`PATCH /discipleship/pairs/[id]`) and, if a day is selected and dirty, that day's entry (`POST /discipleship/pairs/[id]/progress`) together, then reloads. Switching to a different day with unsaved edits asks first (`useConfirm({ danger: true })`). The footer is **one row: Delete, Share, Save** — Share (the copy-link behaviour) is unchanged and is still the only way to get the actual public link for a mentor with no login; Save only renders for a role that may write (`perms.write`) — a `readonly` caller sees the same dialog as plain, read-only text with no Save button, since the server already refuses the write and a control that only ever 403s is a bug (rule G2).
+- **Daily form (standalone, private link — unchanged):**
+  - Each pair has an unguessable `form_token`. The mentor opens a **dedicated, mobile-first form page** at `/d/<token>` — **no login**. This public page is untouched by the 0024 rework above; it is still the only way an actual mentor with no account fills in a day.
   - Form shows: pair info (带领者 ➜ 被带领者), progress bar, 40-day mini grid, and today's entry: **第几天 / 是否完成 / 反馈备注 / 提交**; then a thank-you state.
-  - One `(pair, day_number)` is unique; re-submitting updates (idempotent).
+  - One `(pair, day_number)` is unique; re-submitting updates (idempotent) — the same `upsertProgress()` the in-app modal's Save now also calls.
+
+### 5.6b Happiness Groups (幸福小组) — optional module, three levels deep
+- **Shape:** 期 (term) → 幸福小组 (group, belongs to one term) → roster (教会成员 + 福友) + weekly
+  attendance tracked **by week number, not by calendar date** — the one roll call in the app that
+  isn't date-based. A 福友 is nothing special in the schema: just a `members` row whose
+  `church_role` is `visitor` (0021), so the roster picker is an ordinary member `Combobox` with no
+  role filtering.
+- **Term (`happiness_terms`):** church-wide (no `hall_id`), numbered (`term_no`, unique) with an
+  optional name and start/end dates. Several terms may **overlap** — it is a first-class,
+  repeatable entity with full CRUD, unlike the discipleship module (created once, never edited).
+  `weeks` (1–52, default 8) lives on the TERM, not the group: every group inside a term runs the
+  same length, which is what makes "week 5" comparable across the term's groups.
+- **Group (`happiness_groups`):** `hall_id` is a **direct, required** column — exactly like
+  `groups` (life groups) — so it walks the same hall gate (`hallFilter`/`withHall`/
+  `assertHallWritable`/`assertOwnsRow`) rather than discipleship's "hall comes from the mentor"
+  pattern. `leader_id` is nullable and set null (never cascaded) if that member is deleted.
+  Full CRUD, scoped to the term it belongs to.
+- **Roster (`happiness_group_members`):** a join table — who is in a group, added/removed one or
+  several at a time. Removing someone from the roster does NOT touch their attendance history:
+  the two tables carry no FK between them, so a week they attended stays on the record even after
+  they leave.
+- **Attendance (`happiness_attendance`):** **presence-only** — a row means "present that week";
+  there is no boolean to flip. Marking present INSERTs, marking absent DELETES — the opposite
+  convention from `discipleship_progress` (which upserts a `completed` boolean). `week_number` is
+  checked 1–52 by the database and additionally against the TERM's own `weeks` by the API (a
+  week 9 tick on an 8-week term is a 400, not a silent accept). The sheet reuses the same shared
+  `SheetTick`/`SheetTickAll`/`SheetTotals` components the Sunday and life-group sheets use — one
+  column per week number instead of per date.
+- **No public form:** unlike discipleship's `/d/[token]` mentor link, this module is entirely
+  staff/leader-facing — no self-service page for a 福友 to check themselves in.
+- **Module gate:** switchable at `/church` like discipleship (`church_modules.module = 'happiness'`,
+  `MODULE_HAPPINESS` in `packages/shared`'s `OPTIONAL_MODULES`); off ⇒ nav hidden, `/api/happiness/*`
+  404s.
 
 ### 5.7 Public member self-registration (`/join`)
 - One link the church hands out; **no login**, mobile-first, same shell-less shape as `/d/<token>`
@@ -293,8 +394,8 @@ Tables:
 - `church_modules(church_id→church on delete cascade, module, enabled, timestamps, pk(church_id,module))` —
   which **optional** modules this church runs. The catalog of what CAN be switched lives in code
   (`OPTIONAL_MODULES` in `packages/shared`: a key, the nav href it owns, the API prefixes it owns);
-  only the on/off state lives here, and a key outside the registry is a 400. Today the one entry is
-  `discipleship` (四十天守望). A missing row counts as ON.
+  only the on/off state lives here, and a key outside the registry is a 400. Today's entries are
+  `discipleship` (四十天守望) and `happiness` (幸福小组, 0022). A missing row counts as ON.
 - `halls(id, name, sort_order, created_at)` — 中文堂 / 英文堂 / 马来文堂. One shared database; a hall is a **scope column**, not a separate deployment.
 - `groups(id, name, description, meeting_day weekday, meeting_time, location, tags text[], hall_id→halls **NOT NULL**, created_at)` — **no leader columns** (derived); 小组状态 (可分植/可加人/刚好) is also derived, not stored.
 - `members(id, full_name, **english_name**, email, phone, gender, date_of_birth, church_role, status, group_id→groups, group_position, hall_id→halls **NOT NULL**, joined_at, notes, **serving_roles text[] NOT NULL DEFAULT '{}'**, timestamps)` — `full_name` is the CHINESE name; `english_name` (0018, renamed from the mislabelled `chinese_name`) is the English one and may be null. `serving_roles` (0019) is 服侍岗位: the ministries this person serves in, free text and several per person, the same shape `groups.tags` has and entered with the same `TagsInput`. Empty array = serves nowhere, which is a fact, not a blank. `household_id` went with 0020, together with the `households` table nothing ever wrote to.
@@ -305,7 +406,7 @@ Tables:
 - `events(id, title, event_type, location, starts_at, hall_id→halls **nullable**, created_at)` — the meetings someone adds by hand, each a dated column on the roll-call sheet; `hall_id is null` = 全堂. The old `events_unique_sunday_service` index went with 0013 (nothing manufactures a 主日崇拜 row any more), `recurring_id` with 0015, and `description` / `ends_at` with 0020 — never collected, never displayed. `location` stayed and the meeting form now asks for it: the dashboard's upcoming-meetings line has always rendered `date · location`, so the column was unfillable rather than unread.
 - ~~`recurring_events`~~ — **dropped by 0015**, together with `events.recurring_id`. The schedules only ever pre-created event rows for dates the calendar already had; the roll-call sheet builds its own columns, so nothing needed them.
 - `event_attendance(id, event_id, member_id, status, unique(event_id,member_id))` — a roll call stores one fact; `checked_in_at` / `notes` went with 0020, as did the `donations` table and the `donation_method` enum whose feature had already been removed.
-- `trainings(id, name, description, **kind** `course|activity` check, default `course`, **pic**, **pic_contact**, total_sessions, is_enrollable, starts_on, ends_on, **start_time**, **location**, **fee** numeric ≥ 0, **payment_instructions**, **payment_qr_url**, hall_id→halls **nullable**, created_at)` — `hall_id is null` = 全堂开放. `kind` (0014) is the only thing that tells a course from a one-off activity; the catalog of shapes is `TrainingKind` in `packages/shared`. 0016 dropped `category` and replaced `trainer_id→members` with free-text `pic` (+ its contact), copying each linked member's name forward first.
+- `trainings(id, name, description, **kind** `course|activity` check, default `course`, **pic**, **pic_contact**, total_sessions, is_enrollable, starts_on, ends_on, **start_time**, **location**, **gender** nullable `gender_type`, **fee** numeric ≥ 0, **payment_instructions**, **payment_qr_url**, hall_id→halls **nullable**, created_at)` — `hall_id is null` = 全堂开放. `kind` (0014) is the only thing that tells a course from a one-off activity, and is FIXED once the row exists (0024 retired the client's ability to change it after creation — see §5.5); the catalog of shapes is `TrainingKind` in `packages/shared`. 0016 dropped `category` and replaced `trainer_id→members` with free-text `pic` (+ its contact), copying each linked member's name forward first. `gender` (0024) is the same `gender_type` `members.gender` uses; null = open to everyone.
 - `training_sessions(id, training_id, session_number, title, scheduled_at, location, unique(training_id,session_number))` — an ACTIVITY's single row is plumbing for the roll call: its `scheduled_at`/`location` stay null, because the occasion's time and place live on the training row.
 - `training_enrollments(id, training_id, member_id, status, progress, enrolled_at, completed_at, **payment_slip_url**, unique(training_id,member_id))`
 - `training_attendance(id, session_id, member_id, attended, unique(session_id,member_id))`
@@ -318,9 +419,22 @@ Tables:
   (they meant the add-on switches on `/church`). The create path is kept for exactly one
   case: a church with no module at all, whose 四十天守望 page would otherwise be
   unrecoverable from the UI.
-- `discipleship_pairs(id, program_id, mentor_id→members, trainee_id→members, parent_pair_id?, status, start_date, form_token uuid unique, created_at, unique(program_id,trainee_id), check mentor≠trainee)`
-- `discipleship_progress(id, pair_id, day_number, entry_date, completed, notes, timestamps, unique(pair_id,day_number))`
+- `discipleship_pairs(id, program_id, mentor_id→members, trainee_id→members, parent_pair_id?, status, start_date, form_token uuid unique, **remark** nullable text, created_at, unique(program_id,trainee_id), check mentor≠trainee)` — `remark` (0024) is staff's own free-text note, editable from `AddPairModal` at creation and from `PairProgressModal` afterward (`PATCH .../pairs/[id]`).
+- `discipleship_progress(id, pair_id, day_number, entry_date, **entry_time** nullable time, completed, notes, timestamps, unique(pair_id,day_number))` — `entry_time` (0024) sits beside `entry_date` as its own column (this app keeps date/time separate throughout, e.g. `groups.meeting_time`), written by the same `upsertProgress()` helper the public `/d/[token]` form and the in-app `PairProgressModal` both call.
 - View `discipleship_pair_summary` — per-pair days_completed + percent_complete for the pastor overview.
+- `happiness_terms(id, term_no unique, name, weeks int default 8 check 1–52, starts_on, ends_on, created_at)` —
+  期 (0022). Church-wide (no `hall_id`); several may overlap. `weeks` applies to every group inside
+  it, which is what makes "week 5" comparable across the term's groups. Full CRUD, unlike
+  `discipleship_programs`.
+- `happiness_groups(id, term_id→happiness_terms on delete cascade, name, hall_id→halls **NOT NULL**, leader_id→members on delete **set null**, meeting_day weekday, meeting_time, location, created_at)` —
+  a 幸福小组 inside a term. `hall_id` is direct and required, exactly like `groups` (life groups),
+  not derived from a member the way a discipleship pair's hall is.
+- `happiness_group_members(id, group_id→happiness_groups on delete cascade, member_id→members on delete cascade, created_at, unique(group_id,member_id))` —
+  the roster: 教会成员 + 福友 alike (a 福友 is simply a member whose `church_role` is `visitor`).
+- `happiness_attendance(id, group_id→happiness_groups on delete cascade, member_id→members on delete cascade, week_number int check 1–52, created_at, unique(group_id,member_id,week_number))` —
+  **presence-only**: a row means "present that week". Marking present INSERTs; marking absent
+  DELETES — the opposite convention from `discipleship_progress`'s upserted boolean. The database's
+  1–52 check is a floor; the API additionally refuses a week beyond the TERM's own `weeks`.
 
 ---
 
@@ -328,16 +442,19 @@ Tables:
 
 | Route | Screen | Must show / do |
 | --- | --- | --- |
-| `/` | 仪表盘 Dashboard | KPIs (成员总数/在册/即将聚会, + 门训进行中 when the module is on), 身份分布图, upcoming events (`date · location`), discipleship progress |
-| `/members` | 成员目录 | search + filters by 身份(derived) / 小组 / **服侍岗位**, table, create, import, registration link |
-| `/members/[id]` | 成员详情 | profile + **个人培训档案** + 门训对子 |
+| `/` | 仪表盘 Dashboard | THREE sections: a New Visits vs Active Members line chart (trailing 6 months, two toggle chips), an upcoming-events table (desktop table + mobile tiles), one Total Active Members KPI tile |
+| `/members` | 成员目录 | search + filters by 身份(derived) / 小组 / **服侍岗位**, table (with a **Remark** column, not 加入日期), create (now with 加入小组日期 + 备注 too), import, registration link |
+| `/members/[id]` | 成员详情 | profile in labelled sections (Contact/Church/Ministry/Notes/Referral) + **个人培训档案** + 门训对子（"Leading X" / "Led by X"） |
 | `/groups` | 小组管理 · 列表 | table of all groups (小组名称+标签, 组长, 组员人数, 新成员人数, 小组状态, 聚会时间地点), sortable, filter by 标签/星期几, click a row → detail |
-| `/groups/[id]` | 小组详情 | create/delete, member allocation (simple list), **铁三角** leader picker (the only identity assignment here), roll-call card for the group's OWN meetings (year/month, then export at the end of its toolbar; each week column has a check-all in its header) |
+| `/groups/[id]` | 小组详情 | create/delete, member allocation (list with **Edit** — the shared `<MemberEditModal />` — and **Remove**), **铁三角** leader picker (the only identity ASSIGNMENT here), roll-call card — one column per Sunday, each carrying 小组/会前/主日 (year/month, then export at the end of its toolbar; every sub-column has a check-all in its header) |
 | `/events` | 崇拜与祷告会 Services | ONE 聚会点名 sheet: members × (the month's Sundays with 会前 / 主日 ticks + each hand-added meeting as a dated 到场 column), a check-all per sub-column, per-tick totals, export; ＋新增聚会, edit/delete from a meeting's column header |
 | `/trainings` | 培训&活动 | catalog cards for both shapes, no filter, ＋新增培训 / ＋新增活动 |
 | `/trainings/[id]` | 培训 / 活动详情 | a course: sessions, enrolment approval, **核对名单** grid, per-session attendance. An activity: no session list, one 「到场」 column |
 | `/discipleship` | 四十天守望 | cascade chain, **牧者总览** (per-pair progress + 复制链接/打开表单), a pair's 40-day grid |
 | `/discipleship/pairs/[id]` | 对子进度 | 40-day grid + cascade lineage (pastor view) |
+| `/happiness` | 幸福小组 · 期列表 | table of terms (期号/名称/起止日期/周数/小组数), create/edit/delete a term, click a row → its groups |
+| `/happiness/[termId]` | 该期的小组列表 | term's own facts as a header card; table of groups (名称/堂会/组长/聚会安排/名单人数), create/edit/delete a group, click a row → group detail |
+| `/happiness/group/[groupId]` | 幸福小组详情 | roster panel (add/remove via member `Combobox`, 教会成员+福友不分) + a by-week attendance sheet (第1周…第N周, not dates), column check-all, export |
 | `/d/[token]` | 每日填写页（独立） | **standalone, mobile-first, no login** mentor daily form |
 | `/enroll/[id]` | 报名页（独立） | **standalone, mobile-first, no login** self-enrollment for a course or an activity — matches full Chinese name to a member |
 | `/join` | 成员注册页（独立） | **standalone, mobile-first, no login** member self-registration — name pair, contact details, congregation, photo |
@@ -350,7 +467,8 @@ Tables:
 
 | Area | Endpoints |
 | --- | --- |
-| Members | `GET/POST /members`, `GET/PATCH/DELETE /members/:id`, `GET /members/:id/trainings`, `POST /members/:id/avatar` (image upload) (filters: `church_role`, `group_position`, `group_id`, `q`) |
+| Members | `GET/POST /members`, `GET/PATCH/DELETE /members/:id`, `GET /members/:id/trainings`, `POST /members/:id/avatar` (image upload) (filters: `church_role`, `group_position`, `group_id`, `q`). `POST`/`PATCH` merge an optional `leader_account_event` onto the ordinary row whenever the write crosses into/out of 小组长 (see §3.3) |
+| **`group_leader` scope (§3.3)** | A session with this role is refused (403) outside `members`/`groups`/`attendance`/`auth` at the dispatch gate, before any handler runs. Within those, its own `group_id` always wins over anything a request asks for: `GET /members`/`GET /groups` are forced to its one group, `GET/PATCH /members/:id` and `GET/PATCH /groups/:id` refuse any id outside it, and `GET/PUT /attendance/sheet` is forced onto its group's Sunday columns only (never a congregation meeting) |
 | Member import | `POST /members/import` `{hall_id, rows[{row, full_name, english_name, phone, email, gender, date_of_birth, joined_at, church_role, status, hall, group, serving_roles}]}` → `{created, updated, skipped[{row, issue, field, detail, message}], failures[{row, message}]}`. **super_admin / admin only**, 300 rows at most. Rows are matched on the name pair and planned by the same `lib/members-import.ts` the browser previewed with; a refused row never stops the others |
 | **Public registration** | `GET /members/register` → `{halls[{id,name}]}` (the form's own bootstrap) and `POST /members/register` (JSON, or multipart when a photo rides along) → `{status:'created'\|'updated'}`. No session; the ONLY public path under `/members`, and only those two methods. It reads an allow-list of fields — a body carrying `church_role` / `group_id` / `status` / `notes` / `serving_roles` has them ignored, because a role and a ministry are the church's to hand out — and answers with no member data at all |
 | Halls | `GET /halls` — 堂会 list (read-only; a hall-scoped account only sees its own) |
@@ -362,6 +480,7 @@ Tables:
 | Enrollment | `POST /trainings/:id/enroll`, `PATCH/DELETE /trainings/enrollments/:enrollmentId` |
 | Discipleship | `GET/POST /discipleship/programs`, **`GET` only** on `/discipleship/programs/:id` (the module — no hall column, so no hall gate; PATCH and DELETE were removed with the module manager and now 404), `GET /discipleship/programs/:id/overview`, `GET/POST /discipleship/pairs`, `GET/PATCH/DELETE /discipleship/pairs/:id`, `POST /discipleship/pairs/:id/progress` |
 | **Private form** | `GET /discipleship/form/:token`, `POST /discipleship/form/:token/progress` (no login) |
+| Happiness Groups | `GET/POST /happiness/terms`, `GET/PATCH/DELETE /happiness/terms/:id` (church-wide, no hall gate); `GET /happiness/groups?term_id=`, `POST /happiness/groups`, `GET/PATCH/DELETE /happiness/groups/:id` (hall-scoped, same gate as `/groups`); `POST /happiness/groups/:id/members` `{member_id\|member_ids[]}`, `DELETE /happiness/groups/:id/members/:memberId`; `GET /happiness/groups/:id/attendance` → `{weeks, records[{week_number,member_id}]}`, `PUT /happiness/groups/:id/attendance` `{week_number, member_id\|member_ids[], present}` — presence upserted (`present:true`) or deleted (`present:false`) for the given members in one call; `week_number` validated against the group's own term `weeks`, not the database's blanket 1–52. No public path — staff/leader only |
 
 ---
 
@@ -398,7 +517,7 @@ Sample training: **门徒训练 101** (负责人 陈约翰 · 012-345 6789, 3 �
 | 4 | ~~Donation fund presets~~ | **Moot (0020)** — the feature is gone |
 | 5 | Mentor can have multiple trainees? | **Yes** (multiple pairs) |
 | 6 | Auth now? | **No** — add Supabase Auth + role permissions later |
-| 7 | Traditional Chinese / English toggle? | **Done** — English / 简体中文 / Bahasa Melayu, per account, English by default |
+| 7 | Traditional Chinese / English toggle? | **Done** — 简体中文 / English / Bahasa Melayu, per account, Chinese by default (0025) |
 | 8 | Discipleship link: expiry / reset? | Long-lived; token resettable — **confirm** |
 | 9 | Daily form: view/back-fill past days? | Prototype allows "再填一天"; confirm history/back-fill |
 
