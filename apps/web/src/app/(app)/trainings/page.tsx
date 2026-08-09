@@ -145,7 +145,7 @@ export default function TrainingsPage() {
 
       <div className="section-label mb-14">
         <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--good)', display: 'inline-block' }} />
-        {t('trainings.active')} <span className="faint" style={{ fontWeight: 400 }}>{t('trainings.activeSub')}</span>
+        {t('trainings.active')}
       </div>
       {trainings.initialLoading ? (
         <SkeletonScreen>
@@ -159,7 +159,7 @@ export default function TrainingsPage() {
 
       <div className="section-label" style={{ margin: '28px 0 14px' }}>
         <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--faint)', display: 'inline-block' }} />
-        {t('trainings.ended')} <span className="faint" style={{ fontWeight: 400 }}>{t('trainings.endedSub')}</span>
+        {t('trainings.ended')}
       </div>
       {/* Bare skeletons, not a second <SkeletonScreen>: the live region above
           has already announced the wait, and announcing it twice is noise. */}

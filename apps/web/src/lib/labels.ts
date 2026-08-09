@@ -14,6 +14,7 @@ import {
   Weekday,
   displayRole,
 } from '@tog/shared';
+import type { ComboOption } from './combobox';
 import type { MessageKey } from './i18n/en';
 import type { ImportIssue } from './members-import';
 import type { SheetTickName } from './types';
@@ -65,6 +66,7 @@ const CHURCH_DISPLAY_ROLE: Record<ChurchRole, DisplayRole> = {
   [ChurchRole.Deacon]: DisplayRole.Deacon,
   [ChurchRole.CoWorker]: DisplayRole.CoWorker,
   [ChurchRole.Member]: DisplayRole.RegularMember,
+  [ChurchRole.Visitor]: DisplayRole.Visitor,
 };
 
 export function churchDisplayRole(role: ChurchRole | string): DisplayRole {
@@ -76,6 +78,7 @@ export const CHURCH_ROLE_OPTIONS: ChurchRole[] = [
   ChurchRole.Deacon,
   ChurchRole.CoWorker,
   ChurchRole.Member,
+  ChurchRole.Visitor,
 ];
 
 /** Full display order for the ranks, for filter dropdowns + charts. */
@@ -89,6 +92,38 @@ export const MEMBER_ROLE_FILTERS: DisplayRole[] = [...ROLE_ORDER, DisplayRole.Un
  * dropdown and the member-profile edit modal so both offer the same options
  * with the same leadership rule (see `canPromoteToLeadership`).
  */
+/**
+ * The options of a 推荐人 picker, built once for both member forms (rule G4).
+ *
+ * 无推荐人 comes FIRST and carries the empty value the column stores as NULL:
+ * "nobody brought them" is the ordinary case and an explicit choice, not an
+ * empty field somebody forgot. `exclude` drops the person being edited — the
+ * database refuses a self-referral outright, so it must never be on offer.
+ */
+export function referrerOptions(
+  members: readonly {
+    id: string;
+    full_name: string;
+    english_name: string | null;
+    church_role: ChurchRole;
+    group_position: GroupPosition | null;
+  }[],
+  t: (key: MessageKey) => string,
+  exclude?: string | null,
+): ComboOption[] {
+  return [
+    { value: '', label: t('members.noReferrer') },
+    ...members
+      .filter((m) => m.id !== exclude)
+      .map((m) => ({
+        value: m.id,
+        label: m.full_name,
+        sub: m.english_name,
+        hint: t(roleKey(memberRole(m))),
+      })),
+  ];
+}
+
 export const GROUP_POSITION_OPTIONS: GroupPosition[] = [
   GroupPosition.Leader,
   GroupPosition.AssistantLeader,
@@ -189,7 +224,10 @@ export const ROLE_TAG: Record<string, { bg: string; fg: string; dot: string }> =
   [DisplayRole.CoreMember]: { bg: '#dae8fb', fg: '#1d5fb8', dot: '#2f7ad1' },
   [DisplayRole.RegularMember]: { bg: '#e5e8ec', fg: '#4a5560', dot: '#7c8894' },
   [DisplayRole.NewMember]: { bg: '#eae1f8', fg: '#6b3fa0', dot: '#8b5cc7' },
-  [DisplayRole.Visitor]: { bg: '#ece9e6', fg: '#7a736e', dot: '#b0a49b' },
+  // 访客 — a hue no rank uses, and a muted one: "has come, has not joined" has
+  // to be told apart at a glance from 普通成员's cool grey and from 未分组's
+  // warm grey, without competing with the colours leadership is painted in.
+  [DisplayRole.Visitor]: { bg: '#f0e6db', fg: '#8a5a33', dot: '#b57a49' },
   [DisplayRole.Ungrouped]: { bg: '#f0eeec', fg: '#9a938f', dot: '#c3bbb6' },
 };
 

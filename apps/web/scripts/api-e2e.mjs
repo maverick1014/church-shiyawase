@@ -138,6 +138,56 @@ async function main() {
     ok('…and 服侍岗位 is editable, not write-once',
       JSON.stringify(patch.json?.serving_roles) === JSON.stringify(['招待']),
       JSON.stringify(patch.json?.serving_roles));
+    // 地址 + 推荐人 (0021). The referrer is a member id going in and an
+    // embedded name coming back — a self-referencing embed PostgREST has to be
+    // told the direction of, so what is checked is that the RIGHT person comes
+    // back rather than a list of people this one referred.
+    const referred = await req('POST', '/api/members', {
+      ...H,
+      body: {
+        full_name: `E2E被推荐-${Date.now()}`,
+        church_role: 'visitor',
+        status: 'active',
+        hall_id: hallId,
+        address: '12, Jalan Merdeka, 43300 Seri Kembangan, Selangor',
+        referred_by: memberId,
+      },
+    });
+    // The assertion that would have caught the enum being two values short:
+    // 访客 is a value the code offers, so the database has to have it.
+    ok('create a member as 访客 → 200', referred.status === 200 && referred.json?.id,
+      `status ${referred.status} ${JSON.stringify(referred.json).slice(0, 160)}`);
+    const referredId = referred.json?.id;
+    if (referredId) {
+      const read = await req('GET', `/api/members/${referredId}`, H);
+      ok('…and reads back as a visitor', read.json?.church_role === 'visitor', read.json?.church_role);
+      ok('…with the address it was given',
+        read.json?.address === '12, Jalan Merdeka, 43300 Seri Kembangan, Selangor', read.json?.address);
+      ok('…and the 推荐人 embedded as the person who brought them',
+        read.json?.referred_by === memberId && read.json?.referrer?.id === memberId,
+        `${read.json?.referred_by} / ${JSON.stringify(read.json?.referrer)}`);
+      const unrefer = await req('PATCH', `/api/members/${referredId}`, { ...H, body: { referred_by: null } });
+      ok('…and 无推荐人 is a value, not a missing one',
+        unrefer.status === 200 && unrefer.json?.referred_by === null,
+        `status ${unrefer.status} ${unrefer.json?.referred_by}`);
+      // The database refuses this outright; the forms never offer it, and the
+      // import refuses it in words — this is the last line of that defence.
+      ok('a member cannot be their own 推荐人',
+        (await req('PATCH', `/api/members/${referredId}`, { ...H, body: { referred_by: referredId } })).status >= 400);
+      ok('delete the referred member → 200',
+        (await req('DELETE', `/api/members/${referredId}`, H)).status === 200);
+    }
+    // Every church role the app offers, created for real. The code enum and the
+    // database enum are two lists; this is the one place they meet.
+    for (const role of ['pastor', 'deacon', 'co_worker', 'member', 'visitor']) {
+      const mk = await req('POST', '/api/members', {
+        ...H,
+        body: { full_name: `E2E身份${role}-${Date.now()}`, church_role: role, status: 'active', hall_id: hallId },
+      });
+      ok(`church_role '${role}' round-trips`, mk.status === 200 && mk.json?.church_role === role,
+        `status ${mk.status} ${JSON.stringify(mk.json).slice(0, 140)}`);
+      if (mk.json?.id) await req('DELETE', `/api/members/${mk.json.id}`, H);
+    }
     const del = await req('DELETE', `/api/members/${memberId}`, H);
     ok('delete member → 200', del.status === 200);
   }
@@ -446,6 +496,9 @@ async function memberImport(adminCookie, hallId) {
         { row: 5, full_name: '   ' },
         { row: 6, full_name: `${chinese}-日期`, date_of_birth: '4 May 1990' },
         { row: 7, full_name: `${chinese}-堂会`, hall: '德文堂' },
+        // 推荐人 is a NAME in a file and an id in the row, so a name nobody
+        // answers to is a refusal rather than a null quietly written.
+        { row: 8, full_name: `${chinese}-推荐`, referred_by: 'E2E查无此人' },
       ],
     },
   });
@@ -458,6 +511,7 @@ async function memberImport(adminCookie, hallId) {
   ok('…a row with no Chinese name is skipped', skipped.get(5) === 'name_missing', String(skipped.get(5)));
   ok('…an unreadable date is skipped', skipped.get(6) === 'bad_date', String(skipped.get(6)));
   ok('…an unknown congregation is skipped', skipped.get(7) === 'unknown_hall', String(skipped.get(7)));
+  ok('…and a 推荐人 nobody answers to is skipped', skipped.get(8) === 'unknown_referrer', String(skipped.get(8)));
 
   const found = (await req('GET', `/api/members?q=${encodeURIComponent(chinese)}`, H)).json || [];
   for (const m of found) made.push(m.id);
@@ -488,6 +542,31 @@ async function memberImport(adminCookie, hallId) {
     JSON.stringify(after?.serving_roles) === JSON.stringify(['敬拜', '音响']), JSON.stringify(after?.serving_roles));
   ok('…and there is still only one of them',
     ((await req('GET', `/api/members?q=${encodeURIComponent(chinese)}`, H)).json || []).length === 2);
+
+  // 地址 + 推荐人 through the import. Both people in this file share a Chinese
+  // name, which is exactly the case a referral has to be told to spell out: the
+  // bare name is refused, the pair resolves.
+  const referrals = await req('POST', '/api/members/import', {
+    ...H,
+    body: {
+      hall_id: hallId,
+      rows: [
+        { row: 2, full_name: chinese, english_name: 'Import Two', address: '88, Jalan Damai', referred_by: `${chinese} Import One` },
+        { row: 3, full_name: chinese, english_name: 'Import One', referred_by: chinese },
+      ],
+    },
+  });
+  ok('an import carrying 地址 + 推荐人 → 200', referrals.status === 200, `status ${referrals.status}`);
+  ok('…the ambiguous referral is skipped rather than guessed at',
+    (referrals.json?.skipped || []).some((s) => s.row === 3 && s.issue === 'ambiguous_referrer'),
+    JSON.stringify(referrals.json?.skipped || []));
+  const both = (await req('GET', `/api/members?q=${encodeURIComponent(chinese)}`, H)).json || [];
+  const importTwo = both.find((m) => m.english_name === 'Import Two');
+  const importOne = both.find((m) => m.english_name === 'Import One');
+  ok('…the address the file supplied was written', importTwo?.address === '88, Jalan Damai', importTwo?.address);
+  ok('…and the referral resolved to the member the pair names',
+    importTwo?.referred_by === importOne?.id && importTwo?.referrer?.id === importOne?.id,
+    `${importTwo?.referred_by} / ${JSON.stringify(importTwo?.referrer)}`);
 
   // Refusals that are about the REQUEST rather than about a row.
   ok('an import with no rows → 400',
@@ -525,6 +604,10 @@ async function selfRegistration(adminCookie, hallId) {
   const stamp = Date.now();
   const chinese = `E2E注册-${stamp}`;
   const made = [];
+  // A real member id, so the 推荐人 the body claims below is a value the server
+  // COULD have written — being ignored has to be the allow-list's doing, not a
+  // foreign key happening to fail.
+  const someone = ((await req('GET', '/api/members', H)).json || [])[0]?.id ?? null;
 
   const options = await req('GET', '/api/members/register');
   ok('public GET /members/register → 200 + halls', options.status === 200 && Array.isArray(options.json?.halls),
@@ -541,11 +624,13 @@ async function selfRegistration(adminCookie, hallId) {
       phone: '012-222 2222',
       gender: 'male',
       date_of_birth: '1990-05-04',
+      address: '3, Lorong Damai',
       hall_id: hallId,
       church_role: 'pastor',
       status: 'inactive',
       notes: 'promote me',
       serving_roles: ['敬拜'],
+      referred_by: someone,
       group_id: '00000000-0000-0000-0000-000000000000',
     },
   });
@@ -566,9 +651,15 @@ async function selfRegistration(adminCookie, hallId) {
   // not read the field — the row comes back serving nowhere, not serving 敬拜.
   ok('…and serving nowhere, whatever ministry the body claimed',
     (person?.serving_roles || []).length === 0, JSON.stringify(person?.serving_roles));
+  // Who brought somebody is the CHURCH's record of how they arrived, so the
+  // allow-list does not read the field at all — exactly like `church_role`.
+  ok('…and with no 推荐人, whatever the body claimed',
+    person?.referred_by === null, String(person?.referred_by));
   ok('…and the details it WAS allowed to set',
     person?.phone === '012-222 2222' && person?.gender === 'male' && person?.date_of_birth === '1990-05-04',
     `${person?.phone} / ${person?.gender} / ${person?.date_of_birth}`);
+  ok('…including the address, which is a contact detail like the phone',
+    person?.address === '3, Lorong Damai', person?.address);
 
   // Registering again is the same person: an update, not a twin — and the page
   // is told which, in the same one-word shape.

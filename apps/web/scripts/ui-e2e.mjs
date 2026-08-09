@@ -1891,18 +1891,34 @@ async function main() {
     const hallSel = page.locator('.modal select').first();
     const hallOpt = await hallSel.locator('option').nth(1).getAttribute('value');
     if (hallOpt) await hallSel.selectOption(hallOpt);
-    /* 服侍岗位 (migration 0019) — the shared TagsInput, entered the way a tag
-       is: type, Enter, and a chip appears. The ministry is fixture-named, so
-       the filter assertion below can look for a value only this run put there,
-       and it leaves with the member. */
+    /* 访客 + 推荐人 (migration 0021) — the fifth church role has to be on offer
+       in the form that writes one, and the referrer is a Combobox (never a
+       `<select>`, rule G4) whose default is an explicit 无推荐人 rather than an
+       empty field. */
+    check('the member form offers 访客 as a church role',
+      (await page.locator('.modal select option[value="visitor"]').count()) === 1);
+    const referrerBox = page.locator('.modal input[role="combobox"]');
+    check('…and a 推荐人 picker that is a searchable member combobox',
+      (await referrerBox.count()) === 1);
+    if (await referrerBox.count())
+      check('…defaulting to 无推荐人 rather than to an empty field',
+        (await referrerBox.inputValue()) === 'No referral', await referrerBox.inputValue());
+
+    /* 服侍岗位 (migration 0019) — the shared TagsInput. Typed and then SAVED
+       WITHOUT pressing Enter, which is the ordinary way to use it and the path
+       that used to lose the value silently: leaving the field is what commits
+       the chip (on a phone the keyboard's key says 完成, not Enter). The
+       ministry is fixture-named, so the filter assertion below can look for a
+       value only this run put there, and it leaves with the member. */
     const testMinistry = 'ZZ_UITEST_服侍';
     const servingBox = page.locator('.modal input[placeholder*="Worship"]');
     check('the add-member form offers a 服侍岗位 field', (await servingBox.count()) === 1);
     if (await servingBox.count()) {
       await servingBox.fill(testMinistry);
-      await servingBox.press('Enter');
+      // Leaving the field, and nothing else — no Enter anywhere in this block.
+      await page.locator('.modal input').first().click();
       await w(200);
-      check('a ministry typed into it becomes a chip',
+      check('a ministry typed into it becomes a chip when the field is left',
         (await page.locator(`.modal .chip:has-text("${testMinistry}")`).count()) === 1);
     }
     await page.locator('.modal button:has-text("Save")').first().click();
@@ -1921,6 +1937,8 @@ async function main() {
       await page.locator(`.mtile:has-text("${testName}")`).first().click();
       await page.waitForURL(/\/members\/[0-9a-f-]+/, { timeout: 15000 });
       createdMemberId = page.url().match(/\/members\/([0-9a-f-]+)/)?.[1] ?? null;
+      // The server's answer, not the form's state: this is what proves the
+      // ministry survived a save that never saw an Enter key.
       check('the member’s profile shows the ministry as a badge',
         (await page.locator(`.fact .badge:has-text("${testMinistry}")`).count()) === 1);
       await page.locator('button:visible:has-text("Delete")').first().click();

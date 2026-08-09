@@ -285,6 +285,13 @@ export enum ChurchRole {
   Deacon = 'deacon', // 执事
   CoWorker = 'co_worker', // 同工
   Member = 'member', // 一般成员 (real rank derived from group position)
+  /**
+   * 访客 — somebody who comes but has not joined (migration 0021). A church
+   * ROLE rather than a status: "visitor" is what they are to the church, not
+   * whether their record is active, so a visitor who stops coming is an
+   * inactive visitor and both facts survive.
+   */
+  Visitor = 'visitor',
 }
 
 /**
@@ -338,6 +345,10 @@ export const DISPLAY_ROLE_ORDER: DisplayRole[] = [
   DisplayRole.CoreMember,
   DisplayRole.RegularMember,
   DisplayRole.NewMember,
+  // Last, because it is where somebody starts: a visitor holds no rank in a
+  // group, and reading the list top to bottom is reading it from the pulpit
+  // to the door.
+  DisplayRole.Visitor,
 ];
 
 /** A group position maps 1:1 onto the display role of the same rank. */
@@ -358,6 +369,10 @@ export function displayRole(m: {
   if (m.church_role === ChurchRole.Pastor) return DisplayRole.Pastor;
   if (m.church_role === ChurchRole.Deacon) return DisplayRole.Deacon;
   if (m.church_role === ChurchRole.CoWorker) return DisplayRole.CoWorker;
+  // Before the group position, like every other church-wide role: a visitor
+  // sitting in on a life group is still a visitor, which is the whole reason
+  // this is a role rather than a status.
+  if (m.church_role === ChurchRole.Visitor) return DisplayRole.Visitor;
   if (m.group_position) return POSITION_DISPLAY_ROLE[m.group_position];
   return DisplayRole.Ungrouped;
 }
@@ -394,6 +409,18 @@ export interface Member {
   english_name: string | null;
   email: string | null;
   phone: string | null;
+  /**
+   * Free text, as you would write it on an envelope (migration 0021).
+   * Deliberately not street / unit / postcode / state: every attempt to model
+   * a Malaysian address that way leaves half the rows working around it.
+   */
+  address: string | null;
+  /**
+   * 推荐人 — the member who brought this person, or null for the ordinary case
+   * of nobody (migration 0021). The church's record of how somebody arrived,
+   * which is why it is the church's to write and not the person's.
+   */
+  referred_by: string | null;
   gender: Gender | null;
   date_of_birth: string | null;
   church_role: ChurchRole;

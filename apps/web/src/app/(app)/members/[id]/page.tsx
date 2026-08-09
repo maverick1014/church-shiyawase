@@ -1,12 +1,13 @@
 'use client';
 
+import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { useMemo, useRef, useState } from 'react';
 import { useFetch } from '@/lib/hooks';
 import { useSortableRows } from '@/lib/sort';
 import { api } from '@/lib/api';
 import { usePageChrome, useMe } from '@/components/AppShell';
-import { Avatar, BackButton, EntityHeader, ErrorBanner, FactGrid, Field, HallSelect, MemberName, Modal, ProgressBar, RoleBadge, SkeletonDetail, SkeletonScreen, SortTh, TagsInput, useConfirm, useToast } from '@/components/ui';
+import { Avatar, BackButton, Combobox, EntityHeader, ErrorBanner, FactGrid, Field, HallSelect, MemberName, Modal, ProgressBar, RoleBadge, SkeletonDetail, SkeletonScreen, SortTh, TagsInput, useConfirm, useToast } from '@/components/ui';
 import { PairProgressModal } from '@/components/PairProgressModal';
 import { can } from '@/lib/perms';
 import { useModuleEnabled } from '@/lib/church';
@@ -25,6 +26,7 @@ import {
   memberRole,
   memberStatusKey,
   positionKey,
+  referrerOptions,
 } from '@/lib/labels';
 import { useT } from '@/lib/i18n';
 
@@ -111,6 +113,20 @@ export default function MemberDetailPage() {
   const facts = [
     { label: tr('members.field.email'), value: m.email ?? '—' },
     { label: tr('members.field.phone'), value: m.phone ?? '—' },
+    { label: tr('members.field.address'), value: m.address ?? '—' },
+    {
+      label: tr('members.field.referrer'),
+      // The embed is null for almost everybody, so it is guarded rather than
+      // assumed (rule G6) — and when there IS one, it is a way to get to them:
+      // "who brought this person" is a question you ask about the referrer next.
+      value: m.referrer ? (
+        <Link href={`/members/${m.referrer.id}`}>
+          <MemberName member={m.referrer} />
+        </Link>
+      ) : (
+        tr('members.noReferrer')
+      ),
+    },
     { label: tr('member.field.gender'), value: m.gender ? tr(genderKey(m.gender)) : '—' },
     { label: tr('members.col.group'), value: m.group?.name ?? tr('members.filter.ungrouped') },
     { label: tr('members.col.status'), value: tr(memberStatusKey(m.status)) },
@@ -300,6 +316,9 @@ function EditMemberModal({
     english_name: member.english_name ?? '',
     phone: member.phone ?? '',
     email: member.email ?? '',
+    address: member.address ?? '',
+    // '' = 无推荐人, which is what the column stores as NULL.
+    referred_by: member.referred_by ?? '',
     gender: member.gender ?? '',
     date_of_birth: member.date_of_birth ?? '',
     joined_at: member.joined_at ?? '',
@@ -326,6 +345,13 @@ function EditMemberModal({
       for (const r of other.serving_roles ?? []) set.add(r);
     return [...set].sort((a, b) => a.localeCompare(b, 'zh'));
   }, [allMembers.data]);
+  // The 推荐人 picker draws on the same roll — and never offers this person,
+  // because the database refuses a self-referral and a user must not be able
+  // to walk into that error.
+  const referrerOpts = useMemo(
+    () => referrerOptions(allMembers.data ?? [], t, member.id),
+    [allMembers.data, t, member.id],
+  );
   // Sibling members of whichever group is currently SELECTED (not necessarily
   // the member's original group) — used to auto-demote whoever currently
   // holds a leadership slot when someone new is assigned to it (one holder
@@ -364,6 +390,8 @@ function EditMemberModal({
         english_name: form.english_name || null,
         phone: form.phone || null,
         email: form.email || null,
+        address: form.address || null,
+        referred_by: form.referred_by || null,
         gender: form.gender || null,
         date_of_birth: form.date_of_birth || null,
         joined_at: form.joined_at || null,
@@ -401,6 +429,19 @@ function EditMemberModal({
         </Field>
         <Field label={t('members.field.email')}>
           <input value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="name@grace.org" />
+        </Field>
+      </div>
+      <div className="form-row">
+        <Field label={t('members.field.address')}>
+          <input value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} />
+        </Field>
+        <Field label={t('members.field.referrer')}>
+          <Combobox
+            value={form.referred_by}
+            onChange={(id) => setForm({ ...form, referred_by: id })}
+            options={referrerOpts}
+            ariaLabel={t('members.field.referrer')}
+          />
         </Field>
       </div>
       <div className="form-row">

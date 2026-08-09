@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
+  CHURCH_ROLE_OPTIONS,
+  churchDisplayRole,
+  churchRoleKey,
   isActivity,
   trainingKindClass,
   trainingKindKey,
@@ -16,11 +19,24 @@ import {
   groupHealthStatus,
   groupHealthClass,
   groupHealthKey,
+  MEMBER_ROLE_FILTERS,
+  memberRole,
+  ROLE_TAG,
+  roleKey,
   sheetTickKey,
 } from '@/lib/labels';
 import { en } from '@/lib/i18n/en';
+import { ms } from '@/lib/i18n/ms';
+import { zh } from '@/lib/i18n/zh';
 import { TICK_ORDER } from '@/lib/sheet';
-import { DisplayRole, isTrainingKind, TRAINING_KINDS, TrainingKind } from '@tog/shared';
+import {
+  ChurchRole,
+  DisplayRole,
+  GroupPosition,
+  isTrainingKind,
+  TRAINING_KINDS,
+  TrainingKind,
+} from '@tog/shared';
 
 describe('role palette', () => {
   it('roleTagStyle returns the pastor palette', () => {
@@ -37,6 +53,77 @@ describe('role palette', () => {
   });
 });
 
+
+/*
+ * THE DRIFT GUARD.
+ *
+ * `deacon` and `co_worker` sat in the code enum for months while the database
+ * type held neither, so saving a member as 执事 failed outright — two lists,
+ * and nothing comparing them. A unit test cannot reach the database, so it
+ * guards the half it CAN see: every value the code ships has to be a value the
+ * app can actually name and paint. A new role added to the enum and to nothing
+ * else fails here, at the point it is cheap to fix, instead of on the first
+ * church that picks it.
+ *
+ * (The other half is `scripts/api-e2e.mjs`, which creates a member as each
+ * role against the live database — that is what would have caught the missing
+ * enum values.)
+ */
+describe('roles: every enum value is named, coloured and offered', () => {
+  const DICTS = { en, zh, ms };
+
+  it('gives every church role a label in all three languages', () => {
+    for (const role of Object.values(ChurchRole))
+      for (const [lang, dict] of Object.entries(DICTS))
+        expect({ lang, role, label: dict[churchRoleKey(role)] }).toMatchObject({
+          label: expect.stringMatching(/\S/),
+        });
+  });
+
+  it('offers every church role in the member form', () => {
+    expect([...CHURCH_ROLE_OPTIONS].sort()).toEqual(Object.values(ChurchRole).sort());
+  });
+
+  it('maps every church role onto a display role of its own', () => {
+    for (const role of Object.values(ChurchRole)) {
+      const shown = churchDisplayRole(role);
+      // Never the fallback: a role that lands on 未分组 is one nobody wired up.
+      expect({ role, shown }).not.toMatchObject({ shown: DisplayRole.Ungrouped });
+      expect(Object.values(DisplayRole)).toContain(shown);
+    }
+  });
+
+  it('gives every display role a label in all three languages', () => {
+    for (const role of Object.values(DisplayRole))
+      for (const [lang, dict] of Object.entries(DICTS))
+        expect({ lang, role, label: dict[roleKey(role)] }).toMatchObject({
+          label: expect.stringMatching(/\S/),
+        });
+  });
+
+  it('gives every display role its own badge palette, and no two the same', () => {
+    for (const role of Object.values(DisplayRole)) expect(ROLE_TAG[role]).toBeTruthy();
+    const dots = Object.values(DisplayRole).map((role) => ROLE_TAG[role].dot);
+    expect(new Set(dots).size).toBe(dots.length);
+  });
+
+  it('offers every display role as a members-list filter', () => {
+    // ROLE_ORDER is the ranks; 未分组 is added beside them for the filter, so
+    // the filter list is the one that has to cover the whole enum.
+    expect([...MEMBER_ROLE_FILTERS].sort()).toEqual(Object.values(DisplayRole).sort());
+  });
+
+  it('reads a church-wide role ahead of any group position', () => {
+    // 牧师/执事/同工/访客 are what somebody IS to the church; a group position is
+    // where they sit in one life group, and must not overwrite it.
+    expect(memberRole({ church_role: ChurchRole.Visitor, group_position: GroupPosition.NewMember }))
+      .toBe(DisplayRole.Visitor);
+    expect(memberRole({ church_role: ChurchRole.Member, group_position: GroupPosition.Leader }))
+      .toBe(DisplayRole.Leader);
+    expect(memberRole({ church_role: ChurchRole.Member, group_position: null }))
+      .toBe(DisplayRole.Ungrouped);
+  });
+});
 
 describe('enrollmentStatusClass', () => {
   it('maps enrollment statuses to badge classes', () => {

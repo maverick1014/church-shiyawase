@@ -55,7 +55,16 @@ export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 export const fetchCache = 'force-no-store';
 
-const MEMBER_SELECT = '*, group:groups(id,name), hall:halls(id,name)';
+/**
+ * 推荐人 is a foreign key from `members` back to `members`, so the embed has to
+ * say WHICH direction it means: `!referred_by` names the FK column, which is
+ * the many-to-one — the person who brought them, never the list of people they
+ * brought. The constraint name is not enough for a self-reference (PostgREST
+ * answers PGRST200 for it), and the row comes back null whenever nobody did,
+ * which is the ordinary case every reader has to guard (rule G6).
+ */
+const MEMBER_SELECT =
+  '*, group:groups(id,name), hall:halls(id,name), referrer:members!referred_by(id,full_name,english_name)';
 /**
  * A person, everywhere a name is only shown: the CHINESE name and the English
  * one under it (0018). Both travel together in every brief, because every list,
@@ -365,13 +374,14 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
     // in their own details instead of somebody typing them off a paper slip.
     //
     // What this path CAN do, deliberately and exhaustively: add one member
-    // carrying a name pair, a phone, an email, a gender, a birthday, a
-    // congregation and one photo — or, when that pair is already on the roll,
-    // update those same contact details on that one row. What it CANNOT do:
-    // set a church role (every registration is an ordinary member), a status,
-    // a life group, a group position, notes, or a 服侍岗位 — a ministry is
-    // something the church hands out, never something a visitor claims for
-    // themselves. The fields are read by name from an allow-list, so a body
+    // carrying a name pair, a phone, an email, an address, a gender, a
+    // birthday, a congregation and one photo — or, when that pair is already on
+    // the roll, update those same contact details on that one row. What it
+    // CANNOT do: set a church role (every registration is an ordinary member),
+    // a status, a life group, a group position, notes, a 服侍岗位, or a 推荐人
+    // — a ministry is something the church hands out and a referral is the
+    // church's record of how somebody arrived, never something a visitor claims
+    // for themselves. The fields are read by name from an allow-list, so a body
     // carrying `church_role: 'pastor'` or `serving_roles: ['敬拜']` has it
     // ignored rather than obeyed; it can touch nobody but the single person
     // whose name pair was typed; and it reads nothing back — the answer is one
@@ -1340,6 +1350,9 @@ const IMPORT_ISSUE_MESSAGE: Record<ImportIssue, string> = {
   unknown_hall: 'No congregation goes by that name',
   unknown_group: 'No life group goes by that name',
   unknown_role: 'That is not a church role this app knows',
+  unknown_referrer: 'Nobody on the roll goes by that name',
+  ambiguous_referrer: 'More than one member goes by that name — write the English name too',
+  self_referrer: 'Somebody cannot have referred themselves',
   unknown_gender: 'That is not a gender this app knows',
   unknown_status: 'That is not a member status this app knows',
   bad_date: 'That is not a date — write it as YYYY-MM-DD',
@@ -1518,6 +1531,12 @@ const REGISTER_FIELDS = [
   'english_name',
   'phone',
   'email',
+  // An address is a contact detail like the two above it — the church visits
+  // people and posts them things, and the person themselves is the one who
+  // knows it. `referred_by` is deliberately NOT here: who brought somebody is
+  // the CHURCH's record of how they arrived, not a claim the arriving person
+  // gets to make about themselves — the same reason `church_role` is absent.
+  'address',
   'gender',
   'date_of_birth',
 ] as const;
@@ -2336,6 +2355,10 @@ const SELF_MEMBER_FIELDS = [
   'english_name',
   'email',
   'phone',
+  // Where they live is theirs to keep current, exactly like their phone number.
+  // `referred_by` is not: who brought somebody into the church is the church's
+  // record of how they arrived, not something a person asserts about themselves.
+  'address',
   'gender',
   'date_of_birth',
 ] as const;

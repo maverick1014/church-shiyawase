@@ -62,7 +62,7 @@ export default function MyProfilePage() {
   if (profile.initialLoading)
     return (
       <SkeletonScreen>
-        <SkeletonDetail facts={11} />
+        <SkeletonDetail facts={12} />
       </SkeletonScreen>
     );
   if (profile.error || !profile.data)
@@ -74,6 +74,7 @@ export default function MyProfilePage() {
   const details = [
     { label: t('profile.field.loginEmail'), value: p.email },
     { label: t('members.field.phone'), value: m?.phone ?? '—' },
+    { label: t('members.field.address'), value: m?.address ?? '—' },
     { label: t('member.field.gender'), value: m?.gender ? t(genderKey(m.gender)) : '—' },
     { label: t('member.field.birthday'), value: formatDate(m?.date_of_birth) },
     { label: t('members.col.group'), value: m?.group?.name ?? t('members.filter.ungrouped') },
@@ -196,6 +197,7 @@ function EditMyProfileModal({
     english_name: member.english_name ?? '',
     email: member.email ?? profile.email,
     phone: member.phone ?? '',
+    address: member.address ?? '',
     gender: member.gender ?? '',
     date_of_birth: member.date_of_birth ?? '',
     language: profile.language,
@@ -220,6 +222,7 @@ function EditMyProfileModal({
         english_name: form.english_name || null,
         email: form.email.trim(),
         phone: form.phone || null,
+        address: form.address || null,
         gender: form.gender || null,
         date_of_birth: form.date_of_birth || null,
         language: form.language,
@@ -268,6 +271,12 @@ function EditMyProfileModal({
         </Field>
       </div>
       <div className="hint" style={{ marginBottom: 14 }}>{t('profile.emailHint')}</div>
+      {/* Theirs to keep current, like the phone above it. 推荐人 is not on this
+          form and not on the server's allow-list: who brought somebody is the
+          church's record of how they arrived, not a claim they make themselves. */}
+      <Field label={t('members.field.address')}>
+        <input value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} />
+      </Field>
       <div className="form-row">
         <Field label={t('member.field.gender')}>
           <select value={form.gender} onChange={(e) => setForm({ ...form, gender: e.target.value as Gender | '' })}>

@@ -5,8 +5,9 @@ import {
   matchImportColumn,
   pairKey,
   parseImportDate,
-  parseServingRoles,
+  parseList,
   planImport,
+  referrerKeys,
   tidy,
   type ImportContext,
 } from '../members-import';
@@ -299,13 +300,117 @@ describe('planImport', () => {
   });
 });
 
-describe('parseServingRoles', () => {
+/*
+ * 地址 and 推荐人 (migration 0021). The address is one more free-text column;
+ * the referrer is the interesting one — a spreadsheet holds NAMES, so it has to
+ * be resolved back to a member the way the pair index compares one, and a name
+ * that answers to nobody or to two people is refused rather than guessed at.
+ */
+describe('planImport · address & 推荐人', () => {
+  const DAVID = member({ id: 'm-david', full_name: '张伟', english_name: 'David' });
+  const DANIEL = member({ id: 'm-daniel', full_name: '张伟', english_name: 'Daniel' });
+  const ALONE = member({ id: 'm-alone', full_name: '李明', english_name: null });
+
+  it('takes an address as the free text it is', () => {
+    const plan = planImport(
+      [{ row: 2, full_name: '甲', address: ' 12, Jalan Merdeka,　43300 Seri Kembangan ' }],
+      ctx(),
+    );
+    expect(plan.rows[0].values.address).toBe('12, Jalan Merdeka, 43300 Seri Kembangan');
+    expect(plan.rows[0].fields).toContain('address');
+  });
+
+  it('leaves an address the file said nothing about alone', () => {
+    const plan = planImport(
+      [{ row: 2, full_name: '陈约翰', english_name: 'John Tan', address: '  ' }],
+      ctx({ existing: [member()] }),
+    );
+    expect(plan.rows[0].values).not.toHaveProperty('address');
+  });
+
+  it('resolves a referrer named by their Chinese name alone', () => {
+    const plan = planImport([{ row: 2, full_name: '甲', referred_by: ' 李明 ' }], ctx({ existing: [ALONE] }));
+    expect(plan.rows[0].values.referred_by).toBe('m-alone');
+    expect(plan.rows[0].fields).toContain('referred_by');
+  });
+
+  it('resolves a referrer named by the pair, however it was cased', () => {
+    const plan = planImport(
+      [{ row: 2, full_name: '甲', referred_by: '张伟 DAVID' }],
+      ctx({ existing: [DAVID, DANIEL] }),
+    );
+    expect(plan.rows[0].values.referred_by).toBe('m-david');
+  });
+
+  it('refuses a referrer nobody on the roll answers to', () => {
+    const plan = planImport([{ row: 2, full_name: '甲', referred_by: '王五' }], ctx({ existing: [ALONE] }));
+    expect(plan.rows[0]).toMatchObject({
+      action: 'skip',
+      issue: 'unknown_referrer',
+      field: 'referred_by',
+      detail: '王五',
+    });
+  });
+
+  it('refuses a referrer two people answer to rather than picking one', () => {
+    const plan = planImport(
+      [{ row: 2, full_name: '甲', referred_by: '张伟' }],
+      ctx({ existing: [DAVID, DANIEL] }),
+    );
+    expect(plan.rows[0]).toMatchObject({
+      action: 'skip',
+      issue: 'ambiguous_referrer',
+      field: 'referred_by',
+      detail: '张伟',
+    });
+  });
+
+  it('refuses somebody as their own referrer, which the database refuses too', () => {
+    const plan = planImport(
+      [{ row: 2, full_name: '李明', referred_by: '李明' }],
+      ctx({ existing: [ALONE] }),
+    );
+    expect(plan.rows[0]).toMatchObject({ action: 'skip', issue: 'self_referrer', detail: '李明' });
+  });
+
+  it('lets the rows around a bad referrer through', () => {
+    const plan = planImport(
+      [
+        { row: 2, full_name: '甲', referred_by: '查无此人' },
+        { row: 3, full_name: '乙', referred_by: '李明' },
+      ],
+      ctx({ existing: [ALONE] }),
+    );
+    expect(plan.rows.map((r) => r.issue)).toEqual(['unknown_referrer', undefined]);
+    expect(plan.created).toBe(1);
+  });
+});
+
+describe('referrerKeys', () => {
+  it('offers the Chinese name alone, and the pair when there is an English one', () => {
+    expect(referrerKeys('陈约翰', 'John Tan')).toEqual(['陈约翰', '陈约翰 john tan']);
+    expect(referrerKeys('李明', null)).toEqual(['李明']);
+  });
+
+  it('folds a name the way pairKey folds one', () => {
+    expect(referrerKeys(' 陈约翰 ', ' JOHN  TAN ')).toEqual(['陈约翰', '陈约翰 john tan']);
+  });
+});
+
+describe('parseList', () => {
   it('trims each ministry and drops the empties a trailing separator leaves', () => {
-    expect(parseServingRoles(' 敬拜 , 司琴,, ')).toEqual(['敬拜', '司琴']);
-    expect(parseServingRoles('')).toEqual([]);
+    expect(parseList(' 敬拜 , 司琴,, ')).toEqual(['敬拜', '司琴']);
+    expect(parseList('')).toEqual([]);
   });
 
   it('keeps one ministry once, however many times the cell names it', () => {
-    expect(parseServingRoles('敬拜、敬拜')).toEqual(['敬拜']);
+    expect(parseList('敬拜、敬拜')).toEqual(['敬拜']);
+  });
+
+  it('reads every separator a Chinese or an English keyboard produces', () => {
+    // The same list the shared TagsInput ends a chip on, so a ministry typed
+    // into the form and one written into a cell are split the same way.
+    expect(parseList('敬拜，音响')).toEqual(['敬拜', '音响']);
+    expect(parseList('敬拜；音响／招待')).toEqual(['敬拜', '音响', '招待']);
   });
 });

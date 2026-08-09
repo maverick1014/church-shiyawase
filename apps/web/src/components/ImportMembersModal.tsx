@@ -132,6 +132,7 @@ export function ImportMembersModal({
     example[t(importFieldKey('full_name'))] = '陈约翰';
     example[t(importFieldKey('english_name'))] = 'John Tan';
     example[t(importFieldKey('phone'))] = '012-000 0000';
+    example[t(importFieldKey('address'))] = '12, Jalan Merdeka, 43300 Seri Kembangan, Selangor';
     example[t(importFieldKey('date_of_birth'))] = '1990-05-04';
     example[t(importFieldKey('joined_at'))] = '2024-01-07';
     example[t(importFieldKey('hall'))] = halls[0]?.name ?? '';

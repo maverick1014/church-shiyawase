@@ -61,6 +61,10 @@ export interface MemberRow {
   english_name: string | null;
   email: string | null;
   phone: string | null;
+  /** Free text, as you would write it on an envelope (migration 0021). */
+  address: string | null;
+  /** 推荐人 — the member who brought them; null = 无推荐人, the ordinary case. */
+  referred_by: string | null;
   gender: Gender | null;
   date_of_birth: string | null;
   church_role: ChurchRole;
@@ -80,6 +84,11 @@ export interface MemberRow {
   avatar_url: string | null;
   group?: { id: string; name: string } | null;
   hall?: { id: string; name: string } | null;
+  /**
+   * The person `referred_by` points at, embedded by the API. Null whenever
+   * nobody referred them — which is most people — so every reader guards it.
+   */
+  referrer?: { id: string; full_name: string; english_name: string | null } | null;
 }
 
 export interface GroupRow {

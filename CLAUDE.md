@@ -79,6 +79,48 @@ members list, the sheet's find-a-person box, `comboboxFilter`, and
 node, the lineage badges and a 铁三角 seat, each a fixed box whose geometry the
 second line would break; each says so in a comment.
 
+**教会身份 is FIVE values, and the fifth is 访客** (migration 0021). `church_role`
+runs 牧师 → 执事 → 同工 → 一般成员 → **访客**, in reading order. A visitor is a
+ROLE rather than a status — "visitor" is what somebody is to the church, not
+whether their record is active, so a visitor who stops coming is an *inactive
+visitor* and both facts survive; and like every other church-wide role it is
+read **ahead of** any group position, because a visitor sitting in on a life
+group is still a visitor. Its badge is a warm sand no rank uses, so it cannot be
+mistaken for 普通成员's cool grey or 未分组's warm grey. The reason this needed a
+migration at all is worth remembering: `deacon` and `co_worker` had been in the
+CODE enum since the day they shipped while the DATABASE type held neither, so
+saving a member as 执事 did not degrade — it failed outright, and nothing
+noticed, because the two lists were never compared. They are now: a unit test
+(`labels.test.ts`) asserts every `ChurchRole` / `DisplayRole` value has a label
+in all three dictionaries, an entry in `ROLE_TAG`, a place in the form's options
+and in the members-list filter; and `api-e2e.mjs` creates a member as **each**
+role against the live database, which is the half a unit test cannot reach.
+
+**A member also carries an address and who brought them** (0021).
+`members.address` is one free-text column — what you would write on an envelope,
+deliberately not street / unit / postcode / state, because every attempt to
+model a Malaysian address that way leaves half the rows working around the
+shape. `members.referred_by` is a nullable self-reference to `members.id`, null
+by default: "nobody referred them" is the ordinary case and must not need a
+placeholder row to say so. On the form it is the shared `Combobox` (a member
+picker is never a `<select>`, G4) whose FIRST option is an explicit **无推荐人**
+storing NULL, and which never offers the member themselves — the database
+refuses a self-referral (`members_referred_by_not_self`) and a user must not be
+walked into that error. The member page draws it as a **link to that person**,
+guarded like every optional join (G6): `MEMBER_SELECT` embeds it as
+`referrer:members!referred_by(...)`, hinting the FK **column** — a
+self-referencing embed has to be told which direction it means, and PostgREST
+answers PGRST200 for the constraint name.
+
+The two of them split on **who the fact belongs to**, and that split is the
+whole reason each allow-list looks the way it does. An address is a contact
+detail the person themselves knows best, so it is writable by `/join`
+(`REGISTER_FIELDS`) and by a member's own profile page (`SELF_MEMBER_FIELDS`),
+beside their phone and email. A 推荐人 is in **neither**: who brought somebody
+is the CHURCH's record of how they arrived, not a claim the arriving person gets
+to make about themselves — the same reason `church_role` and `serving_roles` are
+absent from both. It is written by the church's own two forms and by the import.
+
 **服侍岗位 is a LIST, and it is the same list `groups.tags` is** (migration
 0019). `members.serving_roles` is a `text[]`, NOT NULL DEFAULT `'{}'`: which
 ministries a person serves in (敬拜 / 司琴 / 招待 / 音响 / 投影 / 儿童主日学) —
@@ -89,7 +131,16 @@ has said" are the same fact, so no reader needs `?? []` to mean anything. Being
 that shape is the point — it is entered with the shared `TagsInput`
 autocompleting from the ministries other members already carry (the same
 derivation `/groups` builds `allTags` with), never a second way to type a list
-of short strings. The members list filters by the **stored** string (G8), on a
+of short strings. **What ends a tag in that control is Enter, leaving the field,
+or any of the separators a list is written with** — the commit-on-blur is not a
+nicety: without it, typing a ministry and going straight to Save left the text
+sitting in the input while the form saved an empty array, and on a phone the
+on-screen key says 完成 rather than Enter, which made that the ordinary way to
+use it. The separators are read from `LIST_SEPARATORS` in
+`lib/members-import.ts` rather than listed a second time, so a list is ended the
+same way in a form as it is inside a spreadsheet cell; and the chip's own ×
+refuses the mousedown, so removing one cannot commit a half-typed draft on its
+way out. The same component is 小组标签, so both had the same silent loss. The members list filters by the **stored** string (G8), on a
 dropdown that only appears once somebody serves somewhere, and the member page
 draws the ministries as badges and **nothing at all** when there are none — an
 empty list is a fact about that person, not a value the church has yet to fill
@@ -120,22 +171,27 @@ drift), so a Chinese template filled in and sent back reads correctly; the
 template itself is `exportRows` over the same column list, and so is the
 members page's own export — one definition, so a list exported there can be
 edited and uploaded straight back. `IMPORT_COLUMNS` is that definition: 中文名、
-英文名、电话、邮箱、性别、生日、加入日期、教会身份、状态、堂会、小组、**服侍岗
-位**. A refused row names its own SPREADSHEET row and the value it choked on,
+英文名、电话、邮箱、**地址**、**推荐人**、性别、生日、加入日期、教会身份、状态、堂会、
+小组、**服侍岗位**. 推荐人 is the one column holding a REFERENCE: a spreadsheet
+has no ids in it, so it is resolved by name — one cell may write 「张伟」 or
+「张伟 David」, folded exactly the way `pairKey` folds a pair (`referrerKeys`) —
+and a name that answers to nobody, to two people, or to the row's own person is
+a REFUSED row naming the spreadsheet row and the value, never a guess. A refused row names its own SPREADSHEET row and the value it choked on,
 and never stops the rows around it. Dates are year-first only: `03/04/2026` is
 two different days depending on who reads it. 服侍岗位 is the one column holding
 a LIST in one cell, so it accepts every separator a church might reach for
-(`,` `、` `;` `；` `/` `／`), trims each piece and drops the empties a trailing
-separator leaves — and an empty cell still supplies nothing, so a sparse
+(`,` `，` `、` `;` `；` `/` `／` — `LIST_SEPARATORS`, shared with the form's own
+tag field), trims each piece and drops the empties a trailing separator leaves — and an empty cell still supplies nothing, so a sparse
 re-import cannot un-serve the whole church.
 
 *自助注册* (`/join` + `GET`/`POST /members/register`) is the public link the
 church hands out — the fourth shell-less page, and the only public path under
-`/members`. It reads an allow-list of fields (names, phone, email, gender,
-birthday, congregation, photo), so a body carrying `church_role` or
-`serving_roles` is ignored rather than obeyed: every self-registration is an
-ordinary member serving nowhere, because a role and a ministry are things the
-church hands out. An existing
+`/members`. It reads an allow-list of fields (names, phone, email, address,
+gender, birthday, congregation, photo), so a body carrying `church_role`,
+`serving_roles` or `referred_by` is ignored rather than obeyed: every
+self-registration is an ordinary member, serving nowhere, referred by nobody —
+because a role and a ministry are things the church hands out, and a referral is
+the church's own record of how somebody arrived. An existing
 pair is an update of that person's contact details — not their name, which is
 the church's spelling to keep — and the answer is one word (`created` /
 `updated`), the same shape either way, carrying no member data at all. The photo
@@ -262,14 +318,20 @@ that is what you want.
 
 Testing layers (in `apps/web`):
 - `npm test` — Vitest unit tests (labels, rules, perms, i18n dictionaries, the
-  theme catalogue + its colour validation, and the import planner — its name-pair
-  key, its three-language header/enum matching, every row it refuses, and the
-  one column that holds a list — 服侍岗位 read out of a single cell whatever the
-  church separated it with).
+  theme catalogue + its colour validation, the **role drift guard** — every
+  `ChurchRole` / `DisplayRole` value named in all three dictionaries, coloured in
+  `ROLE_TAG`, offered by the form and by the members filter — and the import
+  planner: its name-pair key, its three-language header/enum matching, every row
+  it refuses, 推荐人 resolved by name pair (and refused when it names nobody, two
+  people, or the row's own person), and the one column that holds a list —
+  服侍岗位 read out of a single cell whatever the church separated it with).
 - `npm run test:api-e2e` — API end-to-end against the live Worker (auth, role
-  matrix, full CRUD, the public forms — the training sign-up and the member
-  self-registration, which is refused a 服侍岗位 exactly as it is refused a
-  church role — a member import with its refusals, a member's 服侍岗位 written
+  matrix, full CRUD, **a member created under each of the five church roles** —
+  the assertion that would have caught the database enum being two values short
+  — a 地址 and a 推荐人 written and read back through the self-referencing embed,
+  the public forms — the training sign-up and the member self-registration, which
+  is refused a 服侍岗位 and a 推荐人 exactly as it is refused a church role — a
+  member import with its refusals, a member's 服侍岗位 written
   and read back, and the group-scoped
   roll-call sheet: its rows are one roster, a Sunday ticked through it shows up
   on the UNSCOPED sheet, and a hall-pinned account cannot reach another
@@ -290,8 +352,10 @@ Testing layers (in `apps/web`):
   absence of the 守望模块 manager in the UI *and* on the server, an add-on
   module off→on cycle on 教会设置, a theme preset picked there and the sidebar
   repainting under it, a create→delete member write-cycle carrying a 服侍岗位
-  through the shared `TagsInput` onto the member page's badges and the members
-  page's ministry filter, a 聚会's 地点 typed into its form and stored on the
+  through the shared `TagsInput` — typed and then saved **without pressing
+  Enter**, which is the path that silently lost it — onto the member page's
+  badges and the members page's ministry filter, the member form offering 访客
+  and a 推荐人 combobox defaulting to 无推荐人, a 聚会's 地点 typed into its form and stored on the
   row, a member row showing BOTH of a person's names, the members page's import modal opening on a file field and a
   template with nothing written yet, and `/join` rendering with no session at
   all, its photo field taking camera OR gallery).

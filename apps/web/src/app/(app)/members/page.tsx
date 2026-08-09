@@ -8,6 +8,7 @@ import { api } from '@/lib/api';
 import { usePageChrome, useMe, useHallScope } from '@/components/AppShell';
 import {
   ChevronRightIcon,
+  Combobox,
   ErrorBanner,
   ExportButton,
   Field,
@@ -42,6 +43,7 @@ import {
   memberStatusClass,
   memberStatusKey,
   positionKey,
+  referrerOptions,
   roleKey,
 } from '@/lib/labels';
 import { useT } from '@/lib/i18n';
@@ -165,6 +167,12 @@ export default function MembersPage() {
         [t('export.group')]: m.group?.name ?? t('members.filter.ungrouped'),
         [t('export.email')]: m.email ?? '',
         [t('export.phone')]: m.phone ?? '',
+        [t(importFieldKey('address'))]: m.address ?? '',
+        // The referrer's own pair, written the way the importer reads one back
+        // — so an exported list can be edited and uploaded straight again.
+        [t(importFieldKey('referred_by'))]: m.referrer
+          ? [m.referrer.full_name, m.referrer.english_name].filter(Boolean).join(' ')
+          : '',
         [t('member.field.gender')]: m.gender ? t(genderKey(m.gender)) : '',
         // The IMPORTER's own header and the importer's own separator, so a list
         // exported here can be edited and uploaded straight back (the column
@@ -352,6 +360,7 @@ export default function MembersPage() {
 
       {addOpen && (
         <AddMemberModal
+          members={members}
           servingSuggestions={allServing}
           onClose={() => setAddOpen(false)}
           onSaved={() => {
@@ -370,10 +379,13 @@ export default function MembersPage() {
 }
 
 function AddMemberModal({
+  members,
   servingSuggestions,
   onClose,
   onSaved,
 }: {
+  /** The roll this page already fetched — the 推荐人 picker's options (G5). */
+  members: MemberRow[];
   /** The 服侍岗位 the church already uses — the list is free text, so the only
    *  thing standing between 敬拜 and 敬拜团 is what somebody typed last time. */
   servingSuggestions: string[];
@@ -389,6 +401,10 @@ function AddMemberModal({
     english_name: '',
     phone: '',
     email: '',
+    address: '',
+    // '' = 无推荐人, and that is what the column stores: nobody referred them is
+    // the ordinary case, not a value the church has still to fill in.
+    referred_by: '',
     group_id: '',
     // Default to the hall currently being viewed; a hall-scoped account only
     // ever has one option anyway (the server pins it regardless).
@@ -409,6 +425,10 @@ function AddMemberModal({
   // A member always belongs to exactly one hall (DB NOT NULL). When there is
   // only one option, use it without making the user pick.
   const effectiveHallId = form.hall_id ?? (halls.length === 1 ? halls[0].id : null);
+
+  // Nobody to exclude: the person does not exist yet, so they cannot be their
+  // own referrer.
+  const referrerOpts = useMemo(() => referrerOptions(members, t), [members, t]);
 
   const save = async () => {
     if (!form.full_name.trim()) {
@@ -435,6 +455,8 @@ function AddMemberModal({
         english_name: form.english_name || undefined,
         phone: form.phone || undefined,
         email: form.email || undefined,
+        address: form.address || undefined,
+        referred_by: form.referred_by || null,
         hall_id: effectiveHallId,
         church_role: form.church_role,
         group_id: form.group_id || undefined,
@@ -485,6 +507,22 @@ function AddMemberModal({
             value={form.email}
             onChange={(e) => setForm({ ...form, email: e.target.value })}
             placeholder="name@grace.org"
+          />
+        </Field>
+      </div>
+      <div className="form-row">
+        <Field label={t('members.field.address')}>
+          <input value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} />
+        </Field>
+        <Field label={t('members.field.referrer')}>
+          {/* A member picker is a Combobox, never a `<select>` (rule G4) — and
+              its first option is the default rather than an empty field, so
+              「无推荐人」is something the church chose, not something it forgot. */}
+          <Combobox
+            value={form.referred_by}
+            onChange={(id) => setForm({ ...form, referred_by: id })}
+            options={referrerOpts}
+            ariaLabel={t('members.field.referrer')}
           />
         </Field>
       </div>
