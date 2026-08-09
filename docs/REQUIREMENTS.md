@@ -27,17 +27,24 @@
 权限来源：服务端闸门 `route.ts`（权威）+ 客户端 `lib/perms.ts` 的 `can(role)`（仅用于隐
 藏 / 禁用 UI）。矩阵反映**实际实现**：
 
-| 能力 | 超级管理员 super_admin | 管理员 admin | 同工 coworker | 只读 readonly |
-|---|:---:|:---:|:---:|:---:|
-| 登录（账户须 active） | ✅ | ✅ | ✅ | ✅ |
-| 查看数据（成员/小组/聚会/培训/门训/仪表盘） | ✅ | ✅ | ✅ | ✅ |
-| 新增 · 编辑（牧养数据写操作，非 GET 且非 DELETE） | ✅ | ✅ | ✅ | ❌ |
-| 删除（DELETE） | ✅ | ✅ | ❌ | ❌ |
-| 账户管理（`/accounts*` 的**读与写**：列表、新建、编辑、删除、重设密码） | ✅ | ❌ | ❌ | ❌ |
-| 查看教会资料与附加模块状态（`GET /church`、`GET /church/modules`） | ✅ | ✅ | ✅ | ✅ |
-| 修改教会资料 / 主题颜色 / 开关附加模块（`/church*` 的**任意写操作**） | ✅ | ❌ | ❌ | ❌ |
-| 自助修改我的密码（`/auth/password`，须验证当前密码） | ✅ | ✅ | ✅ | ✅ |
-| 公开门训表单（`/d/[token]` 及 `/api/discipleship/form/*`，无需登录） | 公开（任何持 token 者） | 公开 | 公开 | 公开 |
+| 能力 | 超级管理员 super_admin | 管理员 admin | 同工 coworker | **小组长 group_leader**\* | 只读 readonly |
+|---|:---:|:---:|:---:|:---:|:---:|
+| 登录（账户须 active） | ✅ | ✅ | ✅ | ✅ | ✅ |
+| 查看数据（成员/小组/聚会/培训/门训/仪表盘） | ✅ | ✅ | ✅ | 仅**自己所在的那一个小组**\* | ✅ |
+| 新增 · 编辑（牧养数据写操作，非 GET 且非 DELETE） | ✅ | ✅ | ✅ | ✅（仅自己小组） | ❌ |
+| 删除（DELETE） | ✅ | ✅ | ❌ | ❌ | ❌ |
+| 账户管理（`/accounts*` 的**读与写**：列表、新建、编辑、删除、重设密码） | ✅ | ❌ | ❌ | ❌ | ❌ |
+| 查看教会资料与附加模块状态（`GET /church`、`GET /church/modules`） | ✅ | ✅ | ✅ | ❌\* | ✅ |
+| 修改教会资料 / 主题颜色 / 开关附加模块（`/church*` 的**任意写操作**） | ✅ | ❌ | ❌ | ❌ | ❌ |
+| 自助修改我的密码（`/auth/password`，须验证当前密码） | ✅ | ✅ | ✅ | ✅ | ✅ |
+| 公开门训表单（`/d/[token]` 及 `/api/discipleship/form/*`，无需登录） | 公开（任何持 token 者） | 公开 | 公开 | 公开 | 公开 |
+
+\* **`group_leader` 是一个独立、更窄的维度，见下方「第四个访问维度」与 §3.3a。** 它不是账户
+管理页手动指派的角色——由服务端在某成员成为「小组长」（`GroupPosition.Leader`，非副组长/实习
+组长）时**自动开通**，在其不再是小组长时**自动停用**（`disabled`，非删除）。其会话被服务端限制
+在 `members`/`groups`/`attendance`/`auth` 四个 API 前缀之内，`church*`、`trainings*`、
+`discipleship*`、`happiness*`、`events*`、`accounts*` 一律 `403`——所以上表「查看教会资料」「查
+看数据」两行对它是 ❌ / 仅自己小组，而不是像其余四个角色那样全部放行后再按堂会收窄。
 
 服务端闸门要点（`route.ts` 顶部的 dispatch 闸门）：
 
@@ -56,6 +63,28 @@
   任何角色、任何堂会都无法访问，对本教会而言该功能并不存在。目前的附加模块是
   `discipleship`（四十天守望）与 `happiness`（幸福小组，见 §3.6b——纯内部功能，没有公开表单
   要关闭）；`/auth*`、`/church*` 与所有核心路径永远不受此闸门影响。
+- **第四个访问维度：小组范围（仅 `group_leader`）。** 与角色 / 堂会 / 模块并列，是本次新增的
+  维度——`app_users.group_id`（migration 0026）记录该账户被限定在哪一个小组，做法完全比照
+  `hall_id` 已有的模式（存储列，而非每次请求从成员表现推导；由写路径自己维持同步，没有触发器）。
+  服务端在 dispatch 顶部、模块闸门之前有**一道早期闸门**：`group_leader` 会话的请求路径若不以
+  `members`/`groups`/`attendance`/`auth` 四者之一开头，直接 `403`；账户若未挂在任何小组下
+  （小组被删导致 `group_id` 变 `null`），同样 `403`，而不是悄悄退化成"看得到全部"。在这四个
+  前缀内部，**该账户自己的 `group_id` 永远优先**——与 `hallFilter = hallScope ?? q.get('hall_id')`
+  完全一样的优先级规则：`GET /members`、`GET /groups` 被强制收窄到它自己的小组，即使请求另外
+  传了别的 `group_id`；`GET/PATCH /members/:id`、`GET/PATCH /groups/:id` 拒绝任何不属于它这个
+  小组的 id；`GET/PUT /attendance/sheet` 被强制只能读写它这个小组的**主日**列（会前/主日，与
+  「崇拜与祷告会」共用同一张表），教会的聚会列一律不可见、不可点名。
+- **谁开通、谁停用（`syncGroupLeaderAccount`，`api/[...path]/route.ts`）。** 触发点是 THREE 个
+  会写 `members.group_position` 的地方：`POST /members`、`PATCH /members/:id`、成员导入的批量
+  写入循环——每次调用都带上写之前/写之后的 `group_position` 与 `group_id`。变成小组长
+  （`GroupPosition.Leader`，非副组长/实习组长）且该成员尚无任何登录账户时，若有邮箱则自动创建
+  一个 `group_leader` 账户（`hall_id`/`group_id` 继承自小组本身，而非操作者），随机密码用
+  `PATCH`/`POST /members` 响应上追加的可选字段 `leader_account_event: {event:'created', email,
+  password}` **只展示这一次**，前端永不落库、永不打日志；若该成员已有任何账户（不论什么角色），
+  一律不碰——这套机制只管理它自己创建的账户。不再是小组长（被替换、被降级、或被移出小组）时，
+  若其账户角色恰好是 `group_leader`，则设为 `disabled` 并清空 `group_id`（响应带
+  `{event:'disabled', email}`），从不删除。没有邮箱时晋升本身仍然成功，只是响应带
+  `{event:'skipped_no_email'}`，前端用一条 toast 提醒而不阻塞写操作。
 - 密码：PBKDF2-HMAC-SHA256 加盐存储，最少 8 位；会话为 HMAC-SHA256 签名 Cookie（`tog_session`，HttpOnly / Secure / SameSite=Lax，7 天有效）。
 
 ---

@@ -476,7 +476,10 @@ Testing layers (in `apps/web`):
 - `npm test` — Vitest unit tests (labels, rules, perms, i18n dictionaries, the
   theme catalogue + its colour validation, the **role drift guard** — every
   `ChurchRole` / `DisplayRole` value named in all three dictionaries, coloured in
-  `ROLE_TAG`, offered by the form and by the members filter — and the import
+  `ROLE_TAG`, offered by the form and by the members filter — its own analogue
+  for `AccountRole` (every value named in all three dictionaries with both a
+  bare label and a dropdown option, offered in `ACCOUNT_ROLE_OPTIONS`, coloured
+  by `accountRoleClass`) — and the import
   planner: its name-pair key, its three-language header/enum matching, every row
   it refuses, 推荐人 resolved by name pair (and refused when it names nobody, two
   people, or the row's own person), and the one column that holds a list —
@@ -490,11 +493,19 @@ Testing layers (in `apps/web`):
   member import with its refusals, a member's 服侍岗位 written
   and read back, `joined_at`(来访日期)/`group_joined_at`(加入小组日期)/`notes`(备注)
   round-tripped on the same `PATCH` and reread from a fresh `GET`, self-registration
-  refused a `group_joined_at` exactly like a role or a referral, and the
+  refused a `group_joined_at` exactly like a role or a referral, the
   group-scoped
   roll-call sheet: its rows are one roster, a Sunday ticked through it shows up
   on the UNSCOPED sheet, and a hall-pinned account cannot reach another
-  congregation's group with `group_id`; all self-cleaning).
+  congregation's group with `group_id`, and a full **`group_leader` account
+  lifecycle**: promoting a fixture member to 小组长 provisions a real
+  `app_users` row (role/hall/group all asserted) and returns a password that
+  actually signs in; that session gets `403` on an out-of-scope path
+  (`/trainings`) and stays narrowed to its own group on `GET /members` /
+  `GET /groups` even when the request itself asks for a different one;
+  demoting disables the account and the same password can no longer sign in;
+  a promotion with no email on file is a named, non-blocking event; all
+  self-cleaning).
 - `npm run test:ui-e2e` — **browser UI end-to-end**: drives the real site in
   Chromium and asserts each interaction's expected outcome (login, search,
   filters, modals, weekly attendance, a 主日 tick→untick round-trip on the
@@ -524,8 +535,12 @@ Testing layers (in `apps/web`):
   tile replacing the old four-tile row and its two cards, the member detail
   page's facts grouped under labelled sections rather than one long grid, a
   discipleship pair reading as "Led by X" on the trainee's own member page,
-  and a life group's roster row opening the shared member-edit modal from its
-  own **Edit** button).
+  a life group's roster row opening the shared member-edit modal from its
+  own **Edit** button, and promoting a member with an email to 小组长 through
+  the group detail page's own leadership picker showing the one-time
+  credential MODAL (email + a sensible-length generated password) with a
+  working copy button, rather than a toast that would vanish before anyone
+  could copy it).
   The check-all round trip is driven **only on a meeting column this run
   created** — never on a Sunday, whose ticks are the congregation's real
   attendance and would be genuinely deleted.
@@ -578,9 +593,10 @@ self-registration link — and both are create-or-update on the name pair rather
 than a second way to make duplicates.
 
 ### G2 — Access control is enforced server-side AND reflected in the UI
-Three independent dimensions, all of them enforced in `route.ts` first and
-only then reflected in the UI: the account's **role**, its **hall**, and
-whether the **module** owning the path is enabled for this church.
+Four independent dimensions, all of them enforced in `route.ts` first and
+only then reflected in the UI: the account's **role**, its **hall**, whether
+the **module** owning the path is enabled for this church, and — for exactly
+one role — its **group**.
 - **Module enablement (附加模块):** an add-on module (四十天守望 today) can be
   switched off in 教会设置. A request for a path a disabled module owns is
   refused **404** by the gate — including the public mentor form, whose links
@@ -613,6 +629,67 @@ whether the **module** owning the path is enabled for this church.
   for all congregations, 聚会点名 included: it lists every member, and a tick is
   filed under **that member's own hall**, which is read server-side rather than
   taken from the request.
+- **Group scope (`group_leader` only):** the fourth dimension, and a
+  deliberate exception rather than an oversight — scoped NARROWER than every
+  other role's hall-wide reach, to exactly one group. The session carries
+  `group` (null for every role but `group_leader`) straight off
+  `app_users.group_id`, mirroring `hall` exactly: a stored column, kept in
+  sync by the write path (`syncGroupLeaderAccount`, described below) rather
+  than derived per-request. Because a `group_leader`'s reach is a narrow
+  allowlist rather than "everyone else's reach minus a hall", it gets its OWN
+  early gate in `dispatch()`, in the same place and style as the
+  module-enablement gate: a request whose path does not start with `members`,
+  `groups`, `attendance` or `auth` is refused outright (403) before anything
+  else runs, and an account whose group was deleted from under it
+  (`app_users.group_id` is `on delete set null`) is refused too rather than
+  silently reading as full access. Inside those four prefixes, `groupFilter =
+  groupScope ?? q.get('group_id')` — the exact same precedence `hallFilter`
+  already has, so a group-pinned account can never widen its view by sending
+  a different `group_id`: `GET /members` and `GET /groups` are forced onto
+  its one group, `GET`/`PATCH` by id on either table refuse any id outside
+  it, and `GET`/`PUT /attendance/sheet` are forced onto that group's own
+  Sunday columns — a congregation meeting is refused even by a hand-crafted
+  request naming one directly, never merely absent from what the UI offers.
+  `PATCH /members/:id` is nuanced rather than "must already match", because
+  moving members into and out of a group is the ordinary shape of managing a
+  roster: a `group_leader` may touch a member whose CURRENT group is its own
+  or whose write is ADMITTING them into it, and the write's own destination
+  (if it names one) must be that same group or null — never anywhere else.
+  **How the account itself comes to exist** is `syncGroupLeaderAccount`
+  (`api/[...path]/route.ts`), called from every write that can change a
+  member's `group_position` — `POST /members`, `PATCH /members/:id`, and the
+  member import's insert/update loop. Becoming 小组长
+  (`GroupPosition.Leader` specifically — never the assistant/intern seats,
+  which this mechanism has no opinion about) auto-provisions an `app_users`
+  row (`account_role: 'group_leader'`, the GROUP's own hall and id, `status:
+  'active'`) when the member has an email and holds no login yet — a random
+  password (`generateRandomPassword` in `lib/server/auth.ts`, Web Crypto,
+  visually-unambiguous alphabet) is hashed with the same `hashPassword` every
+  other login uses and the PLAINTEXT is returned exactly once, merged onto
+  the write's own response as an optional `leader_account_event` field
+  (`{event:'created', email, password}`) rather than a new envelope, so every
+  existing caller that does not check for it is unaffected — never stored,
+  never logged (rule G6). A member who already holds ANY login is left
+  completely untouched on promotion (this mechanism only ever manages an
+  account it would itself have created); one with no email gets a
+  `{event:'skipped_no_email'}` instead of a blocked write. Leaving 小组长 —
+  demoted, replaced, or removed from the group entirely — auto-**disables**
+  a `group_leader` account it finds (`status: 'disabled'`, `group_id: null`,
+  never deleted, so it can be re-enabled later) and reports
+  `{event:'disabled', email}`; an account of any OTHER role is never touched
+  even if its holder stops being a leader. Staying 小组长 but moving to a
+  different group updates the existing account's `group_id`/`hall_id` to
+  match (`{event:'moved'}`); staying leader of the SAME group is a no-op
+  before any database read. The client's half: `MemberEditModal`, the groups
+  roster's own leadership picker, and the add-member form all show a
+  `created` credential in a MODAL (never a toast, which would disappear
+  before anyone could copy a password off it) via the shared
+  `useLeaderAccountEvent` hook (`components/LeaderAccountEvent.tsx`); a
+  member import surfaces every credential it generated as a small results
+  table, the same one-time-only rule. `AppShell`'s nav hides everything a
+  `group_leader` has no reach for (`NavItem.hiddenFor`), and a page reached by
+  URL anyway renders `<RoleRestricted />` — the role-boundary analogue of
+  `<ModuleDisabled />`, same shape, a stated reason instead of a raw 403.
 - **Server (authoritative):** every non-public API path goes through the gate in
   `route.ts`. Writes are denied for `readonly`; account management
   (`/accounts*`, both **read and write**) is `super_admin` only; church

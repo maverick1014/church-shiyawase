@@ -135,6 +135,40 @@ member **inside a group**, and that is the single source of truth:
 
 > The member directory's "身份" column is **read-only / derived**. All rank editing happens in the group page.
 
+### 3.3 Login account role (`AccountRole`) — a SEPARATE dimension, added not changed
+
+Everything in §3.1/§3.2 is who a person **IS** to the church — it is stored on
+the `members` row and nothing there is touched by this section. `AccountRole`
+is a different axis entirely: what a **login** (`app_users`) may **DO** in the
+app. `super_admin` / `admin` / `coworker` / `readonly` existed already; one
+value was added — `group_leader` (migration 0023/0026) — and it behaves
+differently from all four of the others on purpose:
+
+- **Provisioning is automatic, not a form.** Becoming 小组长
+  (`group_position = 'leader'` specifically — never the assistant/intern
+  seats) auto-creates a `group_leader` login for that member (if they have an
+  email; if not, the promotion still succeeds and the admin is told why no
+  login could be made) and shows a randomly generated password **once**, in a
+  modal, never persisted or logged in plaintext. Leaving 小组长 — demoted,
+  replaced, or removed from the group — auto-**disables** that same login
+  (never deletes it: `app_users.status = 'disabled'` preserves the account for
+  a later re-enable). This is `syncGroupLeaderAccount`, called from every
+  place a member's `group_position` can change (`POST /members`,
+  `PATCH /members/:id`, the member import).
+- **Scope is narrower than every other role's.** Every other role is scoped
+  by hall at most (`app_users.hall_id`, null = every hall). A `group_leader`
+  account is scoped to exactly **one group** (`app_users.group_id`, migration
+  0026) — narrower than its own hall. Server-side this is a fourth, additive
+  dimension of access control beside role/hall/module (see §8's own note): an
+  early path allowlist restricts it to `members` / `groups` / `attendance` /
+  `auth` API prefixes at all, and within those, its own group always wins
+  over anything a request asks for — the same "session's own scope always
+  wins" precedence the congregation switcher's `hall_id` already has.
+- **It is data, not a form field.** Nobody picks `group_leader` from the
+  账户 create/edit dropdown expecting it to work like the other four — the
+  mechanism above is the only path that pairs it with a `hall_id`/`group_id`
+  correctly.
+
 ---
 
 ## 4. Tech stack & architecture
@@ -433,7 +467,8 @@ Tables:
 
 | Area | Endpoints |
 | --- | --- |
-| Members | `GET/POST /members`, `GET/PATCH/DELETE /members/:id`, `GET /members/:id/trainings`, `POST /members/:id/avatar` (image upload) (filters: `church_role`, `group_position`, `group_id`, `q`) |
+| Members | `GET/POST /members`, `GET/PATCH/DELETE /members/:id`, `GET /members/:id/trainings`, `POST /members/:id/avatar` (image upload) (filters: `church_role`, `group_position`, `group_id`, `q`). `POST`/`PATCH` merge an optional `leader_account_event` onto the ordinary row whenever the write crosses into/out of 小组长 (see §3.3) |
+| **`group_leader` scope (§3.3)** | A session with this role is refused (403) outside `members`/`groups`/`attendance`/`auth` at the dispatch gate, before any handler runs. Within those, its own `group_id` always wins over anything a request asks for: `GET /members`/`GET /groups` are forced to its one group, `GET/PATCH /members/:id` and `GET/PATCH /groups/:id` refuse any id outside it, and `GET/PUT /attendance/sheet` is forced onto its group's Sunday columns only (never a congregation meeting) |
 | Member import | `POST /members/import` `{hall_id, rows[{row, full_name, english_name, phone, email, gender, date_of_birth, joined_at, church_role, status, hall, group, serving_roles}]}` → `{created, updated, skipped[{row, issue, field, detail, message}], failures[{row, message}]}`. **super_admin / admin only**, 300 rows at most. Rows are matched on the name pair and planned by the same `lib/members-import.ts` the browser previewed with; a refused row never stops the others |
 | **Public registration** | `GET /members/register` → `{halls[{id,name}]}` (the form's own bootstrap) and `POST /members/register` (JSON, or multipart when a photo rides along) → `{status:'created'\|'updated'}`. No session; the ONLY public path under `/members`, and only those two methods. It reads an allow-list of fields — a body carrying `church_role` / `group_id` / `status` / `notes` / `serving_roles` has them ignored, because a role and a ministry are the church's to hand out — and answers with no member data at all |
 | Halls | `GET /halls` — 堂会 list (read-only; a hall-scoped account only sees its own) |
