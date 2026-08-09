@@ -623,8 +623,6 @@ export const zh: Messages = {
   'form.progressSummary': '四十天一对一守望 · 已完成 {done} / {total} 天',
   'form.todayEntry': '今日填写',
   'form.dayLabel': '第几天',
-  'form.completedLabel': '今日守望是否完成',
-  'form.notCompleted': '未完成',
   'form.notesPlaceholder': '今日一同读经祷告，为家人代祷…',
   'form.submitting': '提交中…',
   'form.submitToday': '提交今日进度',

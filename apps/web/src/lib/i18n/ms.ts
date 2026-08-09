@@ -627,8 +627,6 @@ export const ms: Messages = {
   'form.progressSummary': 'Pemuridan empat puluh hari · {done} / {total} hari selesai',
   'form.todayEntry': 'Catatan hari ini',
   'form.dayLabel': 'Hari yang mana',
-  'form.completedLabel': 'Adakah sesi hari ini selesai?',
-  'form.notCompleted': 'Belum selesai',
   'form.notesPlaceholder': 'Membaca dan berdoa bersama hari ini; mendoakan keluarga…',
   'form.submitting': 'Menghantar…',
   'form.submitToday': 'Hantar kemajuan hari ini',

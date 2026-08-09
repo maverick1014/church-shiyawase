@@ -638,8 +638,6 @@ export const en = {
   'form.progressSummary': 'Forty-day discipleship · {done} / {total} days complete',
   'form.todayEntry': 'Today\u2019s entry',
   'form.dayLabel': 'Which day',
-  'form.completedLabel': 'Was today\u2019s watch completed?',
-  'form.notCompleted': 'Not completed',
   'form.notesPlaceholder': 'Read and prayed together today; prayed for the family…',
   'form.submitting': 'Submitting…',
   'form.submitToday': 'Submit today\u2019s progress',

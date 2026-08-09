@@ -4,7 +4,7 @@ import { useParams } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '@/lib/api';
 import { BrandLogo } from '@/components/BrandLogo';
-import { Field, Segmented } from '@/components/ui';
+import { Field } from '@/components/ui';
 import { useChurchProfile } from '@/lib/church';
 import { useT } from '@/lib/i18n';
 
@@ -30,7 +30,6 @@ export default function DailyFormPage() {
   const [step, setStep] = useState<'form' | 'done'>('form');
 
   const [day, setDay] = useState<number>(1);
-  const [completed, setCompleted] = useState(true);
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -67,9 +66,14 @@ export default function DailyFormPage() {
   const submit = async () => {
     setSaving(true);
     try {
+      // Always complete. Submitting the day IS the claim that it was done —
+      // a mentor who has not done it simply does not open the form, and the
+      // "not completed" half of the old toggle was a way to fill in a day and
+      // still leave the chart saying nothing happened. Marking a day back to
+      // incomplete stays possible from the admin side.
       await api.post(`/discipleship/form/${token}/progress`, {
         day_number: day,
-        completed,
+        completed: true,
         notes: notes || undefined,
       });
       setStep('done');
@@ -140,20 +144,6 @@ export default function DailyFormPage() {
                     </option>
                   ))}
                 </select>
-              </Field>
-              <Field label={t('form.completedLabel')}>
-                {/* The shared segmented control (rule G4) — this used to be the
-                    same row of buttons hand-rolled with its class names. */}
-                <Segmented<'yes' | 'no'>
-                  value={completed ? 'yes' : 'no'}
-                  onChange={(v) => setCompleted(v === 'yes')}
-                  label={t('form.completedLabel')}
-                  block
-                  options={[
-                    { value: 'yes', label: t('disc.progress.completed'), tone: 'on-good' },
-                    { value: 'no', label: t('form.notCompleted'), tone: 'on-crit' },
-                  ]}
-                />
               </Field>
               <Field label={t('form.notes')}>
                 <textarea rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder={t('form.notesPlaceholder')} />
