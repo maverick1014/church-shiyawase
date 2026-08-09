@@ -858,6 +858,33 @@ function WeeklyAttendance({ group }: { group: GroupDetail }) {
                   );
                 })}
               </tr>
+              <tr>
+                {/* A Sunday's two ticks are filled independently, so each gets
+                    its own check-all — the services sheet's own shape. */}
+                {sundays.map((c) => (
+                  <Fragment key={c.key}>
+                    {c.ticks.map((tick) => {
+                      const here = sundayStates.get(`${c.key}|${tick}`);
+                      return (
+                        <th key={tick} style={{ textAlign: 'center' }}>
+                          <div>{t(sheetTickKey(tick))}</div>
+                          {perms.write && (
+                            <SheetTickAll
+                              state={here?.state ?? 'none'}
+                              onToggle={() => toggleSundayColumn(c, tick)}
+                              disabled={rows.length === 0}
+                              title={t(
+                                here?.state === 'all' ? 'sheet.tickAll.uncheck' : 'sheet.tickAll.check',
+                                { column: sundayLabel(c, tick) },
+                              )}
+                            />
+                          )}
+                        </th>
+                      );
+                    })}
+                  </Fragment>
+                ))}
+              </tr>
             </thead>
             <tbody>
               {sortedAttendanceRows.map((r) => {
