@@ -768,7 +768,14 @@ export function EntityHeader({
             <h2 style={{ margin: 0, fontSize: 21 }} className="serif">{title}</h2>
             {badges}
           </div>
-          {sub && <div className="muted" style={{ fontSize: 12.5, marginTop: 3 }}>{sub}</div>}
+          {/* The subtitle carries the account's login email on 账户详情, which
+              has no space to wrap on — break it rather than push the header
+              wider than the card. */}
+          {sub && (
+            <div className="muted" style={{ fontSize: 12.5, marginTop: 3, overflowWrap: 'anywhere' }}>
+              {sub}
+            </div>
+          )}
           {below}
         </div>
       </div>
@@ -796,12 +803,11 @@ export function FactGrid({
   return (
     <div className="grid g4" style={style}>
       {facts.map((f, i) => (
-        <div
-          key={i}
-          style={{ background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 10, padding: '12px 14px' }}
-        >
-          <div className="muted" style={{ fontSize: 11.5 }}>{f.label}</div>
-          <div style={{ fontSize: 14, fontWeight: 600, marginTop: 3 }}>{f.value}</div>
+        <div key={i} className="fact">
+          <div className="fact-label">{f.label}</div>
+          {/* The tile's own class breaks a long value (an email address has no
+              space to wrap on) instead of letting it run off the card. */}
+          <div className="fact-value">{f.value}</div>
         </div>
       ))}
     </div>
