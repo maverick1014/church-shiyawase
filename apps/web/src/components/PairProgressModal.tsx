@@ -6,7 +6,34 @@ import { PairDetail, PairRow, ProgressRow } from '@/lib/types';
 import { formatDate, memberRole, pairStatusClass, pairStatusKey, roleKey } from '@/lib/labels';
 import { copyText } from '@/lib/clipboard';
 import { useT } from '@/lib/i18n';
-import { ErrorBanner, Loading, MemberName, Modal, useToast } from './ui';
+import { ErrorBanner, MemberName, Modal, Skeleton, SkeletonScreen, useToast } from './ui';
+
+/** The dialog's own shape while `pair` is still loading — same header /
+ *  progress-bar / day-grid layout the real content lands in, so the modal
+ *  never resizes when the fetch resolves. 40 days is the common case; the
+ *  grid is decorative, so it doesn't need the real program's exact count. */
+function SkeletonPairProgress() {
+  return (
+    <SkeletonScreen>
+      <div className="flex" style={{ alignItems: 'flex-start', gap: 10 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <Skeleton width="58%" height={16} />
+          <Skeleton width="38%" height={11} style={{ marginTop: 10 }} />
+        </div>
+      </div>
+      <div className="progress-row mt-14">
+        <Skeleton height={8} radius={4} />
+        <Skeleton width={30} height={11} />
+      </div>
+      <Skeleton width="42%" height={11} style={{ margin: '16px 0 8px' }} />
+      <div className="day-grid">
+        {Array.from({ length: 40 }, (_, i) => (
+          <Skeleton key={i} radius={6} style={{ height: 'auto', aspectRatio: '1' }} />
+        ))}
+      </div>
+    </SkeletonScreen>
+  );
+}
 
 /**
  * Self-contained 40-day progress dialog for a discipleship pair. Fetches the
@@ -65,7 +92,7 @@ export function PairProgressModal({
   return (
     <Modal onClose={onClose} size="wide">
       {pair.loading || !p ? (
-        pair.error ? <ErrorBanner message={pair.error} /> : <div style={{ padding: 24 }}><Loading /></div>
+        pair.error ? <ErrorBanner message={pair.error} /> : <SkeletonPairProgress />
       ) : (
         <>
           {/* Header: names on the left (wrap within their own column), close
