@@ -41,7 +41,7 @@ with a distinctive **40-day one-on-one discipleship (四十天一对一守望)**
 - **Auth:** **None yet** (open app). Design/build must leave room to add Supabase Auth + role-based permissions later.
 
 ### Core goals
-1. One system for **人 / 聚会 / 奉献 / 培训 / 门训**.
+1. One system for **人 / 聚会 / 培训 / 门训**. (奉献 was in the original brief and was built, then removed; migration 0020 drops the last of its schema.)
 2. Every member's **rank/身份** comes from a single place (the group setup page) — no double maintenance.
 3. Every member has a **personal training record** (what they attended + progress).
 4. Trainings are **fully customizable** (multiple sessions, a named PIC with a contact, an optional 报名费 with payment instructions and a receipt, opt-in enrollment, admin-checked attendance, printable/checkable namelist).
@@ -158,13 +158,21 @@ tog/
 ## 5. Modules & features
 
 ### 5.1 Members directory (成员目录)
-- Fields: 姓名(中/英)、邮箱、电话、性别、出生日期、**church_role**(牧师/一般成员)、状态(在册/慕道/停止聚会)、所属小组、加入日期、备注、照片.
+- Fields: 姓名(中/英)、邮箱、电话、性别、出生日期、**church_role**(牧师/一般成员)、状态(在册/慕道/停止聚会)、所属小组、加入日期、**服侍岗位**、备注、照片.
 - **A member IS the pair of names** (migration 0018): the Chinese `full_name` and the
   nullable `english_name`, unique together (trimmed, case-insensitive, "no English name"
   counting as a value). Everything that puts a person on the roll — the form, an import, the
   public registration — matches on that pair, which is what lets a re-import say "this is the
   same person" instead of growing a twin.
-- List with **filter by 身份 (derived)** and **by 小组**, search by name.
+- **服侍岗位** (migration 0019) is a LIST, not a field: 敬拜 / 司琴 / 招待 / 音响 / 投影 /
+  儿童主日学 and whatever else this church invented — free text, several per person, the same
+  shape `groups.tags` has, so it is entered with the same shared `TagsInput` autocompleting from
+  what other members already carry. Shown as badges on the member page, and **nothing at all**
+  when somebody serves nowhere: an empty list is a fact about that person, not a blank waiting
+  to be filled. It replaces the read-only 家庭 tile, which had shown "—" for every member since
+  the day it shipped.
+- List with **filter by 身份 (derived)**, **by 小组** and **by 服侍岗位** (on the stored string,
+  never a translated label), search by name.
 - Create / edit / delete, plus two bulk ways in:
   - **Import a spreadsheet** (`.xlsx` / `.csv`, super_admin / admin): parsed in the browser,
     **previewed row by row** (add / update / skipped-and-why) and only then applied;
@@ -221,10 +229,10 @@ followed, in date order, by every meeting someone added for it.
   calendar already knew about; with the sheet supplying its own columns there is
   nothing left for a schedule to pre-create.
 
-### 5.4 Donations (奉献管理)
-- Fields: 奉献人(可匿名)、金额、币种、类别(十一/主日/建堂/宣教/感恩…)、方式(现金/转账/刷卡/线上)、日期、备注.
-- List with filter by member/fund; create/edit/delete.
-- **Summary** by fund + total.
+### 5.4 ~~Donations (奉献管理)~~ — removed
+- The page, the routes and the nav entry are gone; **migration 0020** drops the
+  `donations` table and the `donation_method` enum, which held nothing. The
+  dashboard's 奉献 KPI and its trend sparkline went with them.
 
 ### 5.5 Trainings & Activities (培训&活动) + personal record
 - **Two shapes, one catalog** (`kind`, migration 0014): a **course** runs over several sessions; an **activity** (兄弟团爬山, 姐妹团做蛋糕) is ONE occasion people sign up for and get ticked off at. Everything else — sign-ups, the roll call, the public link, the hall rule — is shared, so they are the same record and the same pages. An activity's single occasion is the one `training_sessions` row the API creates with it (it is what the roll call ticks); its **date, time and meeting point** are the record's own `starts_on`/`ends_on`, `start_time` and `location` (0016), and `total_sessions` is forced to 1 server-side.
@@ -377,7 +385,6 @@ Groups: **恩典小组** (周六 15:00), **青年小组** (周五 20:00), **迦�
 
 Discipleship cascade (program 四十天一对一守望): 陈约翰→林玛丽 (31/40) → 林玛丽→黄彼得 (22/40) → 黄彼得→吴恩慈 (12/40) → 吴恩慈→王但以理 (5/40) → 王但以理→陈路得 (0/40).
 Sample training: **门徒训练 101** (负责人 陈约翰 · 012-345 6789, 3 场次: 得救确据 / 祷告 / 读经), enrollments with mixed statuses; **事奉训练营** carries a RM 80 报名费 with bank/TnG instructions.
-Donations: 十一奉献/主日奉献/建堂/宣教, methods 现金/转账/线上; monthly total ~ RM 8,650.
 
 ---
 
@@ -386,9 +393,9 @@ Donations: 十一奉献/主日奉献/建堂/宣教, methods 现金/转账/线上
 | # | Question | Current default (change if needed) |
 | --- | --- | --- |
 | 1 | Currency | **RM (MYR)** |
-| 2 | Households module needed? | Modeled but optional; can hide in v1 |
+| 2 | ~~Households module needed?~~ | **Answered by not using it (0020)** — seeded, never given a way in, 0 rows. 服侍岗位 (0019) took its tile on the member page |
 | 3 | ~~Training categories preset~~ | **Removed (0016)** — the tag described none of an activity and nobody filtered on it |
-| 4 | Donation fund presets | 十一奉献 / 主日奉献 / 建堂 / 宣教 / 感恩 |
+| 4 | ~~Donation fund presets~~ | **Moot (0020)** — the feature is gone |
 | 5 | Mentor can have multiple trainees? | **Yes** (multiple pairs) |
 | 6 | Auth now? | **No** — add Supabase Auth + role permissions later |
 | 7 | Traditional Chinese / English toggle? | **Done** — English / 简体中文 / Bahasa Melayu, per account, English by default |
