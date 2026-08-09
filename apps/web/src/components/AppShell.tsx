@@ -29,7 +29,7 @@ const MeContext = createContext<Me | null>(null);
 /** The logged-in account (name, role, member, hall). Only valid inside AppShell. */
 export function useMe(): Me {
   return (
-    useContext(MeContext) ?? { name: '', role: '', member: null, hall: null, language: 'en' }
+    useContext(MeContext) ?? { name: '', role: '', member: null, hall: null, language: 'zh' }
   );
 }
 

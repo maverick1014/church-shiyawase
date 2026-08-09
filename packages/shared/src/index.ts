@@ -795,7 +795,7 @@ export enum AccountStatus {
  */
 export const LANGUAGES = ['en', 'zh', 'ms'] as const;
 export type Language = (typeof LANGUAGES)[number];
-export const DEFAULT_LANGUAGE: Language = 'en';
+export const DEFAULT_LANGUAGE: Language = 'zh';
 
 /** Coerce a stored/browser language tag (`zh-CN`, `en-US`, …) to a supported one. */
 export function normalizeLanguage(value: string | null | undefined): Language {
