@@ -381,7 +381,7 @@ function AccountDetail({
   };
 
   return (
-    <div style={{ maxWidth: 720 }}>
+    <div className="page-narrow">
       {/* "View member profile" leaves this record and so belongs with back,
           not inside the record's own card. */}
       <BackBar

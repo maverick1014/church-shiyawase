@@ -300,6 +300,12 @@ in the actions half, and never gives an action an ad-hoc width — page actions
 are content-sized like every other control. Filter order inside the bar is
 search → dropdowns → export/info.
 
+The content column fills the shell, the same width as the header above it —
+there is no reading-measure cap on a page of tables and sheets, and a cap with
+no auto margin only produced a band of empty paper on the right. A single-column
+FORM page (账户详情, 教会设置) opts into a measure with `.page-narrow`, never an
+inline width.
+
 Shell-level controls (the congregation switcher) belong to the shell, not to a
 page: top right of the header on desktop, in the nav drawer above 首页 on
 phones. They use the same `--control-h` as every other control — no `sm`

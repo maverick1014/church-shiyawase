@@ -346,10 +346,24 @@ button {
   flex-shrink: 0;
 }
 
+/* The content column fills the shell, exactly like the header above it.
+ *
+ * It used to stop at 1180px — and, with no auto margin, stop on the LEFT, so
+ * every page on a wide screen had the topbar's border running the full width
+ * with a band of empty paper under its right-hand end. The cap is a reading
+ * measure, and nothing here is prose: these pages are tables, roll-call sheets
+ * whose columns are however many occasions a month had, and card grids that
+ * simply fit one more card per row. A page that genuinely wants a narrow
+ * measure asks for it with `.page-narrow` below. */
 .content {
   padding: 26px 34px 70px;
-  max-width: 1180px;
   width: 100%;
+}
+/* Single-column FORM pages (账户详情, 教会设置). A text input stretched across a
+   27" monitor is not more usable, so these keep a measure — as a class, not as
+   an inline width on the page (rules G4/G9). */
+.page-narrow {
+  max-width: 720px;
 }
 
 /* The drawer's congregation switcher — the phone counterpart of the one at the

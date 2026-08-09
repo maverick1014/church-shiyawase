@@ -61,7 +61,7 @@ export default function ChurchSettingsPage() {
   if (!isSuperAdmin) return <Loading />;
 
   return (
-    <div style={{ maxWidth: 720 }}>
+    <div className="page-narrow">
       <ErrorBanner message={profile.error ?? modules.error} />
 
       {profile.initialLoading ? (
