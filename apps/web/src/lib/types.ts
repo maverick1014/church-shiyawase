@@ -367,6 +367,64 @@ export interface SelfProfile {
   member: MemberRow | null;
 }
 
+/* -------------------------------------------------------------------------
+ * 幸福小组 (Happiness Groups) — 期 (term) → group → roster + weekly attendance
+ *
+ * `GET /api/happiness/attendance` on a group is presence-only, by WEEK
+ * NUMBER rather than by date (the one roll call in the app that isn't
+ * date-based): `records` is the flat list of `{ week_number, member_id }`
+ * pairs that exist — a pair present means "was there that week", and there is
+ * nothing to read for a week nobody marked. The page builds its own
+ * member × week matrix from `weeks` (the term's length) and this list.
+ * ---------------------------------------------------------------------- */
+
+/** `GET /api/happiness/terms` — one term, plus how many groups run inside it. */
+export interface HappinessTermRow {
+  id: string;
+  term_no: number;
+  name: string | null;
+  weeks: number;
+  starts_on: string | null;
+  ends_on: string | null;
+  /** Server-computed (one extra query for the whole list, never N+1) — so the
+   *  term list and its delete confirmation both read a real count. */
+  group_count: number;
+}
+
+export interface HappinessGroupRow {
+  id: string;
+  term_id: string;
+  name: string;
+  hall_id: string;
+  leader_id: string | null;
+  meeting_day: Weekday | null;
+  meeting_time: string | null;
+  location: string | null;
+  hall?: { id: string; name: string } | null;
+  leader?: { id: string; full_name: string; english_name: string | null } | null;
+  term?: { id: string; term_no: number; name: string | null; weeks: number } | null;
+  /** Server-computed roster size, for the group list and its delete confirmation. */
+  roster_count: number;
+}
+
+export interface HappinessGroupDetail extends HappinessGroupRow {
+  members: {
+    id: string;
+    full_name: string;
+    english_name: string | null;
+    church_role: ChurchRole;
+    group_position: GroupPosition | null;
+  }[];
+}
+
+/** `GET /api/happiness/groups/:id/attendance` — one group's whole roll call. */
+export interface HappinessAttendanceResponse {
+  /** The term's own length — every week column the sheet should draw. */
+  weeks: number;
+  /** Every recorded presence; absence of a pair means "not marked". */
+  records: { week_number: number; member_id: string }[];
+}
+
 export interface OverviewRow {
   pair_id: string;
   program_id: string;

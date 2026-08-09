@@ -323,6 +323,12 @@ async function main() {
     for (const e of named(await list('/events'), 'title')) await kill('meeting', `/events/${e.id}`);
     for (const m of named(await list('/members'), 'full_name')) await kill('member', `/members/${m.id}`);
     for (const g of named(await list('/groups'), 'name')) await kill('group', `/groups/${g.id}`);
+    // A fixture-named term cascades its group, roster and attendance with it.
+    // The group sweep beneath it only catches one left under a REAL term,
+    // which should never happen but is checked anyway (the same reason this
+    // function exists at all: a run that died before its own `finally`).
+    for (const t of named(await list('/happiness/terms'), 'name')) await kill('happiness term', `/happiness/terms/${t.id}`);
+    for (const g of named(await list('/happiness/groups'), 'name')) await kill('happiness group', `/happiness/groups/${g.id}`);
     return stuck;
   };
 
@@ -608,7 +614,7 @@ async function main() {
     const sidebar = await page.locator('.sidebar').innerText();
     check(
       'sidebar lists every module + Users and Church settings (super admin only)',
-      ['Members', 'Life Groups', 'Services', 'Trainings & Activities', 'Forty Days', 'Users', 'Church settings']
+      ['Members', 'Life Groups', 'Services', 'Trainings & Activities', 'Forty Days', 'Happiness Groups', 'Users', 'Church settings']
         .every((label) => sidebar.includes(label)),
     );
     // The brand at the top of the sidebar is the CHURCH's own name, read from
@@ -1358,6 +1364,113 @@ async function main() {
         String(afterModules.find((p) => p.id === moduleId)?.total_days));
     }
 
+    /* -- happiness groups: term → group → roster → weekly attendance ------ */
+    // Unlike 守望, a term is a first-class, repeatable entity with full CRUD —
+    // so this module drives term creation and group creation THROUGH THE UI
+    // (not pre-seeded over the API, the way the life-group fixture is), then
+    // the roster Combobox and the week-by-week tick the same way the life
+    // group's own column is driven above: on this run's own fixture, never a
+    // week that could be somebody's real attendance.
+    mod('happiness groups · term → group → roster → weekly attendance');
+    const fxHappyMember = await makeMember('HAPPY');
+    const happyTermNo = Math.floor(Date.now() / 1000);
+    const happyTermName = fixtureName('TERM');
+    const happyGroupName = fixtureName('GROUP');
+    let happyTermId = null;
+    try {
+      /* -- term, created through the UI ----------------------------------- */
+      await page.goto(`${BASE}/happiness`, { waitUntil: 'domcontentloaded' });
+      await page.locator('button:visible:has-text("Add term")').first().waitFor({ timeout: 20000 });
+      await page.locator('button:visible:has-text("Add term")').first().click();
+      await page.locator('.modal').waitFor({ timeout: 8000 });
+      // Term number, then weeks — both plain number inputs in that order.
+      await page.locator('.modal input[type=number]').first().fill(String(happyTermNo));
+      // The name field is the modal's only untyped text input.
+      await page.locator('.modal input:not([type=number]):not([type=date])').first().fill(happyTermName);
+      await page.locator('.modal button:has-text("Save")').first().click();
+      await w(1500);
+      const termTile = page.locator('.mtile', { hasText: `Term ${happyTermNo}` });
+      await termTile.first().waitFor({ timeout: 20000 });
+      check('creating a term through the UI adds it to the list', (await termTile.count()) === 1);
+      const termsAfter = await apiGet('/happiness/terms');
+      happyTermId = termsAfter.find((t) => t.term_no === happyTermNo)?.id ?? null;
+      check('…and it is readable from the API, weeks defaulting to 8',
+        !!happyTermId && termsAfter.find((t) => t.id === happyTermId)?.weeks === 8,
+        JSON.stringify(termsAfter.find((t) => t.term_no === happyTermNo)));
+
+      /* -- group, under that term, created through the UI ------------------ */
+      await termTile.first().click();
+      await page.waitForURL(/\/happiness\/[0-9a-f-]+/, { timeout: 15000 });
+      await page.locator('button:visible:has-text("Add group")').first().waitFor({ timeout: 20000 });
+      check('opening a term shows its own facts (period number, weeks)',
+        (await page.locator('.content').innerText()).includes(String(happyTermNo)));
+      await page.locator('button:visible:has-text("Add group")').first().click();
+      await page.locator('.modal').waitFor({ timeout: 8000 });
+      await page.locator('.modal input').first().fill(happyGroupName);
+      const groupHallSel = page.locator('.modal select').first();
+      const groupHallOpt = await groupHallSel.locator('option').nth(1).getAttribute('value').catch(() => null);
+      if (groupHallOpt) await groupHallSel.selectOption(groupHallOpt);
+      await page.locator('.modal button:has-text("Save")').first().click();
+      await w(1500);
+      const groupTile = page.locator('.mtile', { hasText: happyGroupName });
+      await groupTile.first().waitFor({ timeout: 20000 });
+      check('creating a group through the UI adds it to the term’s own list', (await groupTile.count()) === 1);
+
+      /* -- group detail: roster + week-numbered attendance sheet ---------- */
+      await groupTile.first().click();
+      await page.waitForURL(/\/happiness\/group\/[0-9a-f-]+/, { timeout: 15000 });
+      const happyGroupId = page.url().match(/\/happiness\/group\/([0-9a-f-]+)/)?.[1] ?? null;
+      check('…and its own detail page opens', !!happyGroupId);
+
+      // Roster add via the shared Combobox (rule G4) — never a native <select>.
+      const rosterCombo = page.locator('.combo input[role=combobox]').first();
+      await rosterCombo.click();
+      await rosterCombo.fill(fxHappyMember.name);
+      await w(400);
+      await page.locator('.combo-list .combo-option').first().waitFor({ timeout: 8000 });
+      check('the roster combobox offers 教会成员 and 福友 with no role filtering — one option matches',
+        (await page.locator('.combo-list .combo-option').count()) === 1);
+      await page.locator('.combo-list .combo-option').first().click();
+      await w(300);
+      await page.locator('button:visible:has-text("Add member")').first().click();
+      await w(1200);
+      check('adding a roster member via the Combobox shows them on the roster',
+        (await page.locator(`table td:has-text("${fxHappyMember.name}")`).count()) > 0);
+
+      // The sheet's columns are WEEK NUMBERS, never dates — the one roll call
+      // in the app that isn't date-based.
+      const weekHeads = page.locator('table.sheet-table thead th', { hasText: 'Week' });
+      check('the attendance sheet has a column per week (Week N), never a calendar date',
+        (await weekHeads.count()) === 8, `${await weekHeads.count()} week column(s)`);
+
+      const rosterRow = page.locator('table.sheet-table tbody tr', { hasText: fxHappyMember.name });
+      await rosterRow.first().waitFor({ timeout: 20000 });
+      // Week 1 is the first tick box in the row — the member-name cell carries
+      // no checkbox of its own.
+      const week1Tick = rosterRow.locator('input[type=checkbox]').first();
+      await week1Tick.click();
+      await w(1500);
+      const attAfterTick = happyGroupId ? await apiGet(`/happiness/groups/${happyGroupId}/attendance`) : { records: [] };
+      check('ticking week 1 records that member present that week',
+        (attAfterTick.records || []).some((r) => r.week_number === 1 && r.member_id === fxHappyMember.id),
+        JSON.stringify(attAfterTick.records));
+      await week1Tick.click();
+      await w(1500);
+      const attAfterUntick = happyGroupId ? await apiGet(`/happiness/groups/${happyGroupId}/attendance`) : { records: [] };
+      check('unticking it DELETES the row — a presence-only table, no absence to store',
+        !(attAfterUntick.records || []).some((r) => r.week_number === 1 && r.member_id === fxHappyMember.id),
+        JSON.stringify(attAfterUntick.records));
+    } finally {
+      // Deleting the term cascades its group, roster and every week of
+      // attendance — nothing else here needs its own teardown.
+      if (happyTermId) {
+        const gone = await apiDelete(`/happiness/terms/${happyTermId}`);
+        console.log(`  ↳ cleanup: ${gone ? 'deleted' : 'COULD NOT DELETE'} happiness term ${happyTermName} (cascades its group)`);
+        if (!gone) console.log(`  ↳ purge will retry: /happiness/terms/${happyTermId}`);
+      }
+      await fxHappyMember.remove();
+    }
+
     /* -- user management -------------------------------------------------- */
     mod('user management');
     await page.goto(`${BASE}/settings`, { waitUntil: 'domcontentloaded' });
@@ -1450,6 +1563,7 @@ async function main() {
     mod('church settings · add-on modules');
     const moduleStatesBefore = await apiGet('/church/modules');
     const discBefore = moduleStatesBefore.find((m) => m.key === 'discipleship');
+    const happyBefore = moduleStatesBefore.find((m) => m.key === 'happiness');
     // The `finally` below covers a failed check; this covers the process dying
     // outright, which runs no `finally` at all.
     if (discBefore) {
@@ -1459,6 +1573,17 @@ async function main() {
         if (current && current.enabled === discBefore.enabled) return;
         const r = await ctx.request.patch(`${BASE}/api/church/modules/discipleship`, {
           data: { enabled: discBefore.enabled },
+        });
+        if (!r.ok()) throw new Error(`restore failed: ${r.status()}`);
+      });
+    }
+    if (happyBefore) {
+      restoreLater(`the happiness module to enabled=${happyBefore.enabled}`, async () => {
+        const now = await ctx.request.get(`${BASE}/api/church/modules`).then((r) => r.json());
+        const current = now?.find?.((m) => m.key === 'happiness');
+        if (current && current.enabled === happyBefore.enabled) return;
+        const r = await ctx.request.patch(`${BASE}/api/church/modules/happiness`, {
+          data: { enabled: happyBefore.enabled },
         });
         if (!r.ok()) throw new Error(`restore failed: ${r.status()}`);
       });
@@ -1621,6 +1746,55 @@ async function main() {
           (await page.locator('.sidebar').innerText()).includes('Forty Days') &&
             !/not enabled/i.test(await page.locator('.content').innerText()));
       }
+
+      // The same on/off cycle, for 幸福小组 — a second, independent module
+      // switch that must not disturb 守望's own state (asserted above).
+      await catalogRow('Happiness Groups').locator('.switch').first()
+        .waitFor({ timeout: 20000 }).catch(() => {});
+      check('the catalog lists the Happiness Groups add-on with a switch',
+        (await catalogRow('Happiness Groups').locator('.switch').count()) === 1);
+      if (!happyBefore?.enabled) check('happiness module already off — toggle cycle skipped', true);
+      if (happyBefore?.enabled) {
+        await catalogRow('Happiness Groups').locator('.switch').first().click();
+        await page.locator('.modal-backdrop').last().waitFor({ timeout: 8000 });
+        const confirmCopy = await page.locator('.modal-backdrop').last().innerText();
+        check('switching off Happiness Groups asks first, and says what disappears',
+          confirmCopy.includes('Happiness Groups') && /sidebar/i.test(confirmCopy),
+          confirmCopy.replace(/\s+/g, ' ').slice(0, 140));
+        await page.locator('.modal-backdrop').last().locator('button:has-text("Turn off module")').last().click();
+        await w(1500);
+        const offStates = await apiGet('/church/modules');
+        check('confirming stores the happiness module as off',
+          offStates.find((m) => m.key === 'happiness')?.enabled === false, JSON.stringify(offStates));
+        const blocked = await ctx.request.get(`${BASE}/api/happiness/terms`);
+        check('a disabled happiness module’s API path is refused', blocked.status() === 404, `status ${blocked.status()}`);
+        await page.goto(`${BASE}/members`, { waitUntil: 'domcontentloaded' });
+        await page.locator('.mtile').first().waitFor({ timeout: 20000 });
+        check('the nav loses the disabled happiness entry',
+          !(await page.locator('.sidebar').innerText()).includes('Happiness Groups'));
+        await page.goto(`${BASE}/happiness`, { waitUntil: 'domcontentloaded' });
+        await page.locator('.empty').first().waitFor({ timeout: 20000 });
+        const offPage = await page.locator('.content').innerText();
+        check('going straight to its URL explains it is not enabled',
+          /not enabled/i.test(offPage) && !/error/i.test(offPage),
+          offPage.replace(/\s+/g, ' ').slice(0, 120));
+
+        await page.goto(`${BASE}/church`, { waitUntil: 'domcontentloaded' });
+        await catalogRow('Happiness Groups').locator('.switch').first().waitFor({ timeout: 20000 });
+        await catalogRow('Happiness Groups').locator('.switch').first().click();
+        await w(1500);
+        check('turning it back on needs no confirmation',
+          (await page.locator('.modal-backdrop').count()) === 0);
+        const onStates = await apiGet('/church/modules');
+        check('the happiness module is stored as on again',
+          onStates.find((m) => m.key === 'happiness')?.enabled === true, JSON.stringify(onStates));
+        await page.goto(`${BASE}/happiness`, { waitUntil: 'domcontentloaded' });
+        await page.locator('h1').first().waitFor({ timeout: 20000 });
+        await w(1200);
+        check('the nav entry and the page come back',
+          (await page.locator('.sidebar').innerText()).includes('Happiness Groups') &&
+            !/not enabled/i.test(await page.locator('.content').innerText()));
+      }
       await shot('08a-church');
     } finally {
       // Belt and braces: whatever happened above, the church is left running
@@ -1647,6 +1821,21 @@ async function main() {
             .catch(() => false);
           console.log(`  ↳ cleanup: ${restored ? 'restored' : 'COULD NOT RESTORE'} the discipleship module to enabled=${discBefore.enabled}`);
           check('the add-on module was left as it was found', restored, `enabled=${discBefore.enabled}`);
+        }
+      }
+      if (happyBefore) {
+        const now = await ctx.request
+          .get(`${BASE}/api/church/modules`)
+          .then((r) => r.json())
+          .catch(() => null);
+        const current = now?.find?.((m) => m.key === 'happiness');
+        if (!current || current.enabled !== happyBefore.enabled) {
+          const restored = await ctx.request
+            .patch(`${BASE}/api/church/modules/happiness`, { data: { enabled: happyBefore.enabled } })
+            .then((r) => r.ok())
+            .catch(() => false);
+          console.log(`  ↳ cleanup: ${restored ? 'restored' : 'COULD NOT RESTORE'} the happiness module to enabled=${happyBefore.enabled}`);
+          check('the happiness add-on module was left as it was found', restored, `enabled=${happyBefore.enabled}`);
         }
       }
     }
@@ -1692,7 +1881,7 @@ async function main() {
     const halls = await (await ctx.request.get(`${BASE}/api/halls`)).json();
     const expectSwitcher = Array.isArray(halls) && halls.length > 1;
 
-    const LIST_PAGES = ['/members', '/groups', '/events', '/trainings', '/discipleship', '/settings'];
+    const LIST_PAGES = ['/members', '/groups', '/events', '/trainings', '/discipleship', '/happiness', '/settings'];
     const strays = [];
     const missingDrawerHall = [];
     const noBar = [];

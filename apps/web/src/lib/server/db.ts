@@ -80,6 +80,7 @@ const UNIQUE_VIOLATIONS: Record<string, string> = {
   members_one_leader_per_group: 'This group already has a leader',
   members_one_assistant_per_group: 'This group already has an assistant leader',
   members_one_intern_per_group: 'This group already has an intern leader',
+  happiness_terms_no_unique: 'A term with that number already exists',
 };
 
 function uniqueViolationMessage(raw: string): string {

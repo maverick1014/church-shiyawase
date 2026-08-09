@@ -348,6 +348,9 @@ async function main() {
     }
   }
 
+  // ---- Happiness Groups: term → group → roster + by-week attendance -------
+  await happinessGroups(admin, freeMembers, hallId);
+
   // ---- Church record + add-on modules -------------------------------------
   await churchAndModules(admin);
 
@@ -1421,6 +1424,147 @@ async function groupScopedSheet(adminCookie, halls, hallId) {
  * everything here is restored in a `finally` — the original module state, the
  * original description, whether the assertions passed or blew up.
  */
+/**
+ * 幸福小组: 期 (term) → group → roster + weekly attendance, BY WEEK NUMBER
+ * rather than by date — the opposite convention from the 守望 pairs block
+ * above (presence-only rows, no `completed` boolean to upsert). Self-cleaning:
+ * deleting the term cascades its group, roster and every week of attendance,
+ * so nothing here needs its own teardown for those — only the fixture-named
+ * term itself has to go, in a `finally` so a mid-test failure cannot strand it.
+ */
+async function happinessGroups(adminCookie, members, hallId) {
+  const H = { cookie: adminCookie };
+  if (!hallId) { ok('happiness groups (skipped: no hall)', true); return; }
+
+  // A term number is globally unique — mint one from the clock so parallel
+  // runs (and reruns of this suite) never collide.
+  const termNo = Math.floor(Date.now() / 1000);
+  const termName = `E2E-term-${Date.now()}`;
+  const mkTerm = await req('POST', '/api/happiness/terms', {
+    ...H,
+    body: { term_no: termNo, name: termName, weeks: 4 },
+  });
+  ok('create term → 200 + id', mkTerm.status === 200 && mkTerm.json?.id, `status ${mkTerm.status} ${JSON.stringify(mkTerm.json).slice(0, 140)}`);
+  const termId = mkTerm.json?.id;
+  if (!termId) return;
+
+  try {
+    const list = await req('GET', '/api/happiness/terms', H);
+    ok('term shows up in the list, carrying a group_count',
+      list.status === 200 && list.json?.some((t) => t.id === termId && t.group_count === 0),
+      JSON.stringify(list.json?.find((t) => t.id === termId)));
+
+    const readTerm = await req('GET', `/api/happiness/terms/${termId}`, H);
+    ok('read term by id → 200', readTerm.status === 200 && readTerm.json?.weeks === 4, `status ${readTerm.status}`);
+
+    const patchTerm = await req('PATCH', `/api/happiness/terms/${termId}`, { ...H, body: { weeks: 3 } });
+    ok('update term weeks → 200 + persisted', patchTerm.status === 200 && patchTerm.json?.weeks === 3, `status ${patchTerm.status} ${JSON.stringify(patchTerm.json)}`);
+
+    const groupName = `E2E-group-${Date.now()}`;
+    const mkGroup = await req('POST', '/api/happiness/groups', {
+      ...H,
+      body: { term_id: termId, name: groupName, hall_id: hallId, meeting_day: 'tuesday', location: 'Hall B' },
+    });
+    ok('create group → 200 + id', mkGroup.status === 200 && mkGroup.json?.id, `status ${mkGroup.status} ${JSON.stringify(mkGroup.json).slice(0, 140)}`);
+    const groupId = mkGroup.json?.id;
+    if (!groupId) return;
+
+    const groupsList = await req('GET', `/api/happiness/groups?term_id=${termId}`, H);
+    ok('group list narrows by term_id and carries roster_count',
+      groupsList.status === 200 && groupsList.json?.some((g) => g.id === groupId && g.roster_count === 0),
+      JSON.stringify(groupsList.json));
+
+    const patchGroup = await req('PATCH', `/api/happiness/groups/${groupId}`, { ...H, body: { location: 'Hall C' } });
+    ok('update group → 200 + persisted', patchGroup.status === 200 && patchGroup.json?.location === 'Hall C', `status ${patchGroup.status}`);
+
+    // ---- roster: add two, remove one -----------------------------------
+    const roster = (members || []).slice(0, 2);
+    if (roster.length === 2) {
+      const addMembers = await req('POST', `/api/happiness/groups/${groupId}/members`, {
+        ...H,
+        body: { member_ids: roster.map((m) => m.id) },
+      });
+      ok('add roster members (list) → 200', addMembers.status === 200 && addMembers.json?.count === 2, `status ${addMembers.status} ${JSON.stringify(addMembers.json)}`);
+
+      const detail = await req('GET', `/api/happiness/groups/${groupId}`, H);
+      ok('group detail embeds the roster, both names each',
+        detail.status === 200 && detail.json?.members?.length === 2 &&
+          detail.json.members.every((m) => 'full_name' in m && 'english_name' in m),
+        JSON.stringify(detail.json?.members));
+      ok('group detail embeds the term (weeks travels with it)',
+        detail.json?.term?.id === termId && detail.json?.term?.weeks === 3,
+        JSON.stringify(detail.json?.term));
+
+      // Re-adding somebody already on the roster is not an error.
+      const readd = await req('POST', `/api/happiness/groups/${groupId}/members`, { ...H, body: { member_id: roster[0].id } });
+      ok('re-adding an existing roster member is a no-op, not a 4xx', readd.status === 200, `status ${readd.status}`);
+
+      // ---- attendance: week beyond the term's own `weeks` is refused ----
+      const overWeek = await req('PUT', `/api/happiness/groups/${groupId}/attendance`, {
+        ...H,
+        body: { week_number: 9, member_ids: roster.map((m) => m.id), present: true },
+      });
+      ok('a week beyond the term’s own weeks (9 > 3) → 400',
+        overWeek.status === 400, `status ${overWeek.status} ${JSON.stringify(overWeek.json)}`);
+
+      // ---- attendance: mark present, read back, then unmark ----
+      const mark = await req('PUT', `/api/happiness/groups/${groupId}/attendance`, {
+        ...H,
+        body: { week_number: 1, member_ids: roster.map((m) => m.id), present: true },
+      });
+      ok('mark week 1 present for the roster → 200', mark.status === 200 && mark.json?.count === 2, `status ${mark.status} ${JSON.stringify(mark.json)}`);
+
+      const readAttendance = await req('GET', `/api/happiness/groups/${groupId}/attendance`, H);
+      const presentWeek1 = (readAttendance.json?.records || []).filter((r) => r.week_number === 1).map((r) => r.member_id).sort();
+      ok('attendance round-trips: weeks = the term’s own 3, both members present in week 1',
+        readAttendance.json?.weeks === 3 && JSON.stringify(presentWeek1) === JSON.stringify(roster.map((m) => m.id).sort()),
+        JSON.stringify(readAttendance.json));
+
+      // Marking present again is idempotent — a no-op, not a duplicate/409.
+      const markAgain = await req('PUT', `/api/happiness/groups/${groupId}/attendance`, {
+        ...H,
+        body: { week_number: 1, member_id: roster[0].id, present: true },
+      });
+      ok('marking an already-present week again → 200, not a conflict', markAgain.status === 200, `status ${markAgain.status}`);
+
+      // Unmark one of the two — a presence-only table deletes the row.
+      const unmark = await req('PUT', `/api/happiness/groups/${groupId}/attendance`, {
+        ...H,
+        body: { week_number: 1, member_id: roster[1].id, present: false },
+      });
+      ok('unmark one member for week 1 → 200', unmark.status === 200, `status ${unmark.status}`);
+      const afterUnmark = await req('GET', `/api/happiness/groups/${groupId}/attendance`, H);
+      const stillPresent = (afterUnmark.json?.records || []).filter((r) => r.week_number === 1).map((r) => r.member_id);
+      ok('the unmarked member’s row is gone; the other stays present',
+        stillPresent.length === 1 && stillPresent[0] === roster[0].id,
+        JSON.stringify(afterUnmark.json?.records));
+
+      // ---- roster: remove one member; their week-1 record stays --------
+      const removeMember = await req('DELETE', `/api/happiness/groups/${groupId}/members/${roster[0].id}`, H);
+      ok('remove one roster member → 200', removeMember.status === 200, `status ${removeMember.status}`);
+      const afterRemove = await req('GET', `/api/happiness/groups/${groupId}`, H);
+      ok('the roster no longer lists them', !(afterRemove.json?.members || []).some((m) => m.id === roster[0].id), JSON.stringify(afterRemove.json?.members));
+      const attendanceAfterRemove = await req('GET', `/api/happiness/groups/${groupId}/attendance`, H);
+      ok('…but their recorded week-1 attendance survives the roster removal (no FK between the two)',
+        (attendanceAfterRemove.json?.records || []).some((r) => r.member_id === roster[0].id && r.week_number === 1),
+        JSON.stringify(attendanceAfterRemove.json?.records));
+    }
+
+    // ---- group delete cascades its roster and attendance ----------------
+    const delGroup = await req('DELETE', `/api/happiness/groups/${groupId}`, H);
+    ok('delete group → 200', delGroup.status === 200, `status ${delGroup.status}`);
+    const groupGone = await req('GET', `/api/happiness/groups/${groupId}`, H);
+    ok('…and it is actually gone', groupGone.status === 404, `status ${groupGone.status}`);
+  } finally {
+    // Deleting the term cascades any group left under it (there should be
+    // none by this point, but a failed assertion above must not leak one).
+    const delTerm = await req('DELETE', `/api/happiness/terms/${termId}`, H);
+    ok('delete term (teardown) → 200', delTerm.status === 200, `status ${delTerm.status}`);
+    const termGone = await req('GET', `/api/happiness/terms/${termId}`, H);
+    ok('…and the term is actually gone', termGone.status === 404, `status ${termGone.status}`);
+  }
+}
+
 async function churchAndModules(adminCookie) {
   const H = { cookie: adminCookie };
 
@@ -1452,6 +1596,8 @@ async function churchAndModules(adminCookie) {
   ok('module catalog → 200 + array', states.status === 200 && Array.isArray(states.json), `status ${states.status}`);
   const original = (states.json || []).find((m) => m.key === 'discipleship');
   ok('the catalog lists the Forty Days add-on', !!original, JSON.stringify(states.json).slice(0, 120));
+  const originalHappiness = (states.json || []).find((m) => m.key === 'happiness');
+  ok('the catalog lists the Happiness Groups add-on', !!originalHappiness, JSON.stringify(states.json).slice(0, 120));
 
   // A key that is not in the code registry must never reach the table.
   const junk = await req('PATCH', '/api/church/modules/not_a_module', { ...H, body: { enabled: false } });
@@ -1543,6 +1689,21 @@ async function churchAndModules(adminCookie) {
       ok('the church profile stays public while a module is off', (await req('GET', '/api/church')).status === 200);
       ok('the catalog itself is still readable while a module is off', (await req('GET', '/api/church/modules', H)).status === 200);
     }
+
+    // The same gate, for 幸福小组 — a second, independent module must be
+    // switchable on its own without disturbing 守望's own state.
+    if (originalHappiness) {
+      const off = await req('PATCH', '/api/church/modules/happiness', { ...H, body: { enabled: false } });
+      ok('disable happiness module → 200 + enabled:false', off.status === 200 && off.json?.enabled === false, `status ${off.status} ${JSON.stringify(off.json)}`);
+      const blockedTerms = await req('GET', '/api/happiness/terms', H);
+      ok('a disabled happiness module refuses its own API path → 404', blockedTerms.status === 404, `status ${blockedTerms.status}`);
+      const blockedGroups = await req('GET', '/api/happiness/groups', H);
+      ok('every happiness path is refused, not just the first → 404', blockedGroups.status === 404, `status ${blockedGroups.status}`);
+      // …and nothing else moved: core paths and the catalog itself stay up.
+      ok('core paths are untouched while happiness is off', (await req('GET', '/api/members', H)).status === 200);
+      ok('the church profile stays public while happiness is off', (await req('GET', '/api/church')).status === 200);
+      ok('the catalog itself is still readable while happiness is off', (await req('GET', '/api/church/modules', H)).status === 200);
+    }
   } finally {
     // This runs against the church's live site: put both back exactly as they
     // were, whatever happened above, and SAY whether it worked.
@@ -1553,6 +1714,14 @@ async function churchAndModules(adminCookie) {
         `status ${back.status} ${JSON.stringify(back.json)}`);
       if (original.enabled)
         ok('the module answers again after being re-enabled', (await req('GET', '/api/discipleship/programs', H)).status === 200);
+    }
+    if (originalHappiness) {
+      const back = await req('PATCH', `/api/church/modules/happiness`, { ...H, body: { enabled: originalHappiness.enabled } });
+      ok('the happiness module was restored to its original state',
+        back.status === 200 && back.json?.enabled === originalHappiness.enabled,
+        `status ${back.status} ${JSON.stringify(back.json)}`);
+      if (originalHappiness.enabled)
+        ok('the happiness module answers again after being re-enabled', (await req('GET', '/api/happiness/terms', H)).status === 200);
     }
     const restored = await req('PATCH', '/api/church', { ...H, body: { description: originalDescription } });
     ok('the church description was restored',
@@ -1837,6 +2006,17 @@ async function purgeResidue(H) {
   }
   for (const g of await list('/api/groups')) {
     if (FIXTURE_NAME.test(String(g?.name ?? ''))) await kill(`group ${g.name}`, `/api/groups/${g.id}`);
+  }
+  // A fixture-named term cascades its group, roster and attendance with it —
+  // deleting the term is enough. The group sweep beneath it only catches a
+  // group left behind under a REAL (non-fixture) term, which should never
+  // happen but is checked anyway, matching this function's own reason to
+  // exist (a run that died before its own `finally`).
+  for (const term of await list('/api/happiness/terms')) {
+    if (FIXTURE_NAME.test(String(term?.name ?? ''))) await kill(`happiness term ${term.name}`, `/api/happiness/terms/${term.id}`);
+  }
+  for (const g of await list('/api/happiness/groups')) {
+    if (FIXTURE_NAME.test(String(g?.name ?? ''))) await kill(`happiness group ${g.name}`, `/api/happiness/groups/${g.id}`);
   }
   // A member the suite borrowed rather than created: its email was overwritten
   // with a generated one and the restore never ran. Clearing it is right — a

@@ -259,6 +259,39 @@ followed, in date order, by every meeting someone added for it.
   - Form shows: pair info (带领者 ➜ 被带领者), progress bar, 40-day mini grid, and today's entry: **第几天 / 是否完成 / 反馈备注 / 提交**; then a thank-you state.
   - One `(pair, day_number)` is unique; re-submitting updates (idempotent).
 
+### 5.6b Happiness Groups (幸福小组) — optional module, three levels deep
+- **Shape:** 期 (term) → 幸福小组 (group, belongs to one term) → roster (教会成员 + 福友) + weekly
+  attendance tracked **by week number, not by calendar date** — the one roll call in the app that
+  isn't date-based. A 福友 is nothing special in the schema: just a `members` row whose
+  `church_role` is `visitor` (0021), so the roster picker is an ordinary member `Combobox` with no
+  role filtering.
+- **Term (`happiness_terms`):** church-wide (no `hall_id`), numbered (`term_no`, unique) with an
+  optional name and start/end dates. Several terms may **overlap** — it is a first-class,
+  repeatable entity with full CRUD, unlike the discipleship module (created once, never edited).
+  `weeks` (1–52, default 8) lives on the TERM, not the group: every group inside a term runs the
+  same length, which is what makes "week 5" comparable across the term's groups.
+- **Group (`happiness_groups`):** `hall_id` is a **direct, required** column — exactly like
+  `groups` (life groups) — so it walks the same hall gate (`hallFilter`/`withHall`/
+  `assertHallWritable`/`assertOwnsRow`) rather than discipleship's "hall comes from the mentor"
+  pattern. `leader_id` is nullable and set null (never cascaded) if that member is deleted.
+  Full CRUD, scoped to the term it belongs to.
+- **Roster (`happiness_group_members`):** a join table — who is in a group, added/removed one or
+  several at a time. Removing someone from the roster does NOT touch their attendance history:
+  the two tables carry no FK between them, so a week they attended stays on the record even after
+  they leave.
+- **Attendance (`happiness_attendance`):** **presence-only** — a row means "present that week";
+  there is no boolean to flip. Marking present INSERTs, marking absent DELETES — the opposite
+  convention from `discipleship_progress` (which upserts a `completed` boolean). `week_number` is
+  checked 1–52 by the database and additionally against the TERM's own `weeks` by the API (a
+  week 9 tick on an 8-week term is a 400, not a silent accept). The sheet reuses the same shared
+  `SheetTick`/`SheetTickAll`/`SheetTotals` components the Sunday and life-group sheets use — one
+  column per week number instead of per date.
+- **No public form:** unlike discipleship's `/d/[token]` mentor link, this module is entirely
+  staff/leader-facing — no self-service page for a 福友 to check themselves in.
+- **Module gate:** switchable at `/church` like discipleship (`church_modules.module = 'happiness'`,
+  `MODULE_HAPPINESS` in `packages/shared`'s `OPTIONAL_MODULES`); off ⇒ nav hidden, `/api/happiness/*`
+  404s.
+
 ### 5.7 Public member self-registration (`/join`)
 - One link the church hands out; **no login**, mobile-first, same shell-less shape as `/d/<token>`
   and `/enroll/<id>` (the church's own logo, name and theme, the app's default language).
@@ -295,8 +328,8 @@ Tables:
 - `church_modules(church_id→church on delete cascade, module, enabled, timestamps, pk(church_id,module))` —
   which **optional** modules this church runs. The catalog of what CAN be switched lives in code
   (`OPTIONAL_MODULES` in `packages/shared`: a key, the nav href it owns, the API prefixes it owns);
-  only the on/off state lives here, and a key outside the registry is a 400. Today the one entry is
-  `discipleship` (四十天守望). A missing row counts as ON.
+  only the on/off state lives here, and a key outside the registry is a 400. Today's entries are
+  `discipleship` (四十天守望) and `happiness` (幸福小组, 0022). A missing row counts as ON.
 - `halls(id, name, sort_order, created_at)` — 中文堂 / 英文堂 / 马来文堂. One shared database; a hall is a **scope column**, not a separate deployment.
 - `groups(id, name, description, meeting_day weekday, meeting_time, location, tags text[], hall_id→halls **NOT NULL**, created_at)` — **no leader columns** (derived); 小组状态 (可分植/可加人/刚好) is also derived, not stored.
 - `members(id, full_name, **english_name**, email, phone, gender, date_of_birth, church_role, status, group_id→groups, group_position, hall_id→halls **NOT NULL**, joined_at, notes, **serving_roles text[] NOT NULL DEFAULT '{}'**, timestamps)` — `full_name` is the CHINESE name; `english_name` (0018, renamed from the mislabelled `chinese_name`) is the English one and may be null. `serving_roles` (0019) is 服侍岗位: the ministries this person serves in, free text and several per person, the same shape `groups.tags` has and entered with the same `TagsInput`. Empty array = serves nowhere, which is a fact, not a blank. `household_id` went with 0020, together with the `households` table nothing ever wrote to.
@@ -323,6 +356,19 @@ Tables:
 - `discipleship_pairs(id, program_id, mentor_id→members, trainee_id→members, parent_pair_id?, status, start_date, form_token uuid unique, created_at, unique(program_id,trainee_id), check mentor≠trainee)`
 - `discipleship_progress(id, pair_id, day_number, entry_date, completed, notes, timestamps, unique(pair_id,day_number))`
 - View `discipleship_pair_summary` — per-pair days_completed + percent_complete for the pastor overview.
+- `happiness_terms(id, term_no unique, name, weeks int default 8 check 1–52, starts_on, ends_on, created_at)` —
+  期 (0022). Church-wide (no `hall_id`); several may overlap. `weeks` applies to every group inside
+  it, which is what makes "week 5" comparable across the term's groups. Full CRUD, unlike
+  `discipleship_programs`.
+- `happiness_groups(id, term_id→happiness_terms on delete cascade, name, hall_id→halls **NOT NULL**, leader_id→members on delete **set null**, meeting_day weekday, meeting_time, location, created_at)` —
+  a 幸福小组 inside a term. `hall_id` is direct and required, exactly like `groups` (life groups),
+  not derived from a member the way a discipleship pair's hall is.
+- `happiness_group_members(id, group_id→happiness_groups on delete cascade, member_id→members on delete cascade, created_at, unique(group_id,member_id))` —
+  the roster: 教会成员 + 福友 alike (a 福友 is simply a member whose `church_role` is `visitor`).
+- `happiness_attendance(id, group_id→happiness_groups on delete cascade, member_id→members on delete cascade, week_number int check 1–52, created_at, unique(group_id,member_id,week_number))` —
+  **presence-only**: a row means "present that week". Marking present INSERTs; marking absent
+  DELETES — the opposite convention from `discipleship_progress`'s upserted boolean. The database's
+  1–52 check is a floor; the API additionally refuses a week beyond the TERM's own `weeks`.
 
 ---
 
@@ -340,6 +386,9 @@ Tables:
 | `/trainings/[id]` | 培训 / 活动详情 | a course: sessions, enrolment approval, **核对名单** grid, per-session attendance. An activity: no session list, one 「到场」 column |
 | `/discipleship` | 四十天守望 | cascade chain, **牧者总览** (per-pair progress + 复制链接/打开表单), a pair's 40-day grid |
 | `/discipleship/pairs/[id]` | 对子进度 | 40-day grid + cascade lineage (pastor view) |
+| `/happiness` | 幸福小组 · 期列表 | table of terms (期号/名称/起止日期/周数/小组数), create/edit/delete a term, click a row → its groups |
+| `/happiness/[termId]` | 该期的小组列表 | term's own facts as a header card; table of groups (名称/堂会/组长/聚会安排/名单人数), create/edit/delete a group, click a row → group detail |
+| `/happiness/group/[groupId]` | 幸福小组详情 | roster panel (add/remove via member `Combobox`, 教会成员+福友不分) + a by-week attendance sheet (第1周…第N周, not dates), column check-all, export |
 | `/d/[token]` | 每日填写页（独立） | **standalone, mobile-first, no login** mentor daily form |
 | `/enroll/[id]` | 报名页（独立） | **standalone, mobile-first, no login** self-enrollment for a course or an activity — matches full Chinese name to a member |
 | `/join` | 成员注册页（独立） | **standalone, mobile-first, no login** member self-registration — name pair, contact details, congregation, photo |
@@ -364,6 +413,7 @@ Tables:
 | Enrollment | `POST /trainings/:id/enroll`, `PATCH/DELETE /trainings/enrollments/:enrollmentId` |
 | Discipleship | `GET/POST /discipleship/programs`, **`GET` only** on `/discipleship/programs/:id` (the module — no hall column, so no hall gate; PATCH and DELETE were removed with the module manager and now 404), `GET /discipleship/programs/:id/overview`, `GET/POST /discipleship/pairs`, `GET/PATCH/DELETE /discipleship/pairs/:id`, `POST /discipleship/pairs/:id/progress` |
 | **Private form** | `GET /discipleship/form/:token`, `POST /discipleship/form/:token/progress` (no login) |
+| Happiness Groups | `GET/POST /happiness/terms`, `GET/PATCH/DELETE /happiness/terms/:id` (church-wide, no hall gate); `GET /happiness/groups?term_id=`, `POST /happiness/groups`, `GET/PATCH/DELETE /happiness/groups/:id` (hall-scoped, same gate as `/groups`); `POST /happiness/groups/:id/members` `{member_id\|member_ids[]}`, `DELETE /happiness/groups/:id/members/:memberId`; `GET /happiness/groups/:id/attendance` → `{weeks, records[{week_number,member_id}]}`, `PUT /happiness/groups/:id/attendance` `{week_number, member_id\|member_ids[], present}` — presence upserted (`present:true`) or deleted (`present:false`) for the given members in one call; `week_number` validated against the group's own term `weeks`, not the database's blanket 1–52. No public path — staff/leader only |
 
 ---
 

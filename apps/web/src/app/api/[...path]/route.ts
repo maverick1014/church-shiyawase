@@ -79,6 +79,13 @@ const PAIR_SELECT =
 const PAIR_SELECT_SCOPED =
   `*, mentor:members!discipleship_pairs_mentor_id_fkey!inner(${MEMBER_BRIEF}), trainee:members!discipleship_pairs_trainee_id_fkey(${MEMBER_BRIEF})`;
 const ACCOUNT_SELECT = `*, member:members(${ACCOUNT_MEMBER_BRIEF}), hall:halls(id,name)`;
+/**
+ * A 幸福小组, with its congregation, its leader (nullable) and its term's own
+ * length — every list/detail read below shares this shape, so a group never
+ * comes back missing the piece the page needs (rule G6: guard every join).
+ */
+const HAPPINESS_GROUP_SELECT =
+  '*, hall:halls(id,name), leader:members(id,full_name,english_name), term:happiness_terms(id,term_no,name,weeks)';
 
 /**
  * One value inside a PostgREST `or(…)` filter, quoted.
@@ -107,7 +114,7 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
     }
   };
 
-  const [r0, r1, r2, r3] = p;
+  const [r0, r1, r2, r3, r4] = p;
 
   // ---- Auth + access control ------------------------------------------------
   if (r0 === 'auth') return authRoute(method, req, p, db);
@@ -1272,6 +1279,143 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
     }
   }
 
+  // ---- 幸福小组 (Happiness Groups) --------------------------------------------
+  // 期 (term) → group → roster + weekly attendance. An add-on module (the gate
+  // above already refuses every /happiness/* path while it is off), staff/
+  // leader-only — no public form, unlike 守望's mentor link.
+  //
+  // Terms are church-wide (no hall column) and NOT create-once: several may
+  // overlap, and full CRUD applies. Groups carry `hall_id` directly — exactly
+  // like `groups` — so they use the same hall helpers as that section, never
+  // the more roundabout "hall comes from a joined member" pattern discipleship
+  // pairs need.
+  if (r0 === 'happiness') {
+    if (r1 === 'terms') {
+      if (!r2) {
+        if (method === 'GET') return json(await happinessTerms(db));
+        if (method === 'POST')
+          return json(unwrap(await db.from('happiness_terms').insert(await body()).select().single()));
+      } else if (!r3) {
+        if (method === 'GET')
+          return json(unwrap(await db.from('happiness_terms').select('*').eq('id', r2).single()));
+        if (method === 'PATCH')
+          return json(
+            unwrap(
+              await db.from('happiness_terms').update(await body()).eq('id', r2).select().single(),
+            ),
+          );
+        if (method === 'DELETE') {
+          // Cascades its groups, their rosters and every week of attendance
+          // (the FKs are `on delete cascade`, migration 0022). The DELETE
+          // method gate above is already super_admin/admin only; the CLIENT
+          // is what names the blast radius before this ever runs (rule G3).
+          unwrap(await db.from('happiness_terms').delete().eq('id', r2).select().single());
+          return json({ id: r2 });
+        }
+      }
+    } else if (r1 === 'groups') {
+      if (!r2) {
+        if (method === 'GET') {
+          let query = db.from('happiness_groups').select(HAPPINESS_GROUP_SELECT).order('created_at');
+          if (hallFilter) query = query.eq('hall_id', hallFilter);
+          if (q.get('term_id')) query = query.eq('term_id', q.get('term_id'));
+          return json(
+            await withRosterCounts(db, unwrap<Array<Record<string, unknown>>>(await query)),
+          );
+        }
+        if (method === 'POST')
+          return json(
+            unwrap(
+              await db
+                .from('happiness_groups')
+                .insert(withHall(await body()))
+                .select(HAPPINESS_GROUP_SELECT)
+                .single(),
+            ),
+          );
+      } else if (r3 === 'members') {
+        if (!r4 && method === 'POST') {
+          // Add one or several to the roster in one call — the same
+          // singular/list dual-accept the roll-call sheet uses
+          // (`member_ids` general, `member_id` its alias). Duplicates
+          // (already on the roster) are silently skipped rather than refused:
+          // re-adding somebody who is already there is not an error.
+          await assertOwnsRow('happiness_groups', r2);
+          const dto = await body();
+          const asked = Array.isArray(dto.member_ids)
+            ? dto.member_ids
+            : dto.member_id !== undefined
+              ? [dto.member_id]
+              : [];
+          const memberIds = [...new Set(asked.map((v) => String(v ?? '')).filter(Boolean))];
+          if (memberIds.length === 0)
+            throw new HttpError(400, 'member_id (or a non-empty member_ids) is required');
+          unwrap(
+            await db
+              .from('happiness_group_members')
+              .upsert(
+                memberIds.map((id) => ({ group_id: r2, member_id: id })),
+                { onConflict: 'group_id,member_id', ignoreDuplicates: true },
+              )
+              .select('id'),
+          );
+          return json({ group_id: r2, member_ids: memberIds, count: memberIds.length });
+        }
+        if (r4 && method === 'DELETE') {
+          // Deletes the ROSTER row only — `happiness_attendance` carries no FK
+          // to `happiness_group_members`, so a week they attended stays on the
+          // record even after they leave the roster (by design, per 0022).
+          await assertOwnsRow('happiness_groups', r2);
+          unwrap(
+            await db
+              .from('happiness_group_members')
+              .delete()
+              .eq('group_id', r2)
+              .eq('member_id', r4)
+              .select()
+              .single(),
+          );
+          return json({ group_id: r2, member_id: r4 });
+        }
+      } else if (r3 === 'attendance' && !r4) {
+        if (method === 'GET') {
+          await assertRowReadable('happiness_groups', r2);
+          return json(await happinessAttendance(db, r2));
+        }
+        if (method === 'PUT') {
+          await assertOwnsRow('happiness_groups', r2);
+          return json(await putHappinessAttendance(db, r2, await body()));
+        }
+      } else if (!r3) {
+        if (method === 'GET') {
+          await assertRowReadable('happiness_groups', r2);
+          return json(await happinessGroupDetail(db, r2));
+        }
+        if (method === 'PATCH') {
+          const dto = await body();
+          assertHallWritable(dto);
+          await assertOwnsRow('happiness_groups', r2);
+          return json(
+            unwrap(
+              await db
+                .from('happiness_groups')
+                .update(dto)
+                .eq('id', r2)
+                .select(HAPPINESS_GROUP_SELECT)
+                .single(),
+            ),
+          );
+        }
+        if (method === 'DELETE') {
+          // Cascades the roster and every week of attendance (0022).
+          await assertOwnsRow('happiness_groups', r2);
+          unwrap(await db.from('happiness_groups').delete().eq('id', r2).select().single());
+          return json({ id: r2 });
+        }
+      }
+    }
+  }
+
   // ---- Accounts -------------------------------------------------------------
   if (r0 === 'accounts') {
     if (!r1) {
@@ -1989,6 +2133,154 @@ async function groupAttendance(db: ReturnType<typeof getDb>, groupId: string) {
     })),
   }));
   return { meetings, rows };
+}
+
+/**
+ * Every 幸福小组 term, newest first, each carrying how many groups run inside
+ * it — ONE extra query for the whole list rather than one per row (rule G6),
+ * so the term list and its delete confirmation both read a real count instead
+ * of an N+1 client-side fetch.
+ */
+async function happinessTerms(db: ReturnType<typeof getDb>) {
+  const [termsRes, groupsRes] = await Promise.all([
+    db.from('happiness_terms').select('*').order('term_no', { ascending: false }),
+    db.from('happiness_groups').select('id, term_id'),
+  ]);
+  const terms = unwrap<Array<Record<string, unknown>>>(termsRes);
+  const groups = unwrap<Array<{ id: string; term_id: string }>>(groupsRes);
+  const counts = new Map<string, number>();
+  for (const g of groups) counts.set(g.term_id, (counts.get(g.term_id) ?? 0) + 1);
+  return terms.map((t) => ({ ...t, group_count: counts.get(t.id as string) ?? 0 }));
+}
+
+/**
+ * The same "count once, for the whole list" shape for a group's roster size —
+ * read by the group list and by its own delete confirmation.
+ */
+async function withRosterCounts(
+  db: ReturnType<typeof getDb>,
+  groups: Array<Record<string, unknown>>,
+) {
+  if (groups.length === 0) return [];
+  const ids = groups.map((g) => g.id as string);
+  const rosterRows = unwrap<Array<{ group_id: string }>>(
+    await db.from('happiness_group_members').select('group_id').in('group_id', ids),
+  );
+  const counts = new Map<string, number>();
+  for (const r of rosterRows) counts.set(r.group_id, (counts.get(r.group_id) ?? 0) + 1);
+  return groups.map((g) => ({ ...g, roster_count: counts.get(g.id as string) ?? 0 }));
+}
+
+/** One 幸福小组's detail: its own record plus its roster, both names included
+ *  (rule G4 — every roster embeds `MEMBER_BRIEF`, never `full_name` alone). */
+async function happinessGroupDetail(db: ReturnType<typeof getDb>, groupId: string) {
+  const [groupRes, rosterRes] = await Promise.all([
+    db.from('happiness_groups').select(HAPPINESS_GROUP_SELECT).eq('id', groupId).single(),
+    db
+      .from('happiness_group_members')
+      .select(`member:members(${MEMBER_BRIEF})`)
+      .eq('group_id', groupId)
+      .order('created_at'),
+  ]);
+  const group = unwrap<Record<string, unknown>>(groupRes);
+  // The embed's cardinality (one member per roster row) is a runtime fact
+  // PostgREST gets right; the untyped client's own select-string parser
+  // cannot know it without generated Database types, so it is force-cast
+  // here rather than fought with a narrower generic on `unwrap`.
+  const rosterRows = unwrap(rosterRes) as unknown as Array<{ member: Record<string, unknown> | null }>;
+  // Guarded (rule G6): a roster row whose member was somehow left dangling
+  // would otherwise crash the page instead of just being one fewer name.
+  const members = rosterRows.map((r) => r.member).filter((m): m is Record<string, unknown> => !!m);
+  return { ...group, members };
+}
+
+/**
+ * One group's whole roll call: `weeks` (the TERM's own length, read off the
+ * group's `term`) and the flat list of `{ week_number, member_id }` pairs that
+ * are actually recorded. Presence-only (0022) — a pair's absence from
+ * `records` means "not marked", never "absent"; the page builds its own
+ * member × week matrix from the roster it already has plus this list.
+ */
+async function happinessAttendance(db: ReturnType<typeof getDb>, groupId: string) {
+  const group = unwrap<{ term: { weeks: number } | null }>(
+    await db
+      .from('happiness_groups')
+      .select('term:happiness_terms(weeks)')
+      .eq('id', groupId)
+      .single(),
+  );
+  const records = unwrap<Array<{ week_number: number; member_id: string }>>(
+    await db.from('happiness_attendance').select('week_number, member_id').eq('group_id', groupId),
+  );
+  return { weeks: group.term?.weeks ?? 8, records };
+}
+
+/**
+ * ONE week, for a LIST of members — the same shape the services sheet's
+ * column write takes (`member_ids` general, `member_id` its singular alias),
+ * so a single cell and a whole-column 全员到齐 go down the same path. `present`
+ * decides the direction: true upserts (marking present when already present
+ * is a no-op — `ignoreDuplicates`), false DELETES those rows, which is what an
+ * untick means for a presence-only table (0022).
+ *
+ * `week_number` is checked against the TERM's own `weeks`, not the database's
+ * blanket 1..52 — a week 9 tick on an 8-week term is refused with a clear 400
+ * rather than silently accepted by the looser table constraint.
+ */
+async function putHappinessAttendance(
+  db: ReturnType<typeof getDb>,
+  groupId: string,
+  dto: Record<string, unknown>,
+) {
+  const weekNumber = Math.trunc(Number(dto.week_number));
+  if (!Number.isInteger(weekNumber) || weekNumber < 1)
+    throw new HttpError(400, 'week_number must be a positive integer');
+
+  const group = unwrap<{ term: { weeks: number } | null }>(
+    await db
+      .from('happiness_groups')
+      .select('term:happiness_terms(weeks)')
+      .eq('id', groupId)
+      .single(),
+  );
+  const termWeeks = group.term?.weeks ?? 8;
+  if (weekNumber > termWeeks)
+    throw new HttpError(400, `week_number must be between 1 and ${termWeeks} for this term`);
+
+  const asked = Array.isArray(dto.member_ids)
+    ? dto.member_ids
+    : dto.member_id !== undefined
+      ? [dto.member_id]
+      : [];
+  const memberIds = [...new Set(asked.map((v) => String(v ?? '')).filter(Boolean))];
+  if (memberIds.length === 0)
+    throw new HttpError(400, 'member_id (or a non-empty member_ids) is required');
+  if (memberIds.length > 1000)
+    throw new HttpError(400, 'Too many members in one write — 1000 at most');
+
+  const present = dto.present !== false;
+  if (present) {
+    unwrap(
+      await db
+        .from('happiness_attendance')
+        .upsert(
+          memberIds.map((id) => ({ group_id: groupId, member_id: id, week_number: weekNumber })),
+          { onConflict: 'group_id,member_id,week_number', ignoreDuplicates: true },
+        )
+        .select('id'),
+    );
+  } else {
+    unwrap(
+      await db
+        .from('happiness_attendance')
+        .delete()
+        .eq('group_id', groupId)
+        .eq('week_number', weekNumber)
+        .in('member_id', memberIds)
+        .select('id'),
+    );
+  }
+  return { week_number: weekNumber, member_ids: memberIds, count: memberIds.length, present };
 }
 
 /**

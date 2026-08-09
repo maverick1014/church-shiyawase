@@ -333,6 +333,42 @@ church's week are now the same week, whichever evening the group actually met.
 There is no longer a per-group "week 1, week 2…" numbering: the date itself is
 the column's identity, the same identity the services sheet already used.
 
+**幸福小组 (Happiness Groups) is the one roll call that IS week-numbered** —
+the exception the paragraph above just moved life groups away from (migration
+0022). 期 (term) → 幸福小组 (group, belongs to one term) → roster (教会成员 ＋
+福友) + weekly attendance tracked **by week number, not by calendar date**. A
+福友 needs no special handling anywhere: it is simply a member whose
+`church_role` is 访客 (0021), so the roster picker is the ordinary member
+`Combobox` over every member, unfiltered. `happiness_terms.weeks` (1–52,
+default 8) lives on the TERM, not the group — every group in a term runs the
+same length, which is what makes "week 5" comparable across the term's groups
+and comparable term to term. Unlike 守望模块, a term is **not** create-once:
+`happiness_terms` is a first-class, repeatable entity, and several may overlap
+(a new term starting before the last one finishes is the normal case), so full
+CRUD applies to both terms and groups. `happiness_groups.hall_id` is a direct,
+required column exactly like `groups` (life groups) — a 幸福小组 has its own
+congregation rather than deriving one the way a 守望配对 derives its hall from
+the mentor — so it walks the same hall gate as `/groups`
+(`hallFilter`/`withHall`/`assertHallWritable`/`assertOwnsRow`), never
+discipleship's more roundabout pattern. The roster
+(`happiness_group_members`) is an ordinary join table, and removing someone
+from it does NOT touch their attendance history — the two tables carry no FK
+between them, so a week they attended stays on the record even after they
+leave the roster. `happiness_attendance` is **presence-only**, the opposite
+convention from `discipleship_progress`'s upserted boolean: a row means
+"present that week", so marking present INSERTs and marking absent DELETES —
+there is no boolean to flip. The database checks `week_number` against a
+blanket 1–52; the API additionally refuses a week beyond the TERM's own
+`weeks`, a bound a check constraint cannot reach, with a clear 400 rather than
+a silent accept. The sheet on `/happiness/group/[groupId]` reuses the exact
+same shared `SheetTick`/`SheetTickAll`/`SheetTotals` components the Sunday and
+life-group sheets use — one column per week NUMBER instead of per date, same
+check-all/clear-confirms-first rules, same totals `<tfoot>`. Like 守望, it is a
+toggleable add-on module (`church_modules`, `MODULE_HAPPINESS` in
+`OPTIONAL_MODULES`, 404 when off) — but unlike 守望's `/d/[token]` mentor form,
+it has **no public-facing page at all**: roster and roll call are staff/leader
+only.
+
 Run before every push: `npm run --workspace @tog/web -s build` (or in
 `apps/web`: `npx tsc --noEmit && npm test && npm run build`). Deploys are gated
 on unit tests + a post-deploy smoke test (`.github/workflows/deploy.yml`).
@@ -427,7 +463,7 @@ These are hard requirements for this codebase. A change that breaks one is a
 review finding, not a preference. Cite the rule number in the finding.
 
 ### G1 — CRUD completeness on every management page
-Every entity page (成员、小组、聚会（点名表上的一列）、培训&活动（培训与活动两种形态）、四十天守望模块与配对、账户) must offer
+Every entity page (成员、小组、聚会（点名表上的一列）、培训&活动（培训与活动两种形态）、四十天守望模块与配对、幸福小组的期与小组、账户) must offer
 the full set its users need: **Create, Read, Update, Delete**. If the API supports an
 operation, the UI must expose it (or the omission must be a deliberate,
 documented decision). A page that can only create + list is incomplete.

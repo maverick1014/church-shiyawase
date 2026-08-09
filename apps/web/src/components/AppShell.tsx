@@ -74,6 +74,7 @@ const NAV: { section: MessageKey; items: NavItem[] }[] = [
     items: [
       { href: '/trainings', label: 'nav.trainings', icon: '📖' },
       { href: '/discipleship', label: 'nav.discipleship', icon: '✝' },
+      { href: '/happiness', label: 'nav.happiness', icon: '☺' },
     ],
   },
   {

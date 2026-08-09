@@ -57,11 +57,21 @@ export interface OptionalModule {
  */
 /** The 四十天守望 add-on. Named so call sites don't retype a magic string. */
 export const MODULE_DISCIPLESHIP = 'discipleship';
+/**
+ * The 幸福小组 add-on (migration 0022). The key MUST stay exactly `'happiness'`
+ * — a church's `church_modules` row is seeded with that string, and a
+ * mismatch here would orphan it (the row would name a module this code never
+ * registers, so the switch on `/church` could never turn it back on).
+ */
+export const MODULE_HAPPINESS = 'happiness';
 
 export const OPTIONAL_MODULES: readonly OptionalModule[] = [
   // 四十天守望 — the forty-day one-to-one discipleship section. Only some
   // churches run it, which is why it is the first module to become optional.
   { key: MODULE_DISCIPLESHIP, nav: '/discipleship', api: ['discipleship'] },
+  // 幸福小组 — term-based small groups: 期 (term) → group → roster + weekly
+  // roll call. Staff/leader-only, no public form (unlike 守望's mentor link).
+  { key: MODULE_HAPPINESS, nav: '/happiness', api: ['happiness'] },
 ];
 
 /** Every registered module key, in catalog order. */
@@ -667,6 +677,80 @@ export interface DiscipleshipPair {
   start_date: string | null;
   /** Unguessable token for the mentor's private daily-form link. */
   form_token: string;
+  created_at: string;
+}
+
+// ---------------------------------------------------------------------------
+// 幸福小组 (Happiness Groups): 期 (term) → group → roster + weekly attendance
+// (migration 0022)
+// ---------------------------------------------------------------------------
+
+/**
+ * 期 — a term of 幸福小组. Church-wide, not per-congregation: several terms
+ * may overlap (an old one finishing while the next begins is normal), and
+ * every group inside one runs the same `weeks` — which is what makes "week 5"
+ * mean one thing across the term's groups and what makes one term comparable
+ * against the last.
+ */
+export interface HappinessTerm {
+  id: string;
+  term_no: number;
+  name: string | null;
+  /** How many weeks every group in this term runs. 1..52, default 8. */
+  weeks: number;
+  starts_on: string | null;
+  ends_on: string | null;
+  created_at: string;
+}
+
+/**
+ * One 幸福小组 inside a term. `hall_id` is a direct, required column — exactly
+ * like `groups` — because a 幸福小组 meets somewhere and belongs to a
+ * congregation (the hall gate reads it, rule G2); its LENGTH, unlike a life
+ * group's, comes from the term rather than being its own. `leader_id` is set
+ * null (never cascaded) if that member is deleted, so losing the leader's
+ * name never deletes the group and its roster with it.
+ */
+export interface HappinessGroup {
+  id: string;
+  term_id: string;
+  name: string;
+  hall_id: string;
+  leader_id: string | null;
+  meeting_day: Weekday | null;
+  meeting_time: string | null; // "HH:MM:SS" (Postgres `time`)
+  location: string | null;
+  created_at: string;
+}
+
+/**
+ * The roster: who is in a 幸福小组 — 教会成员 and 福友 alike. A 福友 is simply a
+ * `members` row carrying the 访客 church role (0021), so this is an ordinary
+ * join table rather than a second list of names.
+ */
+export interface HappinessGroupMember {
+  id: string;
+  group_id: string;
+  member_id: string;
+  created_at: string;
+}
+
+/**
+ * One week's roll call, PRESENCE-ONLY: a row means "present that week" — there
+ * is no boolean to flip. Marking present INSERTs; marking absent DELETES the
+ * row. This is the opposite convention from `DiscipleshipProgress` (which
+ * upserts a `completed` boolean) — do not copy that shape here.
+ *
+ * `week_number` is checked 1..52 by the database; the API additionally
+ * refuses a week beyond the TERM's own `weeks`, a bound the check constraint
+ * cannot reach. Weeks are counted by NUMBER, not by calendar date — the one
+ * roll call in the app that is not date-based.
+ */
+export interface HappinessAttendance {
+  id: string;
+  group_id: string;
+  member_id: string;
+  week_number: number;
   created_at: string;
 }
 
