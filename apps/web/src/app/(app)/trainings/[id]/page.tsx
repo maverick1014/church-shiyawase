@@ -6,7 +6,7 @@ import { useFetch } from '@/lib/hooks';
 import { useSortableRows } from '@/lib/sort';
 import { api } from '@/lib/api';
 import { usePageChrome, useMe } from '@/components/AppShell';
-import { BackButton, Combobox, ErrorBanner, ExportButton, Field, LinkIcon, Modal, SkeletonCard, SkeletonScreen, SortTh, useConfirm, useToast } from '@/components/ui';
+import { BackButton, Combobox, ErrorBanner, ExportButton, Field, LinkIcon, Modal, SheetTotals, SkeletonCard, SkeletonScreen, SortTh, useConfirm, useToast } from '@/components/ui';
 import { can } from '@/lib/perms';
 import { exportMatrix } from '@/lib/export';
 import { EnrollmentRow, MemberRow, NamelistResponse, SessionRow, TrainingDetail } from '@/lib/types';
@@ -93,6 +93,20 @@ export default function TrainingDetailPage() {
   // sessions, read from the attendance sheet (only approved+ enrollees appear
   // there, so a pending enrollee correctly shows 0%).
   const sessionTotal = nl?.sessions.length ?? 0;
+
+  /**
+   * The foot of the namelist: how many PEOPLE turned up to each session —
+   * derived once and read by both the table and the export (rule G5). It is the
+   * same reading the other two roll-call sheets take: a namelist column is one
+   * occasion, and what a church wants from it is the headcount.
+   */
+  const sessionTotals = (nl?.sessions ?? []).map((s) => ({
+    key: s.id,
+    value: (nl?.rows ?? []).filter((r) =>
+      r.attendance.some((a) => a.session_id === s.id && a.attended),
+    ).length,
+  }));
+
   const attendanceOf = (memberId: string) => {
     const row = nl?.rows.find((r) => r.member.id === memberId);
     const attended = row ? row.attendance.filter((a) => a.attended).length : 0;
@@ -203,14 +217,15 @@ export default function TrainingDetailPage() {
           ? tr('training.col.attendedActivity')
           : `${tr('export.session', { n: s.session_number })} ${s.title ?? ''}`.trim(),
       ),
-      tr('training.exportSessionCount'),
     ];
-    const matrix = sortedNamelist.map((r) => [
+    // Marks, then ONE totals row: how many people came to each session, which
+    // is the question a namelist is read to answer.
+    const matrix: (string | number)[][] = sortedNamelist.map((r) => [
       r.member.full_name,
       tr(roleKey(memberRole(r.member))),
       ...r.attendance.map((a) => (a.attended ? tr('training.legend.present') : tr('training.legend.absent'))),
-      r.attendance.filter((a) => a.attended).length,
     ]);
+    matrix.push([tr('sheet.totalPeople'), '', ...sessionTotals.map((x) => x.value)]);
     exportMatrix(
       tr('training.exportFile', { name: t.name }),
       tr('trainings.roster'),
@@ -500,6 +515,11 @@ export default function TrainingDetailPage() {
                 </tr>
               )}
             </tbody>
+            {/* Only once somebody is on the list: an empty namelist shows its
+                empty row and no footer, the same way the other two sheets draw
+                no table at all when nobody is on them. The label spans the two
+                leading columns (name + role). */}
+            {sortedNamelist.length > 0 && <SheetTotals span={2} counts={sessionTotals} />}
           </table>
         </div>
         <div className="flex gap-12 flex-wrap muted mt-14" style={{ fontSize: 12 }}>

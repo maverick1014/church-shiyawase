@@ -255,6 +255,7 @@ export const ms: Messages = {
   'sheet.tickAll.title': 'Kosongkan lajur ini',
   'sheet.tickAll.message': 'Buang tanda {column} untuk semua orang? {n} tanda yang sudah direkodkan akan dipadam. Tindakan ini tidak boleh dibatalkan.',
   'sheet.tickAll.confirm': 'Kosongkan lajur',
+  'sheet.totalPeople': 'Jumlah hadir',
 
   /* ---- services: one roll-call sheet — Sundays + hand-added meetings ---- */
   'events.title': 'Kebaktian & Doa',
@@ -265,7 +266,6 @@ export const ms: Messages = {
   'events.col.preService': 'Pra-kebaktian',
   'events.col.service': 'Kebaktian',
   'events.col.attended': 'Hadir',
-  'events.col.total': 'Jumlah',
   'events.exportTitle': 'Eksport senarai kehadiran',
   'events.exportFile': 'Kehadiran perhimpunan {year}-{month}',
   'events.new.title': 'Tambah perjumpaan',
@@ -464,7 +464,6 @@ export const ms: Messages = {
   'training.attendanceOf': 'Hadir {attended} daripada {total} sesi',
   'training.exportTitle': 'Eksport senarai kehadiran',
   'training.exportFile': 'Senarai kehadiran {name}',
-  'training.exportSessionCount': 'Sesi dihadiri',
 
   /* ---- discipleship ---------------------------------------------------- */
   'disc.title': 'Empat Puluh Hari',
@@ -620,6 +619,14 @@ export const ms: Messages = {
   'enroll.ambiguous': 'Lebih daripada seorang ahli mempunyai nama ini. Sila hubungi pastor untuk mendaftar.',
   'enroll.closed': 'Latihan ini tidak dibuka untuk pendaftaran.',
   'enroll.err.name': 'Sila masukkan nama penuh anda',
+  /* Semakan nama semasa menaip — sebelum resit dilampirkan dan butang ditekan,
+     dan ia menyebut siapa yang perlu dihubungi. */
+  'enroll.check.checking': 'Menyemak nama anda…',
+  'enroll.check.ok': 'Dijumpai: {name}',
+  'enroll.check.noMember': 'Kami tidak menjumpai “{name}” dalam rekod ahli — semak ejaannya, atau minta didaftarkan dahulu.',
+  'enroll.check.ambiguous': 'Lebih daripada seorang ahli bernama “{name}”, jadi kami tidak pasti yang mana satu anda.',
+  'enroll.check.contact': 'Sila hubungi {pic}.',
+  'enroll.check.contactPastor': 'Sila hubungi pastor.',
   'form.header': 'Pemuridan satu-dengan-satu empat puluh hari · catatan harian',
   'form.doneTitle': 'Dihantar — terima kasih kerana setia menemani 🙏',
   'form.doneBody': 'Kemajuan {name} telah direkodkan dan pastor boleh melihatnya serta-merta.',

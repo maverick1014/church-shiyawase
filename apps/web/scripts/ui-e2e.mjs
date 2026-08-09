@@ -800,10 +800,19 @@ async function main() {
       check('on 全部堂会 the sheet lists every congregation’s members, without asking for one',
         (await memberCell.count()) === 1 &&
           !/choose a congregation/i.test(await page.locator('.content').innerText()));
-      // One column group per Sunday, each split in two, plus the totals pair —
-      // so at least five 会前 headers in any month.
+      // One column group per Sunday, each split in two — and a month holds four
+      // Sundays at the very least. (There is no trailing totals group any more:
+      // the headcount per occasion is a <tfoot> row, checked below.)
       const preHeads = await page.locator('th:has-text("Pre-service")').count();
-      check('every Sunday gets a 会前 / 主日 pair of columns', preHeads >= 5, `${preHeads} headers`);
+      check('every Sunday gets a 会前 / 主日 pair of columns', preHeads >= 4, `${preHeads} headers`);
+      // The sheet totals DOWN a column, not across a row: how many people came
+      // to that occasion, in the foot of the table.
+      const foot = page.locator('.sheet-table tfoot tr');
+      check('the sheet totals each occasion in a footer row, not per person',
+        (await foot.count()) === 1 &&
+          /People present/i.test(await foot.first().innerText()));
+      check('…and no row ends in a per-person tally column',
+        (await page.locator('.sheet-table thead th:has-text("Total")').count()) === 0);
       check('the sheet is ticked with check boxes, like the life-group sheet',
         (await page.locator('input[type=checkbox]').count()) > 0);
 
@@ -871,8 +880,7 @@ async function main() {
       // One check-all per sub-column, which is exactly one per tick in a
       // member's row: two per Sunday (会前 / 主日 filled separately) plus one
       // per meeting. Comparing the two counts states that without having to
-      // know how many meetings this month happens to hold — and without
-      // counting "Pre-service" headers, one of which belongs to the totals.
+      // know how many meetings this month happens to hold.
       const sundayAlls = await page.locator('input.sheet-tick-all').count();
       const rowTicks = await sheetRow.locator('input[type=checkbox]').count();
       check('every sub-column gets its own — a Sunday’s two ticks are filled separately',

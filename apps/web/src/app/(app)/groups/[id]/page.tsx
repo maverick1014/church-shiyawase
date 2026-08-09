@@ -6,7 +6,7 @@ import { useFetch } from '@/lib/hooks';
 import { useSortableRows } from '@/lib/sort';
 import { api } from '@/lib/api';
 import { usePageChrome, useMe } from '@/components/AppShell';
-import { BackButton, Combobox, ErrorBanner, ExportButton, Field, HallSelect, MonthPicker, RoleBadge, SheetTick, SheetTickAll, SkeletonCard, SkeletonScreen, SkeletonTable, SortTh, TagsInput, useConfirm, useToast } from '@/components/ui';
+import { BackButton, Combobox, ErrorBanner, ExportButton, Field, HallSelect, MonthPicker, RoleBadge, SheetTick, SheetTickAll, SheetTotals, SkeletonCard, SkeletonScreen, SkeletonTable, SortTh, TagsInput, useConfirm, useToast } from '@/components/ui';
 import { can } from '@/lib/perms';
 import { exportMatrix } from '@/lib/export';
 import { GroupAttendanceResponse, GroupDetail, GroupRow, MemberRow } from '@/lib/types';
@@ -20,7 +20,7 @@ import {
   weekdayKey,
   WEEKDAY_OPTIONS,
 } from '@/lib/labels';
-import { columnTickState } from '@/lib/sheet';
+import { columnTickState, type ColumnTickState } from '@/lib/sheet';
 import { churchParts, weekdayDatesOfMonth } from '@/lib/time';
 import { useT } from '@/lib/i18n';
 import { AttendanceStatus, GroupPosition, LEADERSHIP_POSITIONS, Weekday } from '@tog/shared';
@@ -517,17 +517,33 @@ function WeeklyAttendance({ group }: { group: GroupDetail }) {
     return map;
   }, [data]);
 
-  const presentCount = (memberId: string) => {
-    const inner = statusByMemberDate.get(memberId);
-    return weeks.filter((w) => inner?.get(w.date) === AttendanceStatus.Present).length;
-  };
+  /**
+   * Each week's all / none / some state and how many people were there —
+   * derived once for the whole card (rule G5) and read three times: by the
+   * column's check-all, by its confirmation, and by the totals row at the foot
+   * of the sheet. The sheet's own question is "how many came that week", which
+   * is why that number sits under its column rather than at the end of a row.
+   */
+  const weekStates = useMemo(() => {
+    const map = new Map<string, { state: ColumnTickState; present: number }>();
+    for (const w of weeks) {
+      const flags = (data?.rows ?? []).map(
+        (r) => statusByMemberDate.get(r.member.id)?.get(w.date) === AttendanceStatus.Present,
+      );
+      map.set(w.date, { state: columnTickState(flags), present: flags.filter(Boolean).length });
+    }
+    return map;
+  }, [weeks, data, statusByMemberDate]);
 
+  const totals = useMemo(
+    () => weeks.map((w) => ({ key: w.date, value: weekStates.get(w.date)?.present ?? 0 })),
+    [weeks, weekStates],
+  );
+
+  // Only one column is sortable now that the per-member tally is gone, so the
+  // getter no longer has to ask which key it was called for.
   const { sorted: sortedAttendanceRows, sortKey: attSortKey, sortDir: attSortDir, toggleSort: toggleAttSort } =
-    useSortableRows(
-      data?.rows ?? [],
-      (r, key) => (key === 'count' ? presentCount(r.member.id) : r.member.full_name),
-      { key: 'name', dir: 'asc' },
-    );
+    useSortableRows(data?.rows ?? [], (r) => r.member.full_name, { key: 'name', dir: 'asc' });
 
   /** The week's meeting row, created lazily the first time it is marked. */
   const meetingFor = async (dateStr: string) => {
@@ -554,14 +570,6 @@ function WeeklyAttendance({ group }: { group: GroupDetail }) {
     }
   };
 
-  /** Who is marked present on one week, and whether that is all / none / some. */
-  const weekState = (dateStr: string) => {
-    const flags = (data?.rows ?? []).map(
-      (r) => statusByMemberDate.get(r.member.id)?.get(dateStr) === AttendanceStatus.Present,
-    );
-    return { state: columnTickState(flags), present: flags.filter(Boolean).length };
-  };
-
   /**
    * 全员到齐 for one week's column.
    *
@@ -574,7 +582,8 @@ function WeeklyAttendance({ group }: { group: GroupDetail }) {
   const toggleWeek = async (dateStr: string, weekLabel: string) => {
     const roster = data?.rows ?? [];
     if (roster.length === 0) return;
-    const here = weekState(dateStr);
+    const here = weekStates.get(dateStr);
+    if (!here) return;
     const next = here.state !== 'all';
     if (!next) {
       const ok = await confirm({
@@ -603,16 +612,18 @@ function WeeklyAttendance({ group }: { group: GroupDetail }) {
     const headers = [
       t('members.col.member'),
       ...weeks.map((w) => `${t('group.week', { n: w.no })} (${t('group.dayOfMonth', { n: w.day })})`),
-      t('group.attended'),
     ];
-    const matrix = sortedAttendanceRows.map((r) => {
+    // Same shape as the screen: marks, then ONE totals row — how many people
+    // came each week, not how many weeks each person came.
+    const matrix: (string | number)[][] = sortedAttendanceRows.map((r) => {
       const inner = statusByMemberDate.get(r.member.id);
       const cells = weeks.map((w) => {
         const s = inner?.get(w.date);
         return s ? t(attendanceKey(s)) : '';
       });
-      return [r.member.full_name, ...cells, presentCount(r.member.id)];
+      return [r.member.full_name, ...cells];
     });
+    matrix.push([t('sheet.totalPeople'), ...totals.map((x) => x.value)]);
     exportMatrix(
       t('group.exportFile', { year, month: String(month).padStart(2, '0') }),
       t('group.attended'),
@@ -668,18 +679,18 @@ function WeeklyAttendance({ group }: { group: GroupDetail }) {
                     Hidden from a read-only account (rule G2). */}
                 {weeks.map((w) => {
                   const label = t('group.week', { n: w.no });
-                  const here = weekState(w.date);
+                  const here = weekStates.get(w.date);
                   return (
                     <th key={w.date} style={{ textAlign: 'center', whiteSpace: 'nowrap' }}>
                       {label}
                       <div className="faint" style={{ fontSize: 10.5, fontWeight: 400 }}>{t('group.dayOfMonth', { n: w.day })}</div>
                       {perms.write && (
                         <SheetTickAll
-                          state={here.state}
+                          state={here?.state ?? 'none'}
                           onToggle={() => toggleWeek(w.date, label)}
                           disabled={(data?.rows ?? []).length === 0}
                           title={t(
-                            here.state === 'all' ? 'sheet.tickAll.uncheck' : 'sheet.tickAll.check',
+                            here?.state === 'all' ? 'sheet.tickAll.uncheck' : 'sheet.tickAll.check',
                             { column: label },
                           )}
                         />
@@ -687,7 +698,6 @@ function WeeklyAttendance({ group }: { group: GroupDetail }) {
                     </th>
                   );
                 })}
-                <SortTh sortKey="count" activeKey={attSortKey} dir={attSortDir} onSort={toggleAttSort} align="center">{t('group.attended')}</SortTh>
               </tr>
             </thead>
             <tbody>
@@ -709,13 +719,13 @@ function WeeklyAttendance({ group }: { group: GroupDetail }) {
                         </td>
                       );
                     })}
-                    <td style={{ textAlign: 'center', fontWeight: 600 }}>
-                      {presentCount(r.member.id)}
-                    </td>
                   </tr>
                 );
               })}
             </tbody>
+            {/* How many people came each week, under that week's own column —
+                the same footer the other two sheets draw (rule G4). */}
+            <SheetTotals counts={totals} />
           </table>
         </div>
       )}

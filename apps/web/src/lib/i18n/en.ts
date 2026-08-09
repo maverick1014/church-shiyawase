@@ -258,6 +258,10 @@ export const en = {
   'sheet.tickAll.title': 'Clear this column',
   'sheet.tickAll.message': 'Untick {column} for everyone? {n} ticks already recorded will be deleted. This cannot be undone.',
   'sheet.tickAll.confirm': 'Clear column',
+  // The <tfoot> under every roll-call sheet: how many PEOPLE that occasion
+  // drew. Not "how many occasions this person came to" — a roll call is read
+  // down a column, not across a row.
+  'sheet.totalPeople': 'People present',
 
   /* ---- services: one roll-call sheet — Sundays + hand-added meetings ---- */
   'events.title': 'Services',
@@ -268,7 +272,6 @@ export const en = {
   'events.col.preService': 'Pre-service',
   'events.col.service': 'Service',
   'events.col.attended': 'Attended',
-  'events.col.total': 'Total',
   'events.exportTitle': 'Export the roll call',
   'events.exportFile': 'Roll call {year}-{month}',
   'events.new.title': 'Add meeting',
@@ -471,7 +474,6 @@ export const en = {
   'training.attendanceOf': 'Attended {attended} of {total} sessions',
   'training.exportTitle': 'Export attendance sheet',
   'training.exportFile': '{name} attendance sheet',
-  'training.exportSessionCount': 'Sessions attended',
 
   /* ---- discipleship ---------------------------------------------------- */
   'disc.title': 'Forty Days',
@@ -631,6 +633,15 @@ export const en = {
   'enroll.ambiguous': 'More than one member shares this name. Please contact the pastor to enrol you.',
   'enroll.closed': 'This training is not open for enrolment.',
   'enroll.err.name': 'Please enter your full name',
+  /* The as-you-type name check. Told here, before a receipt is attached and
+     the button pressed — and it names the person to ring, because "contact the
+     pastor" is not a next step when a PIC is running the thing. */
+  'enroll.check.checking': 'Checking your name…',
+  'enroll.check.ok': 'Found: {name}',
+  'enroll.check.noMember': 'We cannot find “{name}” in the member records — check the spelling, or ask to be added first.',
+  'enroll.check.ambiguous': 'More than one member is called “{name}”, so we cannot tell which one you are.',
+  'enroll.check.contact': 'Please contact {pic}.',
+  'enroll.check.contactPastor': 'Please contact the pastor.',
   'form.header': 'Forty-day one-to-one discipleship · daily entry',
   'form.doneTitle': 'Submitted — thank you for walking with them 🙏',
   'form.doneBody': '{name}\u2019s progress is recorded and the pastor can see it right away.',

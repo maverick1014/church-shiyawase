@@ -32,7 +32,12 @@ const pad = (n: number) => String(n).padStart(2, '0');
 export const SUNDAY_TICKS: readonly SheetTickName[] = ['pre_service', 'service'];
 export const MEETING_TICKS: readonly SheetTickName[] = ['attended'];
 
-/** Canonical order of the tick names, for the sheet's total columns. */
+/**
+ * Canonical order of the tick names. Nothing on the sheet is ordered by it any
+ * more — every column carries its own `ticks` — but it is the complete list of
+ * tick names, which is what the dictionary test walks to prove each one has a
+ * label in all three languages.
+ */
 export const TICK_ORDER: readonly SheetTickName[] = ['pre_service', 'service', 'attended'];
 
 export const sundayColumnKey = (date: string) => `sunday:${date}`;
@@ -107,16 +112,6 @@ export function sheetColumns(
   return entries
     .sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0))
     .map((e) => e.column);
-}
-
-/**
- * Which ticks this sheet actually holds, in canonical order — one total column
- * each. A month with no hand-added meeting has no 到场 total to draw.
- */
-export function sheetTicks(columns: readonly SheetColumn[]): SheetTickName[] {
-  const present = new Set<SheetTickName>();
-  for (const c of columns) for (const t of c.ticks) present.add(t);
-  return TICK_ORDER.filter((t) => present.has(t));
 }
 
 /**

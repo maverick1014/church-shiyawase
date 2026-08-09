@@ -699,6 +699,36 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
       const training = unwrap<PublicTraining>(
         await db.from('trainings').select(PUBLIC_TRAINING_SELECT).eq('id', r2).single(),
       );
+      // GET /trainings/enroll/:id/check?name=… — the SAME verdict the POST
+      // below would reach, without writing anything. The form calls it while
+      // the visitor types, so a name that will not match is said so on the spot
+      // instead of after the receipt has been attached and the button pressed.
+      //
+      // It answers with a status and, at most, the matched member's own name
+      // (which the visitor just typed) — never a list, never an id. That is
+      // strictly less than the POST already tells the same anonymous caller,
+      // so it opens nothing new.
+      if (r3 === 'check' && method === 'GET') {
+        const name = (q.get('name') ?? '').trim();
+        if (!training.is_enrollable) return json({ status: 'closed' });
+        if (!name) return json({ status: 'no_member' });
+        const matches = unwrap<Array<{ id: string; full_name: string }>>(
+          await db.from('members').select('id,full_name').eq('full_name', name),
+        );
+        if (matches.length === 0) return json({ status: 'no_member' });
+        if (matches.length > 1) return json({ status: 'ambiguous' });
+        const existing = unwrap<Array<{ id: string }>>(
+          await db
+            .from('training_enrollments')
+            .select('id')
+            .eq('training_id', r2)
+            .eq('member_id', matches[0].id),
+        );
+        return json({
+          status: existing.length > 0 ? 'already' : 'ok',
+          name: matches[0].full_name,
+        });
+      }
       if (method === 'GET') {
         // `kind`, the date/time/place and the payment block ride along so the
         // public page can read as an activity ("Saturday 12 Sept, 9am, the

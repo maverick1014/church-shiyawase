@@ -253,6 +253,7 @@ export const zh: Messages = {
   'sheet.tickAll.title': '清空这一列',
   'sheet.tickAll.message': '取消全部成员的{column}？已记录的 {n} 个勾选会被删除，此操作无法撤销。',
   'sheet.tickAll.confirm': '清空该列',
+  'sheet.totalPeople': '到场人数',
 
   /* ---- services: one roll-call sheet — Sundays + hand-added meetings ---- */
   'events.title': '崇拜与祷告会',
@@ -263,7 +264,6 @@ export const zh: Messages = {
   'events.col.preService': '会前',
   'events.col.service': '主日',
   'events.col.attended': '到场',
-  'events.col.total': '合计',
   'events.exportTitle': '导出点名表',
   'events.exportFile': '聚会点名 {year}-{month}',
   'events.new.title': '新增聚会',
@@ -461,7 +461,6 @@ export const zh: Messages = {
   'training.attendanceOf': '出席 {attended} / {total} 堂',
   'training.exportTitle': '导出出席名单',
   'training.exportFile': '{name} 出席名单',
-  'training.exportSessionCount': '出席堂数',
 
   /* ---- discipleship ---------------------------------------------------- */
   'disc.title': '四十天守望',
@@ -616,6 +615,14 @@ export const zh: Messages = {
   'enroll.ambiguous': '有多位成员同名，请联系牧者为你报名。',
   'enroll.closed': '此培训未开放报名。',
   'enroll.err.name': '请输入你的全名',
+  /* 边打边核对：在贴收据、按按钮之前就说清楚，并直接给出要联系的人 —— 有负责人时
+     「联系牧者」不是一个可行的下一步。 */
+  'enroll.check.checking': '正在核对姓名…',
+  'enroll.check.ok': '已找到：{name}',
+  'enroll.check.noMember': '成员名单中找不到「{name}」，请检查是否写错，或先请人把你加入名单。',
+  'enroll.check.ambiguous': '有多位成员都叫「{name}」，无法确认是哪一位。',
+  'enroll.check.contact': '请联系 {pic}。',
+  'enroll.check.contactPastor': '请联系牧者。',
   'form.header': '四十天一对一守望 · 每日填写',
   'form.doneTitle': '已提交，感谢你的守望 🙏',
   'form.doneBody': '{name} 的进度已记录，牧者可即时看到。',

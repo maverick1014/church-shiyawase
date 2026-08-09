@@ -66,6 +66,17 @@ export default function EnrollFormPage() {
   const [slip, setSlip] = useState<File | null>(null);
   const [saving, setSaving] = useState(false);
   const [result, setResult] = useState<{ status: EnrollStatus; name: string } | null>(null);
+  /**
+   * The name check, run while they type.
+   *
+   * The match is exact and against the church's own member list, so a visitor
+   * who mistypes — or whose name was never added — used to find that out only
+   * after attaching a receipt and pressing the button. This asks the same
+   * question the submit does, debounced, and the button waits for a 'ok'.
+   * `checking` is the in-flight state; `check` is the last verdict.
+   */
+  const [checking, setChecking] = useState(false);
+  const [check, setCheck] = useState<{ status: EnrollStatus; name?: string } | null>(null);
 
   useEffect(() => {
     setLoading(true);
@@ -82,6 +93,46 @@ export default function EnrollFormPage() {
   // A fee makes the receipt part of the sign-up, not an afterthought — the
   // server refuses an enrolment without one, so the button waits for it too.
   const paid = hasFee(training?.fee);
+
+  // 400ms after the typing stops, ask the server what this name would do.
+  // Every run cancels the one before it — both the timer and, through
+  // `alive`, a reply that arrives after the name has moved on, so a slow
+  // answer can never overwrite a newer one.
+  useEffect(() => {
+    const name = fullName.trim();
+    if (!name) {
+      setCheck(null);
+      setChecking(false);
+      return;
+    }
+    setChecking(true);
+    let alive = true;
+    const timer = setTimeout(() => {
+      api
+        .get<{ status: EnrollStatus; name?: string }>(
+          `/trainings/enroll/${id}/check?name=${encodeURIComponent(name)}`,
+        )
+        .then((r) => {
+          if (alive) setCheck(r);
+        })
+        .catch(() => {
+          // A failed check must not block a sign-up the server would accept:
+          // leave the verdict empty, which the button below treats as "not
+          // known yet" rather than "refused", and let the submit decide.
+          if (alive) setCheck(null);
+        })
+        .finally(() => {
+          if (alive) setChecking(false);
+        });
+    }, 400);
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+  }, [fullName, id]);
+
+  /** Who to ring when the name will not match — the PIC, with their number. */
+  const picLine = [training?.pic, training?.pic_contact].filter(Boolean).join(' · ');
 
   const submit = async () => {
     if (!fullName.trim()) return;
@@ -218,6 +269,40 @@ export default function EnrollFormPage() {
                         autoFocus
                       />
                     </Field>
+                    {/* The verdict, as they type. A name that will not match is
+                        said here — before the receipt is attached and the
+                        button pressed — and it names the person to ring rather
+                        than leaving them at a dead end. */}
+                    {checking && (
+                      <div className="faint" style={{ fontSize: 12, marginBottom: 10 }}>
+                        {t('enroll.check.checking')}
+                      </div>
+                    )}
+                    {!checking && check?.status === 'ok' && (
+                      <div style={{ fontSize: 12, marginBottom: 10, color: 'var(--good)', fontWeight: 600 }}>
+                        ✓ {t('enroll.check.ok', { name: check.name ?? fullName.trim() })}
+                      </div>
+                    )}
+                    {!checking && check && check.status !== 'ok' && (
+                      <div className="hint" style={{ marginBottom: 10 }}>
+                        ⚠️{' '}
+                        {t(
+                          check.status === 'ambiguous'
+                            ? 'enroll.check.ambiguous'
+                            : check.status === 'already'
+                              ? 'enroll.already'
+                              : 'enroll.check.noMember',
+                          { name: check.name ?? fullName.trim() },
+                        )}
+                        {check.status !== 'already' && (
+                          <div style={{ marginTop: 6 }}>
+                            {picLine
+                              ? t('enroll.check.contact', { pic: picLine })
+                              : t('enroll.check.contactPastor')}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
 
                   {paid && (
@@ -241,10 +326,21 @@ export default function EnrollFormPage() {
 
                   {error && <div className="error-banner" style={{ marginBottom: 12 }}>⚠️ {error}</div>}
                   <div className="hint" style={{ marginBottom: 14 }}>{t('enroll.hint')}</div>
+                  {/* The name has to pass before this can be pressed. A check
+                      that could not RUN (`check` still null — the request
+                      failed) is not a refusal: the submit itself decides then,
+                      so a network hiccup can never lock somebody out of a
+                      sign-up the server would have accepted. */}
                   <button
                     className="btn accent block"
                     onClick={submit}
-                    disabled={saving || !fullName.trim() || (paid && !slip)}
+                    disabled={
+                      saving ||
+                      !fullName.trim() ||
+                      (paid && !slip) ||
+                      checking ||
+                      (!!check && check.status !== 'ok')
+                    }
                   >
                     {saving ? t('enroll.submitting') : t('enroll.submit')}
                   </button>

@@ -4,7 +4,6 @@ import {
   MEETING_TICKS,
   parseColumnKey,
   sheetColumns,
-  sheetTicks,
   SUNDAY_TICKS,
 } from '../sheet';
 import type { SheetMeeting } from '../types';
@@ -100,21 +99,6 @@ describe('sheetColumns', () => {
       '2026-02-15',
       '2026-02-22',
     ]);
-  });
-});
-
-describe('sheetTicks', () => {
-  it('is the two Sunday ticks when the month has no hand-added meeting', () => {
-    expect(sheetTicks(sheetColumns(2026, 8, []))).toEqual(['pre_service', 'service']);
-  });
-
-  it('adds the meeting tick, in canonical order, once one exists', () => {
-    const cols = sheetColumns(2026, 8, [meeting({ starts_at: '2026-08-31T12:00:00Z' })]);
-    expect(sheetTicks(cols)).toEqual(['pre_service', 'service', 'attended']);
-  });
-
-  it('is empty for an empty sheet', () => {
-    expect(sheetTicks([])).toEqual([]);
   });
 });
 

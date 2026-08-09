@@ -114,7 +114,15 @@ was already a list. Filling a column asks nothing; clearing one throws records
 away and so goes through `useConfirm({ danger: true })` naming how many ticks
 go. The header's three states (`columnTickState` in `lib/sheet.ts`) are drawn
 by the shared `SheetTickAll`, an indeterminate checkbox — "some" is shown
-honestly, never rounded to on or off. Which columns a month has, and in what order, is a pure function in
+honestly, never rounded to on or off. **A roll call totals DOWN a column, not
+across a row**: what a church asks of a sheet is how many people came to that
+occasion, never how many occasions one person came to, so every namelist in the
+app (崇拜与祷告会, a life group's own meetings, a 培训&活动 namelist) ends in a
+shared `SheetTotals` `<tfoot>` — one headcount under each column — and none of
+them has a trailing per-person tally column any more. The number is the one
+`columnTickState` already counted for the check-all, not a second walk over the
+rows, and the exports carry the same change: no per-person columns, one totals
+row at the bottom of the matrix. Which columns a month has, and in what order, is a pure function in
 `lib/sheet.ts` (unit-tested under a non-Malaysia `TZ`). On 全部堂会 the sheet
 simply lists **every** member — the old "pick a congregation" 400 is gone —
 while a tick is still filed under the member's **own** hall, so what was
@@ -141,7 +149,8 @@ Testing layers (in `apps/web`):
   培训&活动 catalog listing both shapes with no filter, plus an
   activity's single-column roll call and its time/place, a paid 培训's fee
   block and the receipt link beside Approve (with a free one proving the same
-  fields are absent), a column check-all on both sheets, a
+  fields are absent), a column check-all on both sheets, the roll-call sheet's
+  per-occasion totals `<tfoot>` (and the absence of a per-person total column), a
   member combobox typed→filtered→picked, an interface-language round-trip, the
   absence of the 守望模块 manager in the UI *and* on the server, an add-on
   module off→on cycle on 教会设置, a theme preset picked there and the sidebar
@@ -251,8 +260,10 @@ like 移除/清空/重置 that discards data) MUST go through the shared
 ### G4 — One mechanism, not per-page reimplementations (altitude)
 Reuse the shared primitives instead of re-rolling them per page:
 `Modal`, `Field`, `PasswordInput`, `useConfirm`, `useToast`, `RoleBadge`,
-`Avatar`, `PairProgressModal`, `MonthPicker`/`SheetTick`/`SheetTickAll` (the
-pieces the 聚会 and 小组 attendance sheets share), `Segmented` (every segmented
+`Avatar`, `PairProgressModal`, `MonthPicker`/`SheetTick`/`SheetTickAll`/
+`SheetTotals` (the pieces the 聚会, 小组 and 培训&活动 namelists share — the
+totals `<tfoot>` in particular is written once, so its label, its numbers and
+the rule above them cannot drift between three sheets), `Segmented` (every segmented
 control), `Combobox` (**every** picker whose options are members — a native
 `<select>` is a system wheel with no search on a phone, and the member list only
 grows; its matching rules are `lib/combobox.ts`),

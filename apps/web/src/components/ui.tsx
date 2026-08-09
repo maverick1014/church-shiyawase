@@ -1213,6 +1213,45 @@ export function SheetTickAll({
   );
 }
 
+/**
+ * The totals row at the FOOT of a roll-call sheet: for each occasion, how many
+ * PEOPLE were there.
+ *
+ * A roll call answers "how many came on that Sunday", not "how many Sundays did
+ * this person come to" — the number belongs under its own column, so it is a
+ * `<tfoot>` and not a trailing column. All three sheets (崇拜与祷告会, a life
+ * group's own meetings, a 培训&活动 namelist) draw it from here rather than
+ * writing their own, so the label, the number formatting and the summary rule
+ * above it are decided in ONE place (rule G4).
+ *
+ * `span` is how many leading cells the sheet has before its first tick column —
+ * one for the two attendance sheets (the name), two for the namelist (name +
+ * role). The caller passes counts it has ALREADY derived for the column
+ * headers' check-all state, never a second walk over the rows (rule G5).
+ *
+ * A sheet with nobody on it renders no table at all, so there is no footer to
+ * draw either; the callers keep it that way.
+ */
+export function SheetTotals({
+  span = 1,
+  counts,
+}: {
+  span?: number;
+  counts: { key: string; value: number }[];
+}) {
+  const t = useT();
+  return (
+    <tfoot>
+      <tr>
+        <th scope="row" colSpan={span}>{t('sheet.totalPeople')}</th>
+        {counts.map((c) => (
+          <td key={c.key}>{c.value}</td>
+        ))}
+      </tr>
+    </tfoot>
+  );
+}
+
 /* -------------------------------------------------------------------------
  * Sortable table header cell
  * ---------------------------------------------------------------------- */

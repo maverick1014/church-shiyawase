@@ -549,6 +549,27 @@ tbody tr:last-child td {
   min-width: 96px;
   white-space: nowrap;
 }
+/* The totals row at the FOOT of a roll-call sheet (`SheetTotals`): for each
+   occasion, how many people were there. It is a summary of the rows above it,
+   not another row of them, so it is ruled off with a heavier line and carries
+   no bottom border of its own — the card's edge is already there. Tabular
+   figures so the numbers line up under their own tick columns, exactly like
+   `.tnum` everywhere else. */
+.sheet-table tfoot th,
+.sheet-table tfoot td {
+  border-top: 2px solid var(--border);
+  border-bottom: none;
+  font-weight: 600;
+  font-size: 12.5px;
+  color: var(--ink);
+  text-align: center;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.sheet-table tfoot th:first-child {
+  text-align: left;
+  color: var(--muted);
+}
 th.sortable {
   cursor: pointer;
   user-select: none;

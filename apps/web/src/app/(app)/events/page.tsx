@@ -14,6 +14,7 @@ import {
   PageBar,
   SheetTick,
   SheetTickAll,
+  SheetTotals,
   SkeletonScreen,
   SkeletonTable,
   useConfirm,
@@ -29,7 +30,7 @@ import {
   SheetMeeting,
   SheetTickName,
 } from '@/lib/types';
-import { columnTickState, sheetTicks, type ColumnTickState } from '@/lib/sheet';
+import { columnTickState, type ColumnTickState } from '@/lib/sheet';
 import { sheetTickKey } from '@/lib/labels';
 import { churchParts, fromChurchInput, toChurchInput } from '@/lib/time';
 import { useT } from '@/lib/i18n';
@@ -73,13 +74,6 @@ export default function EventsPage() {
   const sheet = useFetch<RollCallSheet>(`/attendance/sheet?year=${year}&month=${month}`);
   const columns = sheet.data?.columns ?? [];
   const rows = sheet.data?.rows ?? [];
-  // One total column per tick the sheet actually holds — a month with no
-  // hand-added meeting has no 到场 column to total.
-  const ticks = useMemo(() => sheetTicks(columns), [columns]);
-
-  /** How many of the sheet's columns this member carries a given tick on. */
-  const countOf = (row: RollCallSheetRow, tick: SheetTickName) =>
-    columns.filter((c) => c.ticks.includes(tick) && row.cells[c.key]?.[tick]).length;
 
   const toggle = async (row: RollCallSheetRow, column: SheetColumn, tick: SheetTickName) => {
     const current = row.cells[column.key] ?? {};
@@ -111,8 +105,9 @@ export default function EventsPage() {
   /**
    * Every sub-column's all / none / some state, and how many ticks it holds —
    * derived once per sheet rather than per header cell (rule G5). The count is
-   * what the untick confirmation quotes: a warning has to name the records it
-   * is about to throw away, not describe them.
+   * what the untick confirmation quotes (a warning has to name the records it
+   * is about to throw away) AND what the totals row at the foot of the sheet
+   * shows: both are the same question — how many people were there.
    */
   const columnStates = useMemo(() => {
     const map = new Map<string, { state: ColumnTickState; ticked: number }>();
@@ -127,6 +122,24 @@ export default function EventsPage() {
     }
     return map;
   }, [columns, rows]);
+
+  /**
+   * The foot of the sheet: one number per sub-column — how many PEOPLE carry
+   * that tick. A roll call answers "how many came that Sunday", not "how many
+   * Sundays did this person come to", so the number belongs under its own
+   * column rather than at the end of a row. Read straight off `columnStates`,
+   * which already counted them for the check-all (rule G5).
+   */
+  const totals = useMemo(
+    () =>
+      columns.flatMap((c) =>
+        c.ticks.map((tick) => ({
+          key: `${c.key}|${tick}`,
+          value: columnStates.get(`${c.key}|${tick}`)?.ticked ?? 0,
+        })),
+      ),
+    [columns, columnStates],
+  );
 
   /**
    * 全员到齐 — fill (or clear) one whole sub-column.
@@ -188,13 +201,14 @@ export default function EventsPage() {
       ...columns.flatMap((c) =>
         c.ticks.map((tick) => `${columnLabel(c)} ${t(sheetTickKey(tick))}`),
       ),
-      ...ticks.map((tick) => `${t('events.col.total')} ${t(sheetTickKey(tick))}`),
     ];
-    const matrix = rows.map((r) => [
+    // The exported sheet reads like the screen: ticks, then ONE totals row at
+    // the bottom — the headcount per occasion, not a per-person tally.
+    const matrix: (string | number)[][] = rows.map((r) => [
       r.member.full_name,
       ...columns.flatMap((c) => c.ticks.map((tick) => (r.cells[c.key]?.[tick] ? '✓' : ''))),
-      ...ticks.map((tick) => countOf(r, tick)),
     ]);
+    matrix.push([t('sheet.totalPeople'), ...totals.map((x) => x.value)]);
     exportMatrix(
       t('events.exportFile', { year, month: String(month).padStart(2, '0') }),
       t('events.sheet'),
@@ -299,7 +313,6 @@ export default function EventsPage() {
                       </th>
                     );
                   })}
-                  <th colSpan={ticks.length} style={{ textAlign: 'center' }}>{t('events.col.total')}</th>
                 </tr>
                 <tr>
                   {/* Under the date, each sub-column carries its own check-all
@@ -329,9 +342,6 @@ export default function EventsPage() {
                       })}
                     </Fragment>
                   ))}
-                  {ticks.map((tick) => (
-                    <th key={tick} style={{ textAlign: 'center' }}>{t(sheetTickKey(tick))}</th>
-                  ))}
                 </tr>
               </thead>
               <tbody>
@@ -352,14 +362,12 @@ export default function EventsPage() {
                         ))}
                       </Fragment>
                     ))}
-                    {ticks.map((tick) => (
-                      <td key={tick} className="tnum" style={{ textAlign: 'center', fontWeight: 600 }}>
-                        {countOf(r, tick)}
-                      </td>
-                    ))}
                   </tr>
                 ))}
               </tbody>
+              {/* How many people each occasion drew, under its own column —
+                  the shared footer all three sheets use (rule G4). */}
+              <SheetTotals counts={totals} />
             </table>
           </div>
         )}

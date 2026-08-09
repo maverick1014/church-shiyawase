@@ -181,6 +181,23 @@ async function main() {
     ok('public enroll info (no auth) → 200', pubInfo.status === 200 && pubInfo.json?.is_enrollable === true, `status ${pubInfo.status}`);
     const badEnroll = await req('POST', `/api/trainings/enroll/${trId}`, { body: { full_name: `查无此人-${Date.now()}` } });
     ok('public enroll unknown name → no_member', badEnroll.json?.status === 'no_member', JSON.stringify(badEnroll.json));
+    // The form's as-you-type check reaches the SAME verdict without writing
+    // anything, and hands back nothing but a status and the name that was
+    // typed — no id, no list, no member row.
+    const badCheck = await req('GET', `/api/trainings/enroll/${trId}/check?name=${encodeURIComponent(`查无此人-${Date.now()}`)}`);
+    ok('public name check, unknown name → no_member',
+      badCheck.status === 200 && badCheck.json?.status === 'no_member', JSON.stringify(badCheck.json));
+    const emptyCheck = await req('GET', `/api/trainings/enroll/${trId}/check?name=`);
+    ok('public name check, no name → no_member', emptyCheck.json?.status === 'no_member', JSON.stringify(emptyCheck.json));
+    if (members?.length) {
+      const who = members[members.length - 1].full_name;
+      const goodCheck = await req('GET', `/api/trainings/enroll/${trId}/check?name=${encodeURIComponent(who)}`);
+      ok('public name check, a real member → a verdict the submit would give',
+        ['ok', 'already', 'ambiguous'].includes(goodCheck.json?.status), JSON.stringify(goodCheck.json));
+      ok('…and it leaks nothing but the status and that name',
+        Object.keys(goodCheck.json ?? {}).sort().join(',') === 'name,status',
+        Object.keys(goodCheck.json ?? {}).join(','));
+    }
     if (members?.length) {
       const matchEnroll = await req('POST', `/api/trainings/enroll/${trId}`, { body: { full_name: members[members.length - 1].full_name } });
       ok('public enroll matched name → ok/already/ambiguous', ['ok', 'already', 'ambiguous'].includes(matchEnroll.json?.status), JSON.stringify(matchEnroll.json));
