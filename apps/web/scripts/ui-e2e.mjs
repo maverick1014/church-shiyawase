@@ -925,7 +925,12 @@ async function main() {
       // The same editor `/members/[id]` uses (extracted to
       // `components/MemberEditModal.tsx`, rule G4) — not a second, roster-only
       // copy of the form.
-      const rosterRow = page.locator('table tr', { hasText: fxGroup.member.name }).first();
+      // Scoped to the table that carries the Remove button — the group
+      // detail page has TWO tables containing this member's name (the
+      // attendance sheet above, and the roster below), and an unscoped
+      // `table tr` locator grabs whichever comes first in the DOM (the
+      // attendance sheet), whose row has no Edit/Remove buttons at all.
+      const rosterRow = page.locator('table:has(button:has-text("Remove")) tr', { hasText: fxGroup.member.name }).first();
       await rosterRow.locator('button:has-text("Edit")').click();
       await page.locator('.modal').waitFor({ timeout: 8000 });
       check('the roster row’s Edit button opens the shared member-edit modal',
