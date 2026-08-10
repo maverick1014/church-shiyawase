@@ -165,6 +165,23 @@ async function main() {
   const page = await ctx.newPage();
   page.setDefaultTimeout(15000);
   const w = (ms) => page.waitForTimeout(ms);
+  /**
+   * Poll an async predicate instead of sleeping a fixed time then reading
+   * once — a click that triggers a server round-trip settles in variable
+   * time on a live network, and a fixed sleep either wastes time or (under
+   * load) loses the race. Returns the last result once `ok` accepts it, or
+   * once it does not within `timeoutMs`.
+   */
+  const pollUntil = async (fn, ok, timeoutMs = 8000, stepMs = 300) => {
+    const deadline = Date.now() + timeoutMs;
+    let last;
+    do {
+      last = await fn();
+      if (ok(last)) return last;
+      await w(stepMs);
+    } while (Date.now() < deadline);
+    return last;
+  };
   const shot = (n) => (SHOTS ? page.screenshot({ path: `${SHOTS}/ui-${n}.png`, fullPage: true }) : Promise.resolve());
   const mod = (m) => { currentModule = m; console.log(`▸ ${m}`); };
 
@@ -831,19 +848,30 @@ async function main() {
       // click, not check(): the tick is optimistic and the row re-renders from
       // the server, so the checkbox's own state is not the fact worth
       // asserting — what the API returns is.
-      await weekTick.click();
-      await w(1500);
-      const groupSheet = await apiGet(`/groups/${fxGroup.id}/attendance`);
-      const marked = (groupSheet.rows || [])
+      const markedFor = (sheet) => (sheet.rows || [])
         .find((r) => r.member?.id === fxGroup.member.id)?.cells
         ?.some((c) => c.status === 'present');
+      // The click handler reads the row's CURRENT `present` prop from its own
+      // closure to decide which way to toggle — clicking again before that
+      // prop has actually re-rendered as true sends a second TICK, not an
+      // untick. Confirming against the server (the poll below) is not the
+      // same event as the checkbox's own re-render, so wait for the DOM
+      // element itself between the two clicks, not only the API.
+      await weekTick.click();
+      await page.waitForFunction((el) => el.checked === true, await weekTick.elementHandle(), { timeout: 8000 }).catch(() => {});
+      const groupSheet = await pollUntil(
+        () => apiGet(`/groups/${fxGroup.id}/attendance`),
+        (sheet) => markedFor(sheet) === true,
+      );
+      const marked = markedFor(groupSheet);
       check('ticking a week records the group’s own meeting', marked === true, JSON.stringify(groupSheet.meetings || []));
       await weekTick.click();
-      await w(1500);
-      const groupAfter = await apiGet(`/groups/${fxGroup.id}/attendance`);
-      const stillMarked = (groupAfter.rows || [])
-        .find((r) => r.member?.id === fxGroup.member.id)?.cells
-        ?.some((c) => c.status === 'present');
+      await page.waitForFunction((el) => el.checked === false, await weekTick.elementHandle(), { timeout: 8000 }).catch(() => {});
+      const groupAfter = await pollUntil(
+        () => apiGet(`/groups/${fxGroup.id}/attendance`),
+        (sheet) => markedFor(sheet) !== true,
+      );
+      const stillMarked = markedFor(groupAfter);
       check('unticking it takes the mark off again', stillMarked !== true);
 
       /* -- the column check-all (全员到齐) ------------------------------- */
@@ -862,15 +890,31 @@ async function main() {
       const sundayAllsHere = await sheetCard.locator('thead input.sheet-tick-all[aria-label*="Pre-service"]').count();
       check('each Sunday’s ticks carry their own check-all here too',
         sundayAllsHere >= 4, `${sundayAllsHere} 会前 check-alls`);
+      // The DOM checkbox is a client re-render after its OWN fetch, which is
+      // not the same event as the out-of-band apiGet polls above — waiting
+      // on the server's answer does not guarantee the page has painted it
+      // yet, so each DOM read below waits on the element itself first.
+      const waitBoxState = (locator, wantChecked) =>
+        page.waitForFunction(
+          (el, want) => (want ? el.checked === true : el.checked === false && !el.indeterminate),
+          locator,
+          wantChecked,
+          { timeout: 8000 },
+        ).catch(() => {});
+
       const firstAll = weekAll.first();
+      await waitBoxState(await firstAll.elementHandle(), false);
       check('…which reads as empty while nobody is ticked',
         !(await firstAll.isChecked()) && (await firstAll.evaluate((el) => el.indeterminate)) === false);
 
       await firstAll.click();
-      await w(1800);
+      await waitBoxState(await firstAll.elementHandle(), true);
       check('filling a whole column needs no confirmation — nothing is lost',
         (await page.locator('.modal-backdrop').count()) === 0);
-      const filled = await apiGet(`/groups/${fxGroup.id}/attendance`);
+      const filled = await pollUntil(
+        () => apiGet(`/groups/${fxGroup.id}/attendance`),
+        (sheet) => (sheet.rows || []).length > 0 && presentIn(sheet) === (sheet.rows || []).length,
+      );
       check('the header check-all marks the whole roster',
         presentIn(filled) === (filled.rows || []).length && (filled.rows || []).length > 0,
         `${presentIn(filled)} of ${(filled.rows || []).length}`);
@@ -885,8 +929,10 @@ async function main() {
         /\d{2}-\d{2}.*Group/.test(clearCopy) && /cannot be undone/i.test(clearCopy),
         clearCopy.replace(/\s+/g, ' ').slice(0, 140));
       await page.locator('.modal-backdrop').last().locator('button:has-text("Clear column")').last().click();
-      await w(1800);
-      const emptied = await apiGet(`/groups/${fxGroup.id}/attendance`);
+      const emptied = await pollUntil(
+        () => apiGet(`/groups/${fxGroup.id}/attendance`),
+        (sheet) => presentIn(sheet) === 0,
+      );
       check('confirming clears every mark in that column', presentIn(emptied) === 0,
         `${presentIn(emptied)} still present`);
 
@@ -938,8 +984,8 @@ async function main() {
       const rosterPhoneInput = page.locator('.modal input[placeholder="012-000 0000"]');
       await rosterPhoneInput.fill('012-000 1111');
       await page.locator('.modal button:has-text("Save")').first().click();
-      await w(1200);
-      check('saving it closes the modal', (await page.locator('.modal').count()) === 0);
+      const rosterModalClosed = await page.locator('.modal').first().waitFor({ state: 'detached', timeout: 8000 }).then(() => true).catch(() => false);
+      check('saving it closes the modal', rosterModalClosed);
       const rosterMemberAfter = await apiGet(`/members/${fxGroup.member.id}`);
       check('…and the edit reached the server (the roster reloads, not just the modal)',
         rosterMemberAfter.phone === '012-000 1111', String(rosterMemberAfter.phone));
@@ -1132,7 +1178,11 @@ async function main() {
       // One person ticked out of the whole sheet is the in-between state, and
       // it has to be reported honestly rather than rounded to on or off.
       await meetingTick.first().click();
-      await w(1500);
+      await page.waitForFunction(
+        (el) => el.indeterminate || el.checked,
+        await meetingAll.elementHandle(),
+        { timeout: 8000 },
+      ).catch(() => {});
       check('one member ticked shows the header as indeterminate, not as checked',
         (await meetingAll.evaluate((el) => el.indeterminate)) === true &&
           !(await meetingAll.isChecked()));
@@ -1293,6 +1343,9 @@ async function main() {
       await page.locator('text=Attendance sheet').first().waitFor({ timeout: 20000 });
       check('an activity has no session list to manage',
         (await page.locator('.card-head h3:has-text("Sessions")').count()) === 0);
+      // The card heading above renders before the sheet's own fetch settles —
+      // wait for the header cell itself, not just its card, or this races.
+      await page.locator('th:has-text("Came")').first().waitFor({ timeout: 15000 }).catch(() => {});
       check('its roll call is one “Came” column',
         (await page.locator('th:has-text("Came")').count()) === 1);
       check('the person who signed up is on the roll call',
@@ -1433,23 +1486,27 @@ async function main() {
       check('the public sign-up page states the fee and how to pay it',
         /RM\s*30\.00/.test(publicBody) && /ZZ_UITEST Maybank/.test(publicBody),
         publicBody.replace(/\s+/g, ' ').slice(0, 200));
+      // This public page has no session, so it renders in the DEFAULT
+      // language (rule G8) — zh, not en — so the check has to read either.
       check('…with a line telling people to pay first and upload the receipt',
-        /pay the fee first/i.test(publicBody) && /before approving/i.test(publicBody),
+        (/pay the fee first/i.test(publicBody) && /before approving/i.test(publicBody)) ||
+          (publicBody.includes('请先完成付款') && publicBody.includes('先核对凭证才通过')),
         publicBody.replace(/\s+/g, ' ').slice(0, 240));
       check('…and a receipt field that takes a photo or a PDF',
         (await page.locator('input[type=file]').first().getAttribute('accept'))?.includes('pdf') === true);
       // The button waits for the receipt: a name alone is not a paid sign-up.
       await page.locator('input[placeholder]').first().fill('ZZ_UITEST nobody');
       await w(300);
+      // Public page, no session → default language (zh), not en (rule G8).
       check('the submit button stays disabled until a receipt is attached',
-        await page.locator('button:has-text("Submit enrolment")').first().isDisabled());
+        await page.locator('button:has-text("提交报名")').first().isDisabled());
 
       // …and a FREE one asks for none of it, which is the other half.
       await page.goto(`${BASE}/enroll/${fxTrainingFree.id}`, { waitUntil: 'domcontentloaded' });
       await page.locator('input[placeholder]').first().waitFor({ timeout: 20000 });
       const freeBody = await page.locator('.card').first().innerText();
       check('a free sign-up page shows no fee block and asks for no receipt',
-        !/Sign-up fee/i.test(freeBody) && (await page.locator('input[type=file]').count()) === 0,
+        !/Sign-up fee/i.test(freeBody) && !freeBody.includes('报名费') && (await page.locator('input[type=file]').count()) === 0,
         freeBody.replace(/\s+/g, ' ').slice(0, 160));
       await shot('06d-public-paid');
     } finally {
@@ -1491,14 +1548,16 @@ async function main() {
         await anonPage.goto(`${BASE}/join`, { waitUntil: 'domcontentloaded' });
         await anonPage.locator('input').first().waitFor({ timeout: 20000 });
         const joinBody = await anonPage.locator('body').innerText();
+        // No session → default language (zh), not en (rule G8).
         check('the registration link opens with no session at all',
-          /Register as a member/i.test(joinBody) && (await anonPage.locator('.sidebar').count()) === 0,
+          (/Register as a member/i.test(joinBody) || joinBody.includes('注册成为会友')) &&
+            (await anonPage.locator('.sidebar').count()) === 0,
           joinBody.replace(/\s+/g, ' ').slice(0, 140));
         check('…and takes a photo from the camera OR the gallery, never forcing one',
           (await anonPage.locator('input[type=file][accept*="image"]').count()) === 1 &&
             (await anonPage.locator('input[type=file][capture]').count()) === 0);
         check('…and says it will update rather than duplicate somebody already on the roll',
-          /updates your details/i.test(joinBody));
+          /updates your details/i.test(joinBody) || joinBody.includes('只会更新资料'));
       } finally {
         await anon.close();
       }
@@ -1532,9 +1591,13 @@ async function main() {
       // `.only-desktop`, hidden at this suite's phone viewport, so the check
       // reads textContent (DOM-only) rather than innerText (visibility-aware).
       const theadThs = page.locator('.only-desktop table thead th');
+      // Sortable columns (SortTh) append a caret to whichever is the active
+      // sort key, so an exact 'Trainee' match breaks the moment sorting
+      // lands on that column — hence startsWith rather than equality.
       const headerTexts = (await theadThs.allTextContents()).map((s) => s.trim());
       check('the pastor-overview table splits mentor and trainee into separate columns',
-        headerTexts.includes('Trainee') && headerTexts.includes('Mentor'), JSON.stringify(headerTexts));
+        headerTexts.some((h) => h.startsWith('Trainee')) && headerTexts.some((h) => h.startsWith('Mentor')),
+        JSON.stringify(headerTexts));
       check('…and a Remark column sits immediately before the actions column',
         headerTexts.length >= 2 && headerTexts[headerTexts.length - 2] === 'Remark', JSON.stringify(headerTexts));
       const remarkCell = page.locator('.only-desktop table tbody tr', { has: page.locator(`text=${fxPair.traineeName}`) })
@@ -1609,6 +1672,9 @@ async function main() {
       // MEMBER's own detail page now, not a bare "Mentor"/"Trainee" badge.
       await page.goto(`${BASE}/members/${fxPair.traineeId}`, { waitUntil: 'domcontentloaded' });
       await page.locator('.content:has-text("Forty Days")').first().waitFor({ timeout: 15000 });
+      // The "Forty Days" section heading renders before its own pairs fetch
+      // settles — wait for the actual sentence, not just the card around it.
+      await page.locator(`.content:has-text("Led by ${fxPair.mentorName}")`).first().waitFor({ timeout: 10000 }).catch(() => {});
       const traineePageBody = await page.locator('.content').innerText();
       check('the trainee’s own page reads the pair as "Led by <mentor>"',
         traineePageBody.includes(`Led by ${fxPair.mentorName}`) &&
@@ -1733,13 +1799,17 @@ async function main() {
       await page.locator('.combo-list .combo-option').first().click();
       await w(300);
       await page.locator('button:visible:has-text("Add member")').first().click();
-      await w(1200);
-      check('adding a roster member via the Combobox shows them on the roster',
-        (await page.locator(`table td:has-text("${fxHappyMember.name}")`).count()) > 0);
+      // The attendance table below (including its week columns) only renders
+      // once the roster is non-empty, so this add has to actually land before
+      // either check below — a fixed sleep here silently broke both.
+      const rosterAdded = await page.locator(`table td:has-text("${fxHappyMember.name}")`).first()
+        .waitFor({ timeout: 10000 }).then(() => true).catch(() => false);
+      check('adding a roster member via the Combobox shows them on the roster', rosterAdded);
 
       // The sheet's columns are WEEK NUMBERS, never dates — the one roll call
       // in the app that isn't date-based.
       const weekHeads = page.locator('table.sheet-table thead th', { hasText: 'Week' });
+      await weekHeads.first().waitFor({ timeout: 10000 }).catch(() => {});
       check('the attendance sheet has a column per week (Week N), never a calendar date',
         (await weekHeads.count()) === 8, `${await weekHeads.count()} week column(s)`);
 
@@ -2049,6 +2119,11 @@ async function main() {
 
       // The same on/off cycle, for 幸福小组 — a second, independent module
       // switch that must not disturb 守望's own state (asserted above).
+      // The Forty Days cycle above ends on /discipleship (to prove the page
+      // itself comes back), so this needs its own trip back to /church —
+      // without it, every check below is asking a page that was never the
+      // catalog for a row that was therefore never going to appear.
+      await page.goto(`${BASE}/church`, { waitUntil: 'domcontentloaded' });
       await catalogRow('Happiness Groups').locator('.switch').first()
         .waitFor({ timeout: 20000 }).catch(() => {});
       check('the catalog lists the Happiness Groups add-on with a switch',
@@ -2482,6 +2557,9 @@ async function main() {
       await page.locator(`.mtile:has-text("${testName}")`).first().click();
       await page.waitForURL(/\/members\/[0-9a-f-]+/, { timeout: 15000 });
       createdMemberId = page.url().match(/\/members\/([0-9a-f-]+)/)?.[1] ?? null;
+      // waitForURL only proves the navigation happened, not that this page's
+      // own fetch has landed — wait for a fact to actually appear.
+      await page.locator('.fact .badge').first().waitFor({ timeout: 15000 }).catch(() => {});
       // The server's answer, not the form's state: this is what proves the
       // ministry survived a save that never saw an Enter key.
       check('the member’s profile shows the ministry as a badge',
