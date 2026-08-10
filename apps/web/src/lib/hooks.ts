@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from './api';
 import { useHallScope, withHallParam } from './hall';
 
@@ -14,17 +14,34 @@ export function useFetch<T>(path: string | null) {
   const { hallId } = useHallScope();
   const scopedPath = path === null ? null : withHallParam(path, hallId);
 
+  // A write handler calls reload() right after its own POST/PUT resolves —
+  // two reloads can be in flight together (a stray one from a hall switch,
+  // a tick-all's own re-fetch racing an earlier tick's), and network jitter
+  // does not guarantee they land in the order they were sent. Applying
+  // whichever response arrives last, unconditionally, occasionally means
+  // applying the STALE one — a just-confirmed write reads as if it never
+  // happened. The epoch is what makes only the latest request's response
+  // ever reach state, whichever order they actually resolve in.
+  const epoch = useRef(0);
   const reload = useCallback(() => {
     if (!scopedPath) return;
+    const mine = ++epoch.current;
     setLoading(true);
     api
       .get<T>(scopedPath)
       .then((d) => {
+        if (mine !== epoch.current) return;
         setData(d);
         setError(null);
       })
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
+      .catch((e) => {
+        if (mine !== epoch.current) return;
+        setError(e.message);
+      })
+      .finally(() => {
+        if (mine !== epoch.current) return;
+        setLoading(false);
+      });
   }, [scopedPath]);
 
   useEffect(() => {
