@@ -72,10 +72,6 @@
      they always line up. See UI rule in CLAUDE.md. */
   --control-h: 40px;
   --control-h-sm: 32px;
-  /* Measured height of a roll-call sheet's first header row (the date/colSpan
-     row) — same on phone and desktop, since .sheet-table cell padding isn't
-     responsive. The second header row's own sticky offset stacks on this. */
-  --sheet-head-row1-h: 40px;
   /* Tint of a loading skeleton — the same neutral family as the borders and
      the secondary surface, so a page of skeletons still reads as this app. */
   --skeleton: var(--accent-soft);
@@ -649,24 +645,36 @@ tbody tr:last-child td {
    child sticks relative to a box that never moves and just scrolls away
    with the page. Giving the wrapper a real `max-height` turns it into a
    genuine scroll container, which is what a sticky child needs.
-   `--sheet-head-row1-h` is the FIRST header row's own measured height
-   (dates, colSpan="3"); the second header row (小组/会前/主日) stacks its
-   sticky offset on top of it. Every sticky cell needs its own opaque
-   background or the rows scrolling underneath show straight through it. */
+   The sticky element is `<thead>` ITSELF, not each `<th>` with a hand-typed
+   `top` offset — this table's first header row is one line of dates on the
+   life-group sheet but a button-plus-date on the services sheet (a hand-added
+   meeting's own name, edited from its column header), so its real height
+   isn't one constant across pages. A per-row offset guessed from the shorter
+   page overlapped the taller one's row 2 onto the bottom of row 1, and the
+   part of row 1 hidden under that overlap silently ate the click meant for
+   the meeting's edit button. Making the whole `<thead>` sticky instead pins
+   both header rows as one rigid unit, in their normal stacked layout,
+   whatever their real height turns out to be — nothing here is measured or
+   guessed. (Verified directly: `position: sticky` on `<thead>` still works
+   under this table's own `border-collapse: collapse`.) The name column's
+   `<th>` additionally sticks on its own `left: 0` — the one cell pinned on
+   both axes, since only IT needs to stay put through a horizontal scroll
+   too. Every sticky cell needs its own opaque background or the rows
+   scrolling underneath show straight through it. */
 .sheet-wrap {
   overflow: auto;
   max-height: 70vh;
 }
-.sheet-table thead th {
+.sheet-table thead {
   position: sticky;
   top: 0;
   z-index: 3;
+}
+.sheet-table thead th {
   background: var(--surface);
 }
-.sheet-table thead tr:nth-child(2) > th {
-  top: var(--sheet-head-row1-h);
-}
 .sheet-table thead tr:first-child > th:first-child {
+  position: sticky;
   left: 0;
   z-index: 4;
 }
