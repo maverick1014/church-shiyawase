@@ -1,7 +1,7 @@
 'use client';
 
 import { useParams, useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useFetch } from '@/lib/hooks';
 import { useSortableRows } from '@/lib/sort';
 import { api } from '@/lib/api';
@@ -50,14 +50,25 @@ export default function HappinessTermGroupsPage() {
   const members = useFetch<MemberRow[]>('/members');
 
   const [formGroup, setFormGroup] = useState<HappinessGroupRow | 'new' | null>(null);
+  // The one filter the life-groups list page has that this term-scoped list
+  // didn't (rule G4/G7a): a group by name or its leader's name, lowercased
+  // on both sides so a leader is found as "grace" as often as "Grace".
+  const [q, setQ] = useState('');
 
   usePageChrome(
     { title: term.data ? t('happy.term.pageTitle', { no: term.data.term_no }) : t('happy.title') },
     [term.data, t],
   );
 
+  const filteredGroups = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    if (!needle) return groups.data ?? [];
+    return (groups.data ?? []).filter((g) =>
+      `${g.name}${g.leader?.full_name ?? ''}${g.leader?.english_name ?? ''}`.toLowerCase().includes(needle));
+  }, [groups.data, q]);
+
   const { sorted, sortKey, sortDir, toggleSort } = useSortableRows(
-    groups.data ?? [],
+    filteredGroups,
     (g, key) => {
       switch (key) {
         case 'hall':
@@ -141,6 +152,7 @@ export default function HappinessTermGroupsPage() {
       <ErrorBanner message={groups.error || members.error} />
 
       <PageBar
+        filters={<input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t('happy.group.searchPlaceholder')} />}
         actions={
           <>
             <ExportButton onClick={exportGroups} disabled={sorted.length === 0} />

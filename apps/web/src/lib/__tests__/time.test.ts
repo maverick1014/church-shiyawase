@@ -7,6 +7,7 @@ import {
   endOfChurchDate,
   fromChurchInput,
   isSundayDate,
+  startOfChurchDate,
   startOfChurchDay,
   sundaysOfMonth,
   toChurchInput,
@@ -194,5 +195,19 @@ describe('endOfChurchDate', () => {
     expect(endOfChurchDate(null)).toBeNull();
     expect(endOfChurchDate('')).toBeNull();
     expect(endOfChurchDate('nope')).toBeNull();
+  });
+});
+
+describe('startOfChurchDate', () => {
+  it('is Malaysian midnight, not UTC midnight', () => {
+    const start = startOfChurchDate('2026-08-31')!;
+    // Malaysia is UTC+8, so its midnight is the previous UTC day at 16:00.
+    expect(start.toISOString()).toBe('2026-08-30T16:00:00.000Z');
+  });
+
+  it('returns null for a missing or malformed date', () => {
+    expect(startOfChurchDate(null)).toBeNull();
+    expect(startOfChurchDate('')).toBeNull();
+    expect(startOfChurchDate('nope')).toBeNull();
   });
 });

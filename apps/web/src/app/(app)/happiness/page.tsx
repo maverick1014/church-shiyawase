@@ -1,13 +1,11 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useFetch } from '@/lib/hooks';
-import { useSortableRows } from '@/lib/sort';
 import { api } from '@/lib/api';
 import { usePageChrome, useMe } from '@/components/AppShell';
 import {
-  ChevronRightIcon,
   ErrorBanner,
   ExportButton,
   Field,
@@ -15,10 +13,8 @@ import {
   ModuleDisabled,
   PageBar,
   RoleRestricted,
-  RowChevron,
+  SkeletonCards,
   SkeletonScreen,
-  SkeletonTable,
-  SortTh,
   useConfirm,
   useToast,
 } from '@/components/ui';
@@ -26,10 +22,21 @@ import { can } from '@/lib/perms';
 import { useModuleEnabled } from '@/lib/church';
 import { exportRows } from '@/lib/export';
 import { formatDate } from '@/lib/labels';
+import { endOfChurchDate, startOfChurchDate } from '@/lib/time';
 import { HappinessTermRow } from '@/lib/types';
 import { useT } from '@/lib/i18n';
 import { AccountRole, MODULE_HAPPINESS } from '@tog/shared';
 
+/**
+ * 幸福小组 catalog — one card per term (期), bucketed exactly the way
+ * 培训&活动's own catalog buckets its rows (rule G4: the same card grid,
+ * the same section-label-then-grid shape), not the table this page used to
+ * be. A term is CURRENT if today falls in [starts_on, ends_on] (or either
+ * end is unset — an open-ended term reads as always current), UPCOMING if
+ * it hasn't started yet, and ENDED once its end date has passed; several
+ * terms may be current or upcoming at once (0022: terms deliberately
+ * overlap), so this is a three-way split rather than trainings' two.
+ */
 export default function HappinessTermsPage() {
   const router = useRouter();
   const t = useT();
@@ -51,30 +58,32 @@ export default function HappinessTermsPage() {
 
   usePageChrome({ title: t('happy.title') }, [t]);
 
-  const { sorted, sortKey, sortDir, toggleSort } = useSortableRows(
-    terms.data ?? [],
-    (term, key) => {
-      switch (key) {
-        case 'name':
-          return term.name ?? '';
-        case 'weeks':
-          return term.weeks;
-        case 'groups':
-          return term.group_count;
-        case 'starts':
-          return term.starts_on ?? '';
-        default:
-          return term.term_no;
+  const now = new Date();
+  const list = terms.data ?? [];
+  const { current, upcoming, ended } = useMemo(() => {
+    const c: HappinessTermRow[] = [];
+    const u: HappinessTermRow[] = [];
+    const e: HappinessTermRow[] = [];
+    for (const term of list) {
+      const endsAfter = endOfChurchDate(term.ends_on);
+      if (endsAfter !== null && endsAfter <= now) {
+        e.push(term);
+        continue;
       }
-    },
-    { key: 'no', dir: 'desc' },
-  );
+      const startsAt = startOfChurchDate(term.starts_on);
+      if (startsAt !== null && startsAt > now) u.push(term);
+      else c.push(term);
+    }
+    const byNoDesc = (a: HappinessTermRow, b: HappinessTermRow) => b.term_no - a.term_no;
+    return { current: c.sort(byNoDesc), upcoming: u.sort(byNoDesc), ended: e.sort(byNoDesc) };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [list]);
 
   const exportTerms = () => {
     exportRows(
       t('happy.title'),
       t('happy.term.col.no'),
-      sorted.map((term) => ({
+      [...current, ...upcoming, ...ended].map((term) => ({
         [t('happy.term.col.no')]: term.term_no,
         [t('happy.term.col.name')]: term.name ?? '',
         [t('happy.term.col.dates')]: `${formatDate(term.starts_on)} – ${formatDate(term.ends_on)}`,
@@ -104,6 +113,38 @@ export default function HappinessTermsPage() {
   if (isGroupLeader) return <RoleRestricted />;
   if (!happinessOn) return <ModuleDisabled name={t('module.happiness.name')} />;
 
+  const renderCards = (items: HappinessTermRow[], faded?: boolean) => (
+    <div className="grid g3">
+      {items.map((term) => (
+        <div className="card" key={term.id} style={{ display: 'flex', flexDirection: 'column', opacity: faded ? 0.86 : 1 }}>
+          <span className="badge b-accent" style={{ alignSelf: 'flex-start' }}>
+            {t('happy.term.pageTitle', { no: term.term_no })}
+          </span>
+          <h3
+            style={{ margin: '12px 0 2px', fontSize: 16, cursor: 'pointer' }}
+            className="serif"
+            onClick={() => router.push(`/happiness/${term.id}`)}
+          >
+            {term.name || t('happy.term.pageTitle', { no: term.term_no })}
+          </h3>
+          <div className="muted" style={{ fontSize: 12.5, lineHeight: 1.7 }}>
+            {formatDate(term.starts_on)} – {formatDate(term.ends_on)} · {t('happy.term.weeksLabel', { n: term.weeks })} · {t('happy.term.groupCount', { n: term.group_count })}
+          </div>
+          <div className="grow" />
+          <div className="flex gap-8 mt-14">
+            <button className="btn sm grow" onClick={() => router.push(`/happiness/${term.id}`)}>{t('happy.term.viewGroups')}</button>
+            {perms.write && <button className="btn ghost sm" onClick={() => setFormTerm(term)}>{t('happy.term.edit')}</button>}
+            {perms.delete && (
+              <button className="btn ghost sm" style={{ color: 'var(--crit)' }} onClick={() => deleteTerm(term)}>
+                {t('common.delete')}
+              </button>
+            )}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+
   return (
     <>
       <ErrorBanner message={terms.error} />
@@ -111,7 +152,7 @@ export default function HappinessTermsPage() {
       <PageBar
         actions={
           <>
-            <ExportButton onClick={exportTerms} disabled={sorted.length === 0} />
+            <ExportButton onClick={exportTerms} disabled={list.length === 0} />
             {perms.write && (
               <button className="btn" onClick={() => setFormTerm('new')}>{t('happy.term.add')}</button>
             )}
@@ -119,96 +160,42 @@ export default function HappinessTermsPage() {
         }
       />
 
+      <div className="section-label mb-14">
+        <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--good)', display: 'inline-block' }} />
+        {t('happy.term.current')}
+      </div>
       {terms.initialLoading ? (
         <SkeletonScreen>
-          <SkeletonTable rows={6} columns={5} />
+          <SkeletonCards count={3} lines={3} />
         </SkeletonScreen>
+      ) : current.length ? (
+        renderCards(current)
       ) : (
-        <>
-          {/* Desktop — table */}
-          <div className="card only-desktop" style={{ padding: 6 }}>
-            <div className="table-wrap">
-              <table className="table-fixed">
-                <thead>
-                  <tr>
-                    <SortTh sortKey="no" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('happy.term.col.no')}</SortTh>
-                    <SortTh sortKey="name" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('happy.term.col.name')}</SortTh>
-                    <SortTh sortKey="starts" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('happy.term.col.dates')}</SortTh>
-                    <SortTh sortKey="weeks" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('happy.term.col.weeks')}</SortTh>
-                    <SortTh sortKey="groups" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('happy.term.col.groups')}</SortTh>
-                    <th />
-                  </tr>
-                </thead>
-                <tbody>
-                  {sorted.map((term) => (
-                    <tr key={term.id} onClick={() => router.push(`/happiness/${term.id}`)} style={{ cursor: 'pointer' }}>
-                      <td className="tnum"><strong>{term.term_no}</strong></td>
-                      <td>{term.name || <span className="faint">—</span>}</td>
-                      <td className="muted">{formatDate(term.starts_on)} – {formatDate(term.ends_on)}</td>
-                      <td className="muted tnum">{term.weeks}</td>
-                      <td className="muted tnum">{term.group_count}</td>
-                      <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }} onClick={(e) => e.stopPropagation()}>
-                        {perms.write && (
-                          <button className="btn ghost sm" style={{ marginRight: 6 }} onClick={() => setFormTerm(term)}>
-                            {t('happy.term.edit')}
-                          </button>
-                        )}
-                        {perms.delete && (
-                          <button className="btn ghost sm" style={{ color: 'var(--crit)', marginRight: 6 }} onClick={() => deleteTerm(term)}>
-                            {t('common.delete')}
-                          </button>
-                        )}
-                        <RowChevron title={t('happy.term.viewGroups')} onClick={() => router.push(`/happiness/${term.id}`)} />
-                      </td>
-                    </tr>
-                  ))}
-                  {sorted.length === 0 && (
-                    <tr><td colSpan={6} className="empty-inline">{t('happy.term.empty')}</td></tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
+        <div className="empty">{t('happy.term.emptyCurrent')}</div>
+      )}
 
-          {/* Mobile — list tiles */}
-          <div className="only-mobile">
-            {sorted.map((term) => (
-              <div key={term.id} className="mtile" onClick={() => router.push(`/happiness/${term.id}`)}>
-                <div className="mtile-row1">
-                  <div style={{ minWidth: 0 }}>
-                    <strong>{t('happy.term.pageTitle', { no: term.term_no })}</strong>
-                    {term.name && <span className="muted" style={{ fontSize: 12.5 }}> {term.name}</span>}
-                  </div>
-                  <span className="mtile-cta"><ChevronRightIcon /></span>
-                </div>
-                <div className="mtile-line flex items-center gap-8 flex-wrap">
-                  <span>
-                    {formatDate(term.starts_on)} – {formatDate(term.ends_on)} · {t('happy.term.weeksLabel', { n: term.weeks })} · {t('happy.term.groupCount', { n: term.group_count })}
-                  </span>
-                </div>
-                {(perms.write || perms.delete) && (
-                  <div className="flex gap-10" style={{ marginTop: 8 }}>
-                    {perms.write && (
-                      <button className="tile-action" onClick={(e) => { e.stopPropagation(); setFormTerm(term); }}>
-                        {t('happy.term.edit')}
-                      </button>
-                    )}
-                    {perms.delete && (
-                      <button
-                        className="tile-action"
-                        style={{ color: 'var(--crit)' }}
-                        onClick={(e) => { e.stopPropagation(); deleteTerm(term); }}
-                      >
-                        {t('common.delete')}
-                      </button>
-                    )}
-                  </div>
-                )}
-              </div>
-            ))}
-            {sorted.length === 0 && <div className="empty-inline">{t('happy.term.empty')}</div>}
-          </div>
-        </>
+      <div className="section-label" style={{ margin: '28px 0 14px' }}>
+        <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--brand)', display: 'inline-block' }} />
+        {t('happy.term.upcoming')}
+      </div>
+      {terms.initialLoading ? (
+        <SkeletonCards count={3} lines={3} />
+      ) : upcoming.length ? (
+        renderCards(upcoming)
+      ) : (
+        <div className="empty">{t('happy.term.emptyUpcoming')}</div>
+      )}
+
+      <div className="section-label" style={{ margin: '28px 0 14px' }}>
+        <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--faint)', display: 'inline-block' }} />
+        {t('happy.term.ended')}
+      </div>
+      {terms.initialLoading ? (
+        <SkeletonCards count={3} lines={3} />
+      ) : ended.length ? (
+        renderCards(ended, true)
+      ) : (
+        <div className="empty">{t('happy.term.emptyEnded')}</div>
       )}
 
       {formTerm && (

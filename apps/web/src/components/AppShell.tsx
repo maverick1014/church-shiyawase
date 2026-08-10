@@ -96,8 +96,8 @@ const NAV: { section: MessageKey; items: NavItem[] }[] = [
     // lands on `RoleRestricted` (see each page's own guard).
     items: [
       { href: '/trainings', label: 'nav.trainings', icon: '📖', hiddenFor: [AccountRole.GroupLeader] },
-      { href: '/discipleship', label: 'nav.discipleship', icon: '✝', hiddenFor: [AccountRole.GroupLeader] },
       { href: '/happiness', label: 'nav.happiness', icon: '☺', hiddenFor: [AccountRole.GroupLeader] },
+      { href: '/discipleship', label: 'nav.discipleship', icon: '✝', hiddenFor: [AccountRole.GroupLeader] },
     ],
   },
   {

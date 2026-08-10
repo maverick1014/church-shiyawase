@@ -1858,9 +1858,15 @@ async function main() {
       await page.locator('.modal input:not([type=number]):not([type=date])').first().fill(happyTermName);
       await page.locator('.modal button:has-text("Save")').first().click();
       await w(1500);
-      const termTile = page.locator('.mtile', { hasText: `Term ${happyTermNo}` });
-      await termTile.first().waitFor({ timeout: 20000 });
-      check('creating a term through the UI adds it to the list', (await termTile.count()) === 1);
+      // The catalog is a card grid now (0116, strictly copying 培训&活动's own
+      // catalog shape) — a term's card is found by its own name, the same
+      // `.card h3:has-text(...)` pattern the trainings catalog already uses.
+      const termCard = page.locator('.card', { has: page.locator('h3', { hasText: happyTermName }) });
+      await termCard.first().waitFor({ timeout: 20000 });
+      check('creating a term through the UI adds it to the list', (await termCard.count()) === 1);
+      const catalogBody = await page.locator('.content').innerText();
+      check('the catalog is bucketed Current / Upcoming / Ended, like 培训&活动',
+        ['Current', 'Upcoming', 'Ended'].every((label) => catalogBody.includes(label)));
       const termsAfter = await apiGet('/happiness/terms');
       happyTermId = termsAfter.find((t) => t.term_no === happyTermNo)?.id ?? null;
       check('…and it is readable from the API, weeks defaulting to 8',
@@ -1868,7 +1874,7 @@ async function main() {
         JSON.stringify(termsAfter.find((t) => t.term_no === happyTermNo)));
 
       /* -- group, under that term, created through the UI ------------------ */
-      await termTile.first().click();
+      await termCard.locator('h3').first().click();
       await page.waitForURL(/\/happiness\/[0-9a-f-]+/, { timeout: 15000 });
       await page.locator('button:visible:has-text("Add group")').first().waitFor({ timeout: 20000 });
       check('opening a term shows its own facts (period number, weeks)',
@@ -1884,6 +1890,19 @@ async function main() {
       const groupTile = page.locator('.mtile', { hasText: happyGroupName });
       await groupTile.first().waitFor({ timeout: 20000 });
       check('creating a group through the UI adds it to the term’s own list', (await groupTile.count()) === 1);
+
+      // The term's own group list offers a search box now (0116, the one
+      // affordance groups/page.tsx has that this term-scoped list didn't).
+      await page.fill('.page-bar-filters input', 'ZZ_NOMATCH_QUERY');
+      await w(400);
+      check('the group search box narrows the term’s list to nothing on a query that matches no group',
+        (await page.locator('.mtile', { hasText: happyGroupName }).count()) === 0);
+      await page.fill('.page-bar-filters input', happyGroupName);
+      await w(400);
+      check('…and back to the fixture group once the query matches it',
+        (await page.locator('.mtile', { hasText: happyGroupName }).count()) === 1);
+      await page.fill('.page-bar-filters input', '');
+      await w(400);
 
       /* -- group detail: roster + week-numbered attendance sheet ---------- */
       await groupTile.first().click();

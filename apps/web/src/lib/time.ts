@@ -192,3 +192,12 @@ export function endOfChurchDate(dateOnly: string | null | undefined): Date | nul
   if (!m) return null;
   return churchInstant(+m[1], +m[2], +m[3] + 1);
 }
+
+/** The Malaysian midnight a stored DATE (`YYYY-MM-DD`) begins — the other
+ *  half of `endOfChurchDate`, for "has this not started yet" comparisons. */
+export function startOfChurchDate(dateOnly: string | null | undefined): Date | null {
+  if (!dateOnly) return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(dateOnly);
+  if (!m) return null;
+  return churchInstant(+m[1], +m[2], +m[3]);
+}
