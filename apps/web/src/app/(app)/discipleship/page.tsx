@@ -65,6 +65,17 @@ export default function DiscipleshipPage() {
   // a round-trip per module.
   const pairs = useFetch<PairRow[]>(discipleshipOn && !isGroupLeader ? '/discipleship/pairs' : null);
   const members = useFetch<MemberRow[]>(discipleshipOn && !isGroupLeader ? '/members' : null);
+  // Same option shape AddPairModal's own two pickers already build (rule G4)
+  // — reused here for the relay chart's own member-search scope.
+  const memberOptions = useMemo(
+    () => (members.data ?? []).map((m) => ({
+      value: m.id,
+      label: m.full_name,
+      sub: m.english_name,
+      hint: t(roleKey(memberRole(m))),
+    })),
+    [members.data, t],
+  );
 
   const [filter, setFilter] = useState<Filter>('active');
   const [popup, setPopup] = useState<Node | null>(null);
@@ -170,7 +181,53 @@ export default function DiscipleshipPage() {
     pending: nodes.filter((n) => classify(n) === 'pending').length,
   };
 
-  const forest = useMemo(() => buildForest(nodes), [nodes]);
+  // Scoping the chain to one member (0115): their own ancestor chain reads as
+  // ONE lineage — who led them, who led that person — never the rest of that
+  // mentor's roster, so it walks a single parent link at a time. Their own
+  // descendants are the opposite: everyone they lead, and everyone THOSE
+  // people lead, however the branching actually goes — so it is the same
+  // reachability walk `buildForest` already does for a root, just started
+  // from the picked member instead of from a trainee-less one. Both walks
+  // narrow the PAIR set fed into `buildForest`, so the existing tree layout
+  // and rendering need no change at all — only which pairs it ever sees.
+  const [scopeId, setScopeId] = useState('');
+  const scopedNodes = useMemo(() => {
+    if (!scopeId) return nodes;
+    const byTrainee = new Map(nodes.map((n) => [n.pair.trainee_id, n]));
+    const byMentor = new Map<string, Node[]>();
+    for (const n of nodes) {
+      const arr = byMentor.get(n.pair.mentor_id) ?? [];
+      arr.push(n);
+      byMentor.set(n.pair.mentor_id, arr);
+    }
+    const picked = new Set<Node>();
+
+    let up = scopeId;
+    const seenUp = new Set<string>();
+    while (!seenUp.has(up)) {
+      seenUp.add(up);
+      const edge = byTrainee.get(up);
+      if (!edge) break;
+      picked.add(edge);
+      up = edge.pair.mentor_id;
+    }
+
+    const queue = [scopeId];
+    const seenDown = new Set<string>();
+    while (queue.length) {
+      const id = queue.shift()!;
+      if (seenDown.has(id)) continue;
+      seenDown.add(id);
+      for (const edge of byMentor.get(id) ?? []) {
+        picked.add(edge);
+        queue.push(edge.pair.trainee_id);
+      }
+    }
+
+    return nodes.filter((n) => picked.has(n));
+  }, [nodes, scopeId]);
+
+  const forest = useMemo(() => buildForest(scopedNodes), [scopedNodes]);
   const doneList = nodes.filter((n) => classify(n) === 'done');
   const pendingList = nodes.filter((n) => classify(n) === 'pending');
 
@@ -383,6 +440,22 @@ export default function DiscipleshipPage() {
               </button>
             )}
           </div>
+          {/* Scoping the tree to one member (0115) is a chart control, not a
+              page-wide filter, so it lives on the chart's own card-head and
+              only when the tree is actually the thing on screen — searching
+              is idle noise on the flat done/pending lists below. */}
+          {filter === 'active' && (
+            <div style={{ width: 220, flexShrink: 0 }}>
+              <Combobox
+                value={scopeId}
+                onChange={setScopeId}
+                options={memberOptions}
+                placeholder={t('disc.chain.scopePlaceholder')}
+                ariaLabel={t('disc.chain.scopePlaceholder')}
+                size="sm"
+              />
+            </div>
+          )}
         </div>
 
         {booting ? (
@@ -398,7 +471,9 @@ export default function DiscipleshipPage() {
           <>
             {filter === 'active' &&
               (forest.length === 0 ? (
-                <div className="empty">{t('disc.emptyActive')}</div>
+                <div className="empty">
+                  {scopeId ? t('disc.chain.scopeEmpty') : t('disc.emptyActive')}
+                </div>
               ) : (
                 <>
                   <div className="only-mobile faint" style={{ fontSize: 11.5, marginTop: 10 }}>

@@ -1734,6 +1734,73 @@ async function main() {
       await fxPair.remove();
     }
 
+    /* -- forty days · relay chart scoped to one member (0115) -------------- */
+    // Z ➜ A ➜ B ➜ C, plus A ➜ D (a sibling branch off A, alongside B). Scoping
+    // to B must keep the single lead-by chain UP (Z, A) and the whole
+    // branching subtree DOWN (C), but never D — D is reachable from A, not
+    // from B, and A having another trainee besides B is exactly the kind of
+    // sibling noise the scope exists to cut out.
+    mod('forty days · relay chart scoped to one member');
+    const cxTop = await makeMember('RELAYTOP');
+    const cxMid = await makeMember('RELAYMID');
+    const cxTarget = await makeMember('RELAYTARGET');
+    const cxSibling = await makeMember('RELAYSIB');
+    const cxChild = await makeMember('RELAYCHILD');
+    try {
+      const relayProgramId = (await apiGet('/discipleship/programs'))?.[0]?.id;
+      if (!relayProgramId) throw new Error('no discipleship program configured — cannot build the relay fixture');
+      const mkRelayPair = async (mentorId, traineeId) => {
+        const row = await apiPost('/discipleship/pairs', { program_id: relayProgramId, mentor_id: mentorId, trainee_id: traineeId });
+        return disposable(`pair ${mentorId} → ${traineeId}`, `/discipleship/pairs/${row.id}`);
+      };
+      const removeRelayPairs = [
+        await mkRelayPair(cxTop.id, cxMid.id),
+        await mkRelayPair(cxMid.id, cxTarget.id),
+        await mkRelayPair(cxMid.id, cxSibling.id),
+        await mkRelayPair(cxTarget.id, cxChild.id),
+      ];
+      try {
+        await page.goto(`${BASE}/discipleship`, { waitUntil: 'domcontentloaded' });
+        await page.locator('.chip', { hasText: 'Active' }).first().waitFor({ timeout: 20000 });
+        const chartCard = page.locator('.card').first();
+        await chartCard.locator(`text=${cxTarget.name}`).first().waitFor({ timeout: 15000 });
+        check('unscoped, the chart shows the whole tree — including the sibling branch',
+          (await chartCard.innerText()).includes(cxSibling.name));
+
+        const scopeCombo = chartCard.locator('input[role=combobox]').first();
+        await scopeCombo.click();
+        await scopeCombo.fill(cxTarget.name);
+        await w(400);
+        await page.locator('.combo-list .combo-option').first().waitFor({ timeout: 8000 });
+        await page.locator('.combo-list .combo-option').first().click();
+        await w(400);
+
+        const scopedBody = await chartCard.innerText();
+        check('scoped to the middle member, the chain shows the full ancestor chain upward',
+          scopedBody.includes(cxTop.name) && scopedBody.includes(cxMid.name) && scopedBody.includes(cxTarget.name),
+          scopedBody.slice(0, 300));
+        check('…the whole descendant branch downward',
+          scopedBody.includes(cxChild.name));
+        check('…but never the sibling branch off an ancestor',
+          !scopedBody.includes(cxSibling.name));
+
+        // Clearing the scope (the Combobox's own ✕, rule G4) returns to the
+        // unscoped, whole-forest view.
+        await chartCard.locator('.combo-clear').first().click();
+        await w(400);
+        check('clearing the scope shows the sibling branch again',
+          (await chartCard.innerText()).includes(cxSibling.name));
+      } finally {
+        for (const remove of removeRelayPairs) await remove();
+      }
+    } finally {
+      await cxChild.remove();
+      await cxSibling.remove();
+      await cxTarget.remove();
+      await cxMid.remove();
+      await cxTop.remove();
+    }
+
     /* -- forty days · the module is read, never managed -------------------- */
     // There WAS a 守望模块 manager here — a Modules button over a list dialog
     // with an edit form and a per-row delete, driven through a throwaway

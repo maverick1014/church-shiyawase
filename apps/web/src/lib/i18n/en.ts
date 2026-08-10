@@ -530,6 +530,8 @@ export const en = {
   'disc.noModule.readonly': 'No discipleship module yet. Ask an administrator to create one before pairs can be added.',
   'disc.chain': 'Discipleship chain · relay map',
   'disc.chainSub': 'Generational tree · a graduate becomes a new starting point · tap a tag to filter by state',
+  'disc.chain.scopePlaceholder': 'Scope to a member…',
+  'disc.chain.scopeEmpty': 'This member is not in the relay yet.',
   'disc.fullscreenChip': '⛶ Fullscreen',
   'disc.rootLine': '{role} · starting point',
   'disc.rootNode': 'Pastor · starting point',

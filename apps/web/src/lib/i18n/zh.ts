@@ -500,6 +500,8 @@ export const zh: Messages = {
   'disc.noModule.readonly': '尚未建立守望模块。请联系管理员先建立一个，之后才能新增配对。',
   'disc.chain': '培育链 · 接棒图',
   'disc.chainSub': '世代培育树 · 出师者自成起点 · 点标签筛选状态',
+  'disc.chain.scopePlaceholder': '按成员筛选…',
+  'disc.chain.scopeEmpty': '此成员尚未加入培育链。',
   'disc.fullscreenChip': '⛶ 全屏',
   'disc.rootLine': '{role} · 起点',
   'disc.rootNode': '牧者 · 起点',

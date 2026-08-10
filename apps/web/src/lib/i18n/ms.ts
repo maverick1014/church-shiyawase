@@ -506,6 +506,8 @@ export const ms: Messages = {
   'disc.noModule.readonly': 'Belum ada modul pemuridan. Minta pentadbir mencipta satu sebelum pasangan boleh ditambah.',
   'disc.chain': 'Rantaian pemuridan · peta',
   'disc.chainSub': 'Pokok antara generasi · graduan menjadi titik mula baharu · ketik tag untuk menapis',
+  'disc.chain.scopePlaceholder': 'Skop kepada seorang ahli…',
+  'disc.chain.scopeEmpty': 'Ahli ini belum berada dalam rantaian.',
   'disc.fullscreenChip': '⛶ Skrin penuh',
   'disc.rootLine': '{role} · titik mula',
   'disc.rootNode': 'Pastor · titik mula',

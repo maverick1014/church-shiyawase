@@ -56,23 +56,26 @@ export default function DashboardPage() {
   );
 
   // The page is three sections now: the trend chart, the upcoming-events
-  // table, and one KPI tile — the skeleton lays out exactly that.
+  // table, and one KPI tile — the skeleton lays out exactly that, in the
+  // same trend-card-beside-KPI-tile grid the real render uses.
   if (loading)
     return (
       <SkeletonScreen>
-        <div className="card" aria-hidden="true">
-          <div className="card-head">
-            <Skeleton width="42%" height={16} />
-            <Skeleton width={160} height={26} radius={999} />
+        <div className="grid g2-wide">
+          <div className="card" aria-hidden="true">
+            <div className="card-head">
+              <Skeleton width="42%" height={16} />
+              <Skeleton width={160} height={26} radius={999} />
+            </div>
+            <Skeleton height={220} radius={10} />
           </div>
-          <Skeleton height={220} radius={10} />
+          <div className="stat">
+            <Skeleton width={120} height={11} />
+            <Skeleton width={64} height={28} style={{ marginTop: 10 }} />
+          </div>
         </div>
         <div className="mt-16">
           <SkeletonTable rows={5} columns={3} />
-        </div>
-        <div className="stat mt-16" style={{ maxWidth: 260 }}>
-          <Skeleton width={120} height={11} />
-          <Skeleton width={64} height={28} style={{ marginTop: 10 }} />
         </div>
       </SkeletonScreen>
     );
@@ -81,15 +84,23 @@ export default function DashboardPage() {
     <>
       <ErrorBanner message={error} />
 
-      <TrendCard trend={trend} showVisits={showVisits} showActive={showActive} onToggleVisits={() => setShowVisits((v) => !v)} onToggleActive={() => setShowActive((v) => !v)} />
+      {/* The trend chart and the one KPI tile read as a matched pair — the
+          headline number the chart's own Active Members line is building
+          toward, beside it rather than stranded alone under a full-width
+          table (rule G4: the existing `.g2-wide` grid utility, unused until
+          now, is exactly this 1.4fr/1fr split — collapsing to one column at
+          the same breakpoint every other two-up layout in this app already
+          does, so the mobile order is unchanged: chart, then KPI). */}
+      <div className="grid g2-wide">
+        <TrendCard trend={trend} showVisits={showVisits} showActive={showActive} onToggleVisits={() => setShowVisits((v) => !v)} onToggleActive={() => setShowActive((v) => !v)} />
+        <div className="stat">
+          <div className="label">{t('dash.kpi.totalActive')}</div>
+          <div className="value">{activeCount}</div>
+        </div>
+      </div>
 
       <div className="mt-16">
         <UpcomingEventsCard events={upcoming} />
-      </div>
-
-      <div className="stat mt-16" style={{ maxWidth: 260 }}>
-        <div className="label">{t('dash.kpi.totalActive')}</div>
-        <div className="value">{activeCount}</div>
       </div>
     </>
   );
@@ -137,8 +148,17 @@ function TrendCard({
 
   const pointsFor = (key: 'visits' | 'active') =>
     trend.map((p, i) => `${xFor(i)},${yFor(p[key])}`).join(' ');
+  // The area beneath a line is the same points closed off along the
+  // baseline, so it fills the actual shape under the curve rather than a
+  // rectangle down to zero at each end.
+  const areaFor = (key: 'visits' | 'active') =>
+    `${padL},${padT + plotH} ${pointsFor(key)} ${svgW - padR},${padT + plotH}`;
 
   const nothingSelected = !showVisits && !showActive;
+  // Three even gridlines (not at the baseline, which already has its own
+  // axis line below) — a reading aid, not a value anyone needs to read
+  // precisely off a pixel.
+  const gridFractions = [0.25, 0.5, 0.75];
 
   return (
     <Card
@@ -170,7 +190,31 @@ function TrendCard({
           role="img"
           aria-label={t('dash.trend.title')}
         >
+          <defs>
+            <linearGradient id="dashTrendVisits" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="var(--brand)" stopOpacity="0.16" />
+              <stop offset="100%" stopColor="var(--brand)" stopOpacity="0" />
+            </linearGradient>
+            <linearGradient id="dashTrendActive" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="var(--accent)" stopOpacity="0.16" />
+              <stop offset="100%" stopColor="var(--accent)" stopOpacity="0" />
+            </linearGradient>
+          </defs>
+          {gridFractions.map((f) => (
+            <line
+              key={f}
+              x1={padL}
+              y1={padT + plotH * f}
+              x2={svgW - padR}
+              y2={padT + plotH * f}
+              stroke="var(--border)"
+              strokeWidth="1"
+              strokeDasharray="3 4"
+            />
+          ))}
           <line x1={padL} y1={padT + plotH} x2={svgW - padR} y2={padT + plotH} stroke="var(--border)" strokeWidth="1" />
+          {showVisits && <polygon points={areaFor('visits')} fill="url(#dashTrendVisits)" stroke="none" />}
+          {showActive && <polygon points={areaFor('active')} fill="url(#dashTrendActive)" stroke="none" />}
           {showVisits && (
             <polyline points={pointsFor('visits')} fill="none" stroke="var(--brand)" strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
           )}
@@ -179,11 +223,11 @@ function TrendCard({
           )}
           {showVisits &&
             trend.map((p, i) => (
-              <circle key={`v-${p.month}`} cx={xFor(i)} cy={yFor(p.visits)} r={3} fill="var(--brand)" />
+              <circle key={`v-${p.month}`} cx={xFor(i)} cy={yFor(p.visits)} r={3} fill="var(--surface)" stroke="var(--brand)" strokeWidth="2" />
             ))}
           {showActive &&
             trend.map((p, i) => (
-              <circle key={`a-${p.month}`} cx={xFor(i)} cy={yFor(p.active)} r={3} fill="var(--accent)" />
+              <circle key={`a-${p.month}`} cx={xFor(i)} cy={yFor(p.active)} r={3} fill="var(--surface)" stroke="var(--accent)" strokeWidth="2" />
             ))}
           {trend.map((p, i) => (
             <text key={p.month} x={xFor(i)} y={svgH - 8} fontSize="10" textAnchor="middle" fill="var(--muted)">

@@ -470,6 +470,14 @@ button {
   padding: 18px 20px;
   position: relative;
   overflow: hidden;
+  /* The dashboard's one KPI tile sits beside the trend card in a `.g2-wide`
+     row now, so it stretches to that card's own (much taller) height —
+     centering its two lines in the middle of that height reads as a
+     considered pairing rather than a short block pinned to the top of a
+     tall empty box. */
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
 }
 .stat .label {
   color: var(--muted);
