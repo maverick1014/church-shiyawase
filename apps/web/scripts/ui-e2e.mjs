@@ -915,11 +915,21 @@ async function main() {
       // not the same event as the out-of-band apiGet polls above — waiting
       // on the server's answer does not guarantee the page has painted it
       // yet, so each DOM read below waits on the element itself first.
+      // `page.waitForFunction(fn, arg, options)` takes exactly ONE arg value —
+      // passing `wantChecked` as a separate positional parameter (as this used
+      // to) silently became `options` for Playwright (a boolean where an
+      // options object was expected), so the call rejected in well under
+      // 100ms every single time and the `.catch` below swallowed it —
+      // meaning this never actually waited at all, on any of its call sites,
+      // since it was written. Confirmed directly: the broken shape resolved
+      // in ~100ms reading a checkbox that hadn't ticked yet; the fixed shape
+      // (a single [el, want] array as `arg` — Playwright unwraps a handle
+      // nested in an array/object) correctly waited the ~2s the box actually
+      // took to update.
       const waitBoxState = (locator, wantChecked) =>
         page.waitForFunction(
-          (el, want) => (want ? el.checked === true : el.checked === false && !el.indeterminate),
-          locator,
-          wantChecked,
+          ([el, want]) => (want ? el.checked === true : el.checked === false && !el.indeterminate),
+          [locator, wantChecked],
           { timeout: 8000 },
         ).catch(() => {});
 
