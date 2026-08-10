@@ -647,6 +647,13 @@ async function main() {
     // The dashboard was rebuilt around three sections; the old 4-tile KPI row,
     // the "Identity distribution" bar chart and the "Discipleship progress"
     // card are gone entirely.
+    // The `<h1>` above is the page shell, not the data — the trend card,
+    // upcoming-events table and KPI tile all populate from their own
+    // client-side fetch, which lands after the shell's first paint. Reading
+    // `.content` before that fetch settles is a real race (not just here —
+    // it read as an app bug the first few times it flaked), so wait on the
+    // trend card's own heading, not just the page having loaded at all.
+    await page.locator('.card:has-text("New Visits & Active Members")').first().waitFor({ timeout: 20000 });
     const dashBody = await page.locator('.content').innerText();
     check('the dashboard shows the New Visits / Active Members trend card',
       dashBody.includes('New Visits & Active Members'));
@@ -932,6 +939,12 @@ async function main() {
       check('the header check-all marks the whole roster',
         presentIn(filled) === (filled.rows || []).length && (filled.rows || []).length > 0,
         `${presentIn(filled)} of ${(filled.rows || []).length}`);
+      // The DOM checkbox's own re-render is a SEPARATE round trip from the
+      // API poll just above — the server confirming the write does not mean
+      // the page has painted it yet, so wait on the element again here
+      // rather than trusting the earlier (best-effort, silently-swallowed)
+      // wait right after the click to have already caught up.
+      await waitBoxState(await firstAll.elementHandle(), true);
       check('…and the header then reads as fully ticked', await firstAll.isChecked());
 
       // Clearing throws real marks away, so it must ask first and say how many

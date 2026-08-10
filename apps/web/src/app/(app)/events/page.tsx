@@ -281,11 +281,18 @@ export default function EventsPage() {
                       <th key={c.key} colSpan={c.ticks.length} className="tnum" style={{ textAlign: 'center' }}>
                         {meeting && perms.write ? (
                           // A meeting's own name is where it is edited from —
-                          // the sheet is the only place it is listed now.
+                          // the sheet is the only place it is listed now. A
+                          // long name (this sheet's own name column already
+                          // sets the precedent, G7a) truncates rather than
+                          // widening the column: an untruncated title once
+                          // grew this single-tick column wide enough that its
+                          // own text could render out past the sticky name
+                          // column's left edge and behind it, unclickable.
                           <button
-                            className="btn ghost sm"
+                            className="btn ghost sm cell-remark"
+                            style={{ maxWidth: 140 }}
                             onClick={() => setEditing(meeting)}
-                            title={t('events.edit.title')}
+                            title={meeting.title}
                           >
                             {meeting.title}
                           </button>
