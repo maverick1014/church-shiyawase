@@ -146,11 +146,15 @@ function TrendCard({
       right={
         <div className="flex gap-6 flex-wrap">
           <button className={`chip ${showVisits ? 'on' : ''}`} onClick={onToggleVisits} aria-pressed={showVisits}>
-            <i style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--brand)', display: 'inline-block' }} />
+            {/* Chip.on's own fill is this same --brand, so the dot has to
+                invert to white there — same trick the chip's text already
+                uses — or the "New Visits" swatch vanishes into its own
+                background the instant it is selected. */}
+            <i style={{ width: 8, height: 8, borderRadius: '50%', background: showVisits ? '#fff' : 'var(--brand)', display: 'inline-block' }} />
             {t('dash.trend.visits')}
           </button>
           <button className={`chip ${showActive ? 'on' : ''}`} onClick={onToggleActive} aria-pressed={showActive}>
-            <i style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--accent)', display: 'inline-block' }} />
+            <i style={{ width: 8, height: 8, borderRadius: '50%', background: showActive ? '#fff' : 'var(--accent)', display: 'inline-block' }} />
             {t('dash.trend.active')}
           </button>
         </div>

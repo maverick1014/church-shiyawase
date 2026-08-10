@@ -626,6 +626,14 @@ tbody tr:last-child td {
   min-width: 120px;
   white-space: nowrap;
 }
+/* An empty-state row's one `colSpan` cell is also its row's first child, so
+   it inherited the name column's nowrap above and clipped instead of
+   wrapping its own sentence — this is the one first-child cell that is not
+   a name. */
+.sheet-table td.empty-inline:first-child {
+  min-width: 0;
+  white-space: normal;
+}
 /* The totals row at the FOOT of a roll-call sheet (`SheetTotals`): for each
    occasion, how many people were there. It is a summary of the rows above it,
    not another row of them, so it is ruled off with a heavier line and carries
