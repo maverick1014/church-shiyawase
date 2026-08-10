@@ -370,7 +370,7 @@ function AccountDetail({
       {/* "View member profile" leaves this record and so belongs with back,
           not inside the record's own card. */}
       <BackBar
-        onBack={onBack}
+        onClick={onBack}
         actions={
           account.member && (
             <button className="btn ghost" onClick={() => router.push(`/members/${account.member!.id}`)}>

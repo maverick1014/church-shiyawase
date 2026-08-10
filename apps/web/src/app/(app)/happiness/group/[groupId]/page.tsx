@@ -189,7 +189,7 @@ export default function HappinessGroupDetailPage() {
   if (detail.initialLoading)
     return (
       <>
-        <BackButton onClick={() => router.push('/happiness')} />
+        <BackButton fallbackHref="/happiness" />
         <SkeletonScreen>
           <SkeletonCard lines={3} />
           <SkeletonTable rows={4} columns={3} bare />
@@ -215,7 +215,7 @@ export default function HappinessGroupDetailPage() {
 
   return (
     <>
-      <BackButton onClick={() => router.push(`/happiness/${g.term_id}`)} />
+      <BackButton fallbackHref={`/happiness/${g.term_id}`} />
 
       <div className="card">
         <EntityHeader title={g.name} sub={g.term?.name ?? t('happy.term.pageTitle', { no: g.term?.term_no ?? '' })} avatar={null} />
@@ -292,7 +292,7 @@ export default function HappinessGroupDetailPage() {
           ) : roster.length === 0 ? (
             <div className="empty">{t('happy.attendance.empty')}</div>
           ) : (
-            <div className="table-wrap">
+            <div className="sheet-wrap">
               <table className="sheet-table">
                 <thead>
                   <tr>

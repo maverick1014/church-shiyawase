@@ -745,11 +745,25 @@ async function main() {
     await w(300);
     check('the modal closes again', (await page.locator('.modal').count()) === 0);
     // The single long FactGrid was split into several smaller, labelled
-    // sections rather than one undifferentiated grid.
+    // sections rather than one undifferentiated grid — Ministry (serving)
+    // and Referral (领路人) later folded into Church and Contact respectively.
     const detailBody = await page.locator('.content').innerText();
-    check('the member detail page groups its facts under section headers (Contact/Church/Ministry/Referral)',
-      ['Contact', 'Church', 'Ministry', 'Referral'].every((label) => detailBody.includes(label)));
+    check('the member detail page groups its facts under section headers (Contact/Church/Notes)',
+      ['Contact', 'Church', 'Notes'].every((label) => detailBody.includes(label)));
     await shot('03-member-detail');
+
+    // Back button (rule G4 shared BackButton): a fresh navigation to this
+    // page — no in-app history to pop — falls back to the list rather than
+    // doing nothing. A `page.goto` here (not a click) is what actually
+    // clears this tab's `navigatedSinceBoot` flag, the same as a direct
+    // link, a refresh, or a new tab would.
+    const memberDetailUrl = page.url();
+    await page.goto(memberDetailUrl, { waitUntil: 'domcontentloaded' });
+    await page.locator('.back-btn').first().waitFor({ timeout: 10000 });
+    await page.locator('.back-btn').first().click();
+    await page.waitForURL(/\/members$/, { timeout: 10000 });
+    check('Back on a freshly-loaded member page falls back to the members list',
+      /\/members$/.test(page.url()), page.url());
 
     /* -- life groups ------------------------------------------------------ */
     // The weekly-attendance grid only draws rows for a group that HAS members,
@@ -967,28 +981,24 @@ async function main() {
       check('the option list closes once something is picked',
         (await page.locator('.combo-list').count()) === 0);
 
-      /* -- roster row: Edit opens the SHARED member-edit modal ------------ */
-      // The same editor `/members/[id]` uses (extracted to
-      // `components/MemberEditModal.tsx`, rule G4) — not a second, roster-only
-      // copy of the form.
+      /* -- roster row: View navigates to the member's own detail page ----- */
+      // A roster row is looked at far more often than it is edited, so its
+      // own button now goes straight to that member's page (which still
+      // carries the real Edit button, the shared `MemberEditModal.tsx`, rule
+      // G4) rather than opening a second, roster-only editor here.
       // Scoped to the table that carries the Remove button — the group
       // detail page has TWO tables containing this member's name (the
       // attendance sheet above, and the roster below), and an unscoped
       // `table tr` locator grabs whichever comes first in the DOM (the
-      // attendance sheet), whose row has no Edit/Remove buttons at all.
+      // attendance sheet), whose row has no View/Remove buttons at all.
       const rosterRow = page.locator('table:has(button:has-text("Remove")) tr', { hasText: fxGroup.member.name }).first();
-      await rosterRow.locator('button:has-text("Edit")').click();
-      await page.locator('.modal').waitFor({ timeout: 8000 });
-      check('the roster row’s Edit button opens the shared member-edit modal',
-        (await page.locator('.modal:has-text("Edit member profile")').count()) === 1);
-      const rosterPhoneInput = page.locator('.modal input[placeholder="012-000 0000"]');
-      await rosterPhoneInput.fill('012-000 1111');
-      await page.locator('.modal button:has-text("Save")').first().click();
-      const rosterModalClosed = await page.locator('.modal').first().waitFor({ state: 'detached', timeout: 8000 }).then(() => true).catch(() => false);
-      check('saving it closes the modal', rosterModalClosed);
-      const rosterMemberAfter = await apiGet(`/members/${fxGroup.member.id}`);
-      check('…and the edit reached the server (the roster reloads, not just the modal)',
-        rosterMemberAfter.phone === '012-000 1111', String(rosterMemberAfter.phone));
+      await rosterRow.locator('button:has-text("View")').click();
+      await page.waitForURL(new RegExp(`/members/${fxGroup.member.id}$`), { timeout: 10000 });
+      check('the roster row’s View button opens that member’s own page',
+        (await page.locator('h1, .entity-header').first().innerText().catch(() => '')).includes(fxGroup.member.name) ||
+          (await page.locator('body').innerText()).includes(fxGroup.member.name));
+      await page.goBack({ waitUntil: 'domcontentloaded' });
+      await page.locator('.sheet-table').first().waitFor({ timeout: 10000 });
     } finally {
       await fxGroup.remove();
     }
@@ -1367,12 +1377,17 @@ async function main() {
       // congregation select in one row (it used to stand alone).
       await page.locator('button:has-text("Edit activity")').first().click();
       await page.locator('.modal').first().waitFor({ timeout: 15000 });
+      // No shape field at all any more — not even read-only: the modal's
+      // own title ("Edit activity" / "Edit training") already says which,
+      // and a redundant field asked the same question a second time.
       check('editing an activity offers no shape picker any more',
         (await page.locator('.modal [role="group"][aria-label="Shape"]').count()) === 0);
-      check('…it shows the shape as plain read-only text instead',
-        (await page.locator('.modal .field:has(.field-label:has-text("Shape")) input[disabled]').count()) === 1);
+      check('…and no read-only shape field either',
+        (await page.locator('.modal .field:has(.field-label:has-text("Shape"))').count()) === 0);
       check('the edit form also offers a gender-restriction field',
         (await page.locator('.modal .field:has(.field-label:has-text("Restricted to")) select').count()) === 1);
+      check('…and an activity category field (0027) — never on a course',
+        (await page.locator('.modal .field:has(.field-label:has-text("Category")) select').count()) === 1);
       const actFormRows = page.locator('.modal .form-row');
       const actRowTexts = await actFormRows.allInnerTexts();
       check('the meeting point and the congregation select now share one row',
@@ -1387,6 +1402,8 @@ async function main() {
       await page.locator('.modal').first().waitFor({ timeout: 15000 });
       check('editing a course offers no shape picker any more',
         (await page.locator('.modal [role="group"][aria-label="Shape"]').count()) === 0);
+      check('…and no category field either — that is an activity-only field (0027)',
+        (await page.locator('.modal .field:has(.field-label:has-text("Category"))').count()) === 0);
       const courseFormRows = page.locator('.modal .form-row');
       const courseRowTexts = await courseFormRows.allInnerTexts();
       check('sessions and the congregation select now share one row',
@@ -1395,21 +1412,27 @@ async function main() {
       check('…and start date / end date share their own separate row',
         courseRowTexts.some((t2) => /Start date/.test(t2) && /End date/.test(t2)),
         JSON.stringify(courseRowTexts));
+      check('the gender restriction and the sign-up fee now share one row',
+        courseRowTexts.some((t2) => /Restricted to/.test(t2) && /Sign-up fee/.test(t2)),
+        JSON.stringify(courseRowTexts));
       await page.locator('.modal button:has-text("Cancel")').click();
     } finally {
       await fxActivity.remove();
       await fxTraining.remove();
     }
 
-    /* -- trainings: CREATE mode still offers the shape picker, plus a
-       direct QR upload chained onto the row the moment it exists -------- */
-    mod('trainings & activities · create-mode shape picker · QR upload at creation');
+    /* -- trainings: no shape picker anywhere any more, plus a direct QR
+       upload chained onto the row the moment it exists ------------------- */
+    mod('trainings & activities · no shape picker · QR upload at creation');
     {
       await page.goto(`${BASE}/trainings`, { waitUntil: 'domcontentloaded' });
       await page.locator('button:visible:has-text("Add training")').first().click();
       await page.locator('.modal').first().waitFor({ timeout: 15000 });
-      check('CREATE still offers the shape picker (only an edit locks it)',
-        (await page.locator('.modal [role="group"][aria-label="Shape"]').count()) === 1);
+      // The two catalog buttons ("+ Add training" / "+ Add activity") already
+      // say which shape — a picker inside the form asked the same question
+      // the button had just answered, so it is gone even at CREATE.
+      check('CREATE offers no shape picker either — the catalog button already said which',
+        (await page.locator('.modal [role="group"][aria-label="Shape"]').count()) === 0);
 
       const field = (label) =>
         page.locator('.modal .field', { has: page.locator('.field-label', { hasText: label }) }).locator('input, select, textarea').first();
@@ -2482,18 +2505,18 @@ async function main() {
     const hallSel = page.locator('.modal select').first();
     const hallOpt = await hallSel.locator('option').nth(1).getAttribute('value');
     if (hallOpt) await hallSel.selectOption(hallOpt);
-    /* 访客 + 推荐人 (migration 0021) — the fifth church role has to be on offer
-       in the form that writes one, and the referrer is a Combobox (never a
-       `<select>`, rule G4) whose default is an explicit 无推荐人 rather than an
-       empty field. */
+    /* 访客 + 领路人 (migration 0021, renamed from 推荐人) — the fifth church
+       role has to be on offer in the form that writes one, and the guide is
+       a Combobox (never a `<select>`, rule G4) whose default is an explicit
+       无领路人 rather than an empty field. */
     check('the member form offers 访客 as a church role',
       (await page.locator('.modal select option[value="visitor"]').count()) === 1);
     const referrerBox = page.locator('.modal input[role="combobox"]');
-    check('…and a 推荐人 picker that is a searchable member combobox',
+    check('…and a 领路人 picker that is a searchable member combobox',
       (await referrerBox.count()) === 1);
     if (await referrerBox.count())
-      check('…defaulting to 无推荐人 rather than to an empty field',
-        (await referrerBox.inputValue()) === 'No referral', await referrerBox.inputValue());
+      check('…defaulting to 无领路人 rather than to an empty field',
+        (await referrerBox.inputValue()) === 'No guide', await referrerBox.inputValue());
 
     /* 服侍岗位 (migration 0019) — the shared TagsInput. Typed and then SAVED
        WITHOUT pressing Enter, which is the ordinary way to use it and the path

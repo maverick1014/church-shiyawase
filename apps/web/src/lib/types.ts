@@ -10,6 +10,7 @@ import {
   Language,
   MemberStatus,
   PairStatus,
+  TrainingCategory,
   TrainingKind,
   Weekday,
 } from '@tog/shared';
@@ -243,6 +244,9 @@ export interface TrainingRow {
   location: string | null;
   /** null = open to everyone; else restricted to that gender (migration 0024). */
   gender: Gender | null;
+  /** An ACTIVITY's own category (never a course's) — null on a course, and
+   *  on an activity until someone picks one (migration 0027). */
+  category: TrainingCategory | null;
   /** 报名费. null / 0 = free, and the payment fields below stay hidden. */
   fee: string | number | null;
   /** How to pay: bank account, TnG number, a note. One field, any method. */

@@ -587,6 +587,36 @@ export function isTrainingKind(value: unknown): value is TrainingKind {
   return (TRAINING_KINDS as readonly string[]).includes(String(value));
 }
 
+/**
+ * 活动分类 — an ACTIVITY's own category (never a course's), so a pastor can
+ * see over a year how many of each kind of activity the church actually
+ * ran. A fixed, short list on purpose: free text would never roll up into
+ * a dashboard summary two people would describe the same way (migration
+ * 0027).
+ */
+export enum TrainingCategory {
+  Evangelism = 'evangelism',
+  Fellowship = 'fellowship',
+  Visitation = 'visitation',
+  Charity = 'charity',
+  Volunteer = 'volunteer',
+  Recreation = 'recreation',
+}
+
+export const TRAINING_CATEGORIES: readonly TrainingCategory[] = [
+  TrainingCategory.Evangelism,
+  TrainingCategory.Fellowship,
+  TrainingCategory.Visitation,
+  TrainingCategory.Charity,
+  TrainingCategory.Volunteer,
+  TrainingCategory.Recreation,
+];
+
+/** Is this a category the app ships? Guards a write against junk text. */
+export function isTrainingCategory(value: unknown): value is TrainingCategory {
+  return (TRAINING_CATEGORIES as readonly string[]).includes(String(value));
+}
+
 export interface Training {
   id: string;
   name: string;

@@ -10,6 +10,7 @@ import {
   GroupPosition,
   MemberStatus,
   PairStatus,
+  TrainingCategory,
   TrainingKind,
   Weekday,
   displayRole,
@@ -348,6 +349,22 @@ export function trainingKindClass(kind: TrainingKind | string): string {
   return kind === TrainingKind.Activity ? 'b-warn' : 'b-brand';
 }
 
+/** Every 活动分类 the form offers, in the order it offers them (0027). */
+export const TRAINING_CATEGORY_OPTIONS: TrainingCategory[] = [
+  TrainingCategory.Evangelism,
+  TrainingCategory.Fellowship,
+  TrainingCategory.Visitation,
+  TrainingCategory.Charity,
+  TrainingCategory.Volunteer,
+  TrainingCategory.Recreation,
+];
+
+/** Message key for an activity's category — keyed by the stored code, same
+ *  shape as `trainingKindKey` (rule G8). */
+export function trainingCategoryKey(category: TrainingCategory | string): MessageKey {
+  return `trainingCategory.${category}` as MessageKey;
+}
+
 /**
  * The one "who and when" line a 培训&活动 row shows — on the catalog card, on
  * the detail header and on the public sign-up page, which is why it is built
@@ -371,6 +388,7 @@ export function trainingMeta(
     start_time: string | null;
     location: string | null;
     gender?: string | null;
+    category?: string | null;
   },
   t: (key: MessageKey, vars?: Record<string, string | number>) => string,
 ): string[] {
@@ -382,6 +400,7 @@ export function trainingMeta(
   // "who and when" line, not a second inconsistent way to show it).
   if (row.gender) parts.push(t('trainings.genderOnly', { gender: t(genderKey(row.gender)) }));
   if (row.kind === TrainingKind.Activity) {
+    if (row.category) parts.push(t(trainingCategoryKey(row.category)));
     // Date and time are one fact about one occasion, so they read as one:
     // "2026-09-12 09:00". A bare `time` is a Malaysian wall-clock reading.
     const when = [formatDate(row.starts_on), formatMeetingTime(row.start_time)]

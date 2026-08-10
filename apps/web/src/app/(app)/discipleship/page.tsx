@@ -856,7 +856,7 @@ function AddPairModal({
   const toast = useToast();
   const [mentorId, setMentorId] = useState('');
   const [traineeId, setTraineeId] = useState('');
-  const [backfillDays, setBackfillDays] = useState('');
+  const [backfillDays, setBackfillDays] = useState('0');
   const [remark, setRemark] = useState('');
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -895,7 +895,7 @@ function AddPairModal({
   };
 
   return (
-    <Modal title={t('disc.new.title')} onClose={onClose}>
+    <Modal title={t('disc.new.title')} onClose={onClose} size="wide">
       {err && <ErrorBanner message={err} />}
       <p className="muted" style={{ margin: '0 0 14px', fontSize: 12.5, lineHeight: 1.6 }}>
         {t('disc.new.intro')}
@@ -950,24 +950,15 @@ function AddPairModal({
           placeholder={t('disc.field.remarkPlaceholder')}
         />
       </Field>
-      <Field label={t('disc.field.backfillLabel', { total: totalDays })}>
+      <Field label={t('disc.field.backfillLabel')}>
         <input
           type="number"
           min={0}
           max={totalDays}
           value={backfillDays}
           onChange={(e) => setBackfillDays(e.target.value)}
-          placeholder="0"
         />
       </Field>
-      <div className="hint" style={{ marginBottom: 6 }}>
-        {backfillDays && Number(backfillDays) > 0
-          ? t('disc.backfillOn', {
-              n: Math.min(Number(backfillDays), totalDays),
-              next: Math.min(Number(backfillDays), totalDays) + 1,
-            })
-          : t('disc.backfillOff', { total: totalDays })}
-      </div>
       <div className="modal-actions">
         <button className="btn ghost" onClick={onClose}>{t('common.cancel')}</button>
         <button className="btn" onClick={save} disabled={saving}>{saving ? t('common.saving') : t('disc.create')}</button>

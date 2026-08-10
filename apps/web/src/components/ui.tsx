@@ -11,6 +11,7 @@ import {
   useRef,
   useState,
 } from 'react';
+import { usePathname, useRouter } from 'next/navigation';
 import { initialOf, roleDot, roleKey, roleTagStyle } from '@/lib/labels';
 import { comboboxFilter, nextActiveIndex, type ComboOption } from '@/lib/combobox';
 import { isListSeparatorKey, parseList } from '@/lib/members-import';
@@ -707,17 +708,51 @@ export function ExportButton({
   );
 }
 
+// Which pathname this tab first rendered, and whether it has since navigated
+// anywhere else — module scope, not React state, on purpose: it survives
+// client-side route changes (the module stays loaded) and resets itself on
+// a real page load (the module re-evaluates from scratch), which is exactly
+// the moment browser history stops having anywhere useful in this app to go
+// back to.
+let bootPathname: string | null = null;
+let navigatedSinceBoot = false;
+
+/** Has this tab moved past the page it first loaded, i.e. is there somewhere
+ *  in THIS app's history for router.back() to actually land on? */
+function useCanGoBack(): boolean {
+  const pathname = usePathname();
+  if (bootPathname === null) bootPathname = pathname;
+  if (pathname !== bootPathname) navigatedSinceBoot = true;
+  return navigatedSinceBoot;
+}
+
 /**
  * The one way back out of a detail page. Every page said something different
  * ("‹ Back to catalog", "‹ Back to accounts"…) at a non-standard height, in
  * the right corner. It is one control now: a chevron, the word "Back", the
  * shared `--control-h` like every other button, on the left where a back
  * affordance belongs.
+ *
+ * Default is real browser back — a page reached by clicking around returns
+ * to exactly where that click came from (a filtered list, a scroll
+ * position, a picked month). `fallbackHref` is where to go instead when
+ * there is nothing in this tab's own history to go back to (a direct link,
+ * a refresh, a new tab) — never left unset, or "Back" does nothing on
+ * exactly the visits it matters most for. `onClick` is the escape hatch for
+ * the one shape that isn't a route change at all: an inline master-detail
+ * toggle on a single page (e.g. `/settings`'s account list), where "back"
+ * means closing a panel, not navigating anywhere.
  */
-export function BackButton({ onClick }: { onClick: () => void }) {
+export function BackButton(
+  props: { fallbackHref: string; onClick?: undefined } | { onClick: () => void; fallbackHref?: undefined },
+) {
   const t = useT();
+  const router = useRouter();
+  const canGoBack = useCanGoBack();
+  const handleClick =
+    props.onClick ?? (() => (canGoBack ? router.back() : router.push(props.fallbackHref)));
   return (
-    <button className="btn ghost back-btn" onClick={onClick}>
+    <button className="btn ghost back-btn" onClick={handleClick}>
       <ChevronLeftIcon size={16} />
       {t('common.back')}
     </button>
@@ -731,10 +766,16 @@ export function BackButton({ onClick }: { onClick: () => void }) {
  * `BackButton` whenever the page has an action that belongs beside back
  * rather than inside the record's card.
  */
-export function BackBar({ onBack, actions }: { onBack: () => void; actions?: ReactNode }) {
+export function BackBar({
+  actions,
+  ...back
+}: (
+  | { fallbackHref: string; onClick?: undefined }
+  | { onClick: () => void; fallbackHref?: undefined }
+) & { actions?: ReactNode }) {
   return (
     <div className="back-bar">
-      <BackButton onClick={onBack} />
+      <BackButton {...back} />
       {actions && <div className="back-bar-actions">{actions}</div>}
     </div>
   );

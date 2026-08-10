@@ -72,6 +72,10 @@
      they always line up. See UI rule in CLAUDE.md. */
   --control-h: 40px;
   --control-h-sm: 32px;
+  /* Measured height of a roll-call sheet's first header row (the date/colSpan
+     row) — same on phone and desktop, since .sheet-table cell padding isn't
+     responsive. The second header row's own sticky offset stacks on this. */
+  --sheet-head-row1-h: 40px;
   /* Tint of a loading skeleton — the same neutral family as the borders and
      the secondary surface, so a page of skeletons still reads as this app. */
   --skeleton: var(--accent-soft);
@@ -621,10 +625,56 @@ tbody tr:last-child td {
    sized by whichever name is wider and the sheet scrolls, so a row is two lines
    tall and never three. The floor is a little wider than one Chinese name for
    the same reason. */
-.sheet-table th:first-child,
-.sheet-table td:first-child {
+/* Scoped to the actual name column: the rowSpan="2" Member header in the
+   FIRST header row, and every body row's own first cell. A plain
+   `th:first-child` also matches the SECOND header row's leading cell — the
+   first occasion's own first tick sub-column (小组/会前), which is not a
+   name at all — and forcing that one sub-column to the same 120px floor
+   as a name made only the first occasion visibly wider than the others. */
+.sheet-table thead tr:first-child > th:first-child,
+.sheet-table tbody td:first-child {
   min-width: 120px;
   white-space: nowrap;
+}
+
+/* Frozen header + frozen name column: on a sheet with a month of columns and
+   a whole roster of rows, scrolling either direction used to carry the dates
+   and the member's own name away with it, so a tick you were about to make
+   had already lost the two things that say what it means.
+   `.sheet-wrap` (not `.table-wrap`) is what makes this actually work: a
+   plain `overflow-x: auto` wrapper computes its OWN overflow-y as `auto`
+   too (the CSS rule that couples the two axes the moment either one isn't
+   `visible`) — but since that wrapper's height still just grows to fit the
+   whole table, nothing ever scrolls inside it, so a `position: sticky`
+   child sticks relative to a box that never moves and just scrolls away
+   with the page. Giving the wrapper a real `max-height` turns it into a
+   genuine scroll container, which is what a sticky child needs.
+   `--sheet-head-row1-h` is the FIRST header row's own measured height
+   (dates, colSpan="3"); the second header row (小组/会前/主日) stacks its
+   sticky offset on top of it. Every sticky cell needs its own opaque
+   background or the rows scrolling underneath show straight through it. */
+.sheet-wrap {
+  overflow: auto;
+  max-height: 70vh;
+}
+.sheet-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: var(--surface);
+}
+.sheet-table thead tr:nth-child(2) > th {
+  top: var(--sheet-head-row1-h);
+}
+.sheet-table thead tr:first-child > th:first-child {
+  left: 0;
+  z-index: 4;
+}
+.sheet-table tbody td:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  background: var(--surface);
 }
 /* An empty-state row's one `colSpan` cell is also its row's first child, so
    it inherited the name column's nowrap above and clipped instead of
@@ -892,9 +942,13 @@ th.sortable:hover {
 .page-bar .btn {
   width: auto;
 }
+/* Content-sized, not stretched: a wide search box was what pushed a page's
+   other filters into wrapping onto a second row the moment there were more
+   than one or two of them. 150px is enough to read what's typed without
+   claiming space the dropdowns beside it need. */
 .page-bar input {
-  min-width: 200px;
-  flex: 0 1 240px;
+  width: 150px;
+  flex: 0 0 150px;
 }
 /* Narrow: the two halves stack instead of squeezing, filters then actions,
    with the actions still against the right edge. */

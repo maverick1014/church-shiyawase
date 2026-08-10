@@ -31,6 +31,7 @@ import {
   ChurchRole,
   GroupPosition,
   isOptionalModule,
+  isTrainingCategory,
   isTrainingKind,
   isUsableBrand,
   isUsableRail,
@@ -2682,6 +2683,14 @@ function trainingWrite(
   // members.gender uses, so the database enforces the value shape; the form
   // just never offers 'other' as a choice (see TrainingModal.tsx).
   if ('gender' in patch && patch.gender === '') patch.gender = null;
+  // 活动分类 is a fixed, short list (0027) — free text would never roll up
+  // into a dashboard summary, so a value that isn't one of the six is
+  // refused rather than silently stored.
+  if ('category' in patch) {
+    if (patch.category === '' || patch.category === null || patch.category === undefined) patch.category = null;
+    else if (!isTrainingCategory(patch.category))
+      throw new HttpError(400, `Unknown category: ${String(patch.category)}`);
+  }
   for (const key of ['pic', 'pic_contact', 'location', 'payment_instructions', 'payment_qr_url', 'start_time'] as const) {
     if (key in patch) {
       const value = String(patch[key] ?? '').trim();

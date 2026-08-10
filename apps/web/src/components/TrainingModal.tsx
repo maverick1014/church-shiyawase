@@ -8,13 +8,12 @@ import {
   Field,
   HallSelect,
   Modal,
-  Segmented,
   useConfirm,
   useToast,
 } from '@/components/ui';
 import { useHallScope } from '@/lib/hall';
 import { TrainingRow } from '@/lib/types';
-import { hasFee, trainingKindKey } from '@/lib/labels';
+import { hasFee, TRAINING_CATEGORY_OPTIONS, trainingCategoryKey } from '@/lib/labels';
 import { useT } from '@/lib/i18n';
 import { Gender, TrainingKind } from '@tog/shared';
 
@@ -57,11 +56,12 @@ export function TrainingModal({
   const t = useT();
   const confirm = useConfirm();
   const { hallId } = useHallScope();
-  // Fixed once the row exists (0024): editing reads it straight off the row
-  // and nothing in this form can change it; only a CREATE picks it, with its
-  // own bit of state for the segmented control below.
-  const [createKind, setCreateKind] = useState<TrainingKind>(newKind ?? TrainingKind.Course);
-  const kind = initial ? initial.kind : createKind;
+  // Fixed once the row exists (0024) — and there is nothing left in this
+  // form that could change it even at creation: the two catalog buttons
+  // ("+ Add training" / "+ Add activity") already say which shape, so a
+  // second picker inside the form asked the same question the button
+  // answer had just answered.
+  const kind = initial ? initial.kind : (newKind ?? TrainingKind.Course);
   const activity = kind === TrainingKind.Activity;
   const [form, setForm] = useState({
     name: initial?.name ?? '',
@@ -78,6 +78,9 @@ export function TrainingModal({
     // so "other" is deliberately not an option here even though the column
     // itself is the same gender_type members.gender uses.
     gender: initial?.gender ?? '',
+    // An activity's own classification (0027) — never a course's, so it is
+    // ignored on save when this row isn't one.
+    category: initial?.category ?? '',
     fee: initial?.fee === null || initial?.fee === undefined ? '' : String(initial.fee),
     payment_instructions: initial?.payment_instructions ?? '',
     is_enrollable: initial?.is_enrollable ?? true,
@@ -130,6 +133,10 @@ export function TrainingModal({
       start_time: activity ? form.start_time : '',
       location: activity ? form.location.trim() : '',
       gender: form.gender || null,
+      // A course clears it too — categorising an activity is meaningless for
+      // the other shape, and a stale value from an earlier CREATE attempt
+      // (before the shape was picked) must never survive onto a course.
+      category: activity ? (form.category || null) : null,
       fee: form.fee.trim(),
       payment_instructions: paid ? form.payment_instructions.trim() : '',
       is_enrollable: form.is_enrollable,
@@ -236,27 +243,6 @@ export function TrainingModal({
           placeholder={activity ? t('trainings.activityNamePlaceholder') : t('trainings.namePlaceholder')}
         />
       </Field>
-      {/* Which shape this row is — a CREATE picks it with the one segmented
-          control (rule G4), keyed by the stored code so a language switch
-          cannot change it (G8). An EDIT can only ever show it: `kind` is
-          fixed the moment the row exists (0024), so there is no control here
-          that could change it. */}
-      <Field label={t('trainings.field.kind')}>
-        {initial ? (
-          <input value={t(trainingKindKey(kind))} disabled readOnly />
-        ) : (
-          <Segmented
-            value={createKind}
-            onChange={setCreateKind}
-            label={t('trainings.field.kind')}
-            block
-            options={[
-              { value: TrainingKind.Course, label: t('trainingKind.course') },
-              { value: TrainingKind.Activity, label: t('trainingKind.activity') },
-            ]}
-          />
-        )}
-      </Field>
       <div className="form-row">
         <Field label={t('trainings.field.pic')}>
           {/* Free text, never a member picker: the person in charge is often an
@@ -318,6 +304,18 @@ export function TrainingModal({
               />
             </Field>
           </div>
+          {/* An activity's own classification (0027) — never a course's,
+              which is why this select only appears in this branch. Fixed,
+              short list: a pastor reading a year of these back has to see
+              the same handful of words every time, not free text. */}
+          <Field label={t('trainings.field.category')}>
+            <select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>
+              <option value="">{t('trainings.category.unset')}</option>
+              {TRAINING_CATEGORY_OPTIONS.map((c) => (
+                <option key={c} value={c}>{t(trainingCategoryKey(c))}</option>
+              ))}
+            </select>
+          </Field>
         </>
       ) : (
         <>
@@ -347,30 +345,32 @@ export function TrainingModal({
         </>
       )}
 
-      {/* Who may come — deliberately binary (see the form-state comment
-          above); NULL/'' means open to everyone. */}
-      <Field label={t('trainings.field.gender')}>
-        <select value={form.gender} onChange={(e) => setForm({ ...form, gender: e.target.value })}>
-          <option value="">{t('trainings.gender.any')}</option>
-          <option value={Gender.Male}>{t('gender.male')}</option>
-          <option value={Gender.Female}>{t('gender.female')}</option>
-        </select>
-      </Field>
-
-      {/* 报名费 — an empty fee means free, and everything below it stays out of
-          the way. A fee that IS set has to say how to pay it, or the public
-          page would ask for a receipt without saying where to send the money. */}
-      <Field label={t('trainings.field.fee')}>
-        <input
-          type="number"
-          min={0}
-          step="0.01"
-          inputMode="decimal"
-          value={form.fee}
-          onChange={(e) => setForm({ ...form, fee: e.target.value })}
-          placeholder={t('trainings.free')}
-        />
-      </Field>
+      <div className="form-row">
+        {/* Who may come — deliberately binary (see the form-state comment
+            above); NULL/'' means open to everyone. */}
+        <Field label={t('trainings.field.gender')}>
+          <select value={form.gender} onChange={(e) => setForm({ ...form, gender: e.target.value })}>
+            <option value="">{t('trainings.gender.any')}</option>
+            <option value={Gender.Male}>{t('gender.male')}</option>
+            <option value={Gender.Female}>{t('gender.female')}</option>
+          </select>
+        </Field>
+        {/* 报名费 — an empty fee means free, and everything below it stays
+            out of the way. A fee that IS set has to say how to pay it, or
+            the public page would ask for a receipt without saying where to
+            send the money. */}
+        <Field label={t('trainings.field.fee')}>
+          <input
+            type="number"
+            min={0}
+            step="0.01"
+            inputMode="decimal"
+            value={form.fee}
+            onChange={(e) => setForm({ ...form, fee: e.target.value })}
+            placeholder={t('trainings.free')}
+          />
+        </Field>
+      </div>
       {!paid && <div className="hint" style={{ marginBottom: 14 }}>{t('trainings.feeHint')}</div>}
       {paid && (
         <>

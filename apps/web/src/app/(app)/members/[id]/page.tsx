@@ -92,7 +92,7 @@ export default function MemberDetailPage() {
   if (member.initialLoading)
     return (
       <>
-        <BackButton onClick={() => router.push('/members')} />
+        <BackButton fallbackHref="/members" />
         <SkeletonScreen>
           <SkeletonDetail />
         </SkeletonScreen>
@@ -120,15 +120,25 @@ export default function MemberDetailPage() {
     { label: tr('member.field.gender'), value: m.gender ? tr(genderKey(m.gender)) : '—' },
     { label: tr('member.field.birthday'), value: formatDate(m.date_of_birth) },
     { label: tr('members.field.address'), value: m.address ?? '—' },
+    {
+      label: tr('members.field.referrer'),
+      // The embed is null for almost everybody, so it is guarded rather than
+      // assumed (rule G6) — and when there IS one, it is a way to get to them:
+      // "who brought this person" is a question you ask about the referrer next.
+      value: m.referrer ? (
+        <Link href={`/members/${m.referrer.id}`}>
+          <MemberName member={m.referrer} />
+        </Link>
+      ) : (
+        tr('members.noReferrer')
+      ),
+    },
   ];
+  // Two per row, in the order the church actually thinks about them: where
+  // (hall) and what they do (serving), which group and when they joined it,
+  // then when they first visited and whether they're still active.
   const churchFacts = [
     { label: tr('hall.label'), value: m.hall?.name ?? '—' },
-    { label: tr('members.col.group'), value: m.group?.name ?? tr('members.filter.ungrouped') },
-    { label: tr('members.col.status'), value: tr(memberStatusKey(m.status)) },
-    { label: tr('member.field.joined'), value: formatDate(m.joined_at) },
-    { label: tr('member.field.groupJoinedAt'), value: formatDate(m.group_joined_at) },
-  ];
-  const ministryFacts = [
     {
       label: tr('members.field.serving'),
       // Nothing at all when they serve nowhere: an empty list is a fact about
@@ -144,27 +154,16 @@ export default function MemberDetailPage() {
           )
         : '',
     },
+    { label: tr('members.col.group'), value: m.group?.name ?? tr('members.filter.ungrouped') },
+    { label: tr('member.field.groupJoinedAt'), value: formatDate(m.group_joined_at) },
+    { label: tr('member.field.joined'), value: formatDate(m.joined_at) },
+    { label: tr('members.col.status'), value: tr(memberStatusKey(m.status)) },
   ];
   const notesFacts = [{ label: tr('member.field.notes'), value: m.notes ?? '—' }];
-  const referralFacts = [
-    {
-      label: tr('members.field.referrer'),
-      // The embed is null for almost everybody, so it is guarded rather than
-      // assumed (rule G6) — and when there IS one, it is a way to get to them:
-      // "who brought this person" is a question you ask about the referrer next.
-      value: m.referrer ? (
-        <Link href={`/members/${m.referrer.id}`}>
-          <MemberName member={m.referrer} />
-        </Link>
-      ) : (
-        tr('members.noReferrer')
-      ),
-    },
-  ];
 
   return (
     <>
-      <BackButton onClick={() => router.push('/members')} />
+      <BackButton fallbackHref="/members" />
 
       <div className="card">
         {/* The header is the one place a member IS the page, so it carries the
@@ -233,17 +232,13 @@ export default function MemberDetailPage() {
         <div className="section-label" style={{ margin: '18px 0 10px' }}>{tr('member.section.contact')}</div>
         <FactGrid facts={contactFacts} />
 
+        {/* Two per row: hall+serving, life group+its join date, visit
+            date+status — the same pairing the add/edit form now uses. */}
         <div className="section-label" style={{ margin: '20px 0 10px' }}>{tr('member.section.church')}</div>
-        <FactGrid facts={churchFacts} />
-
-        <div className="section-label" style={{ margin: '20px 0 10px' }}>{tr('member.section.ministry')}</div>
-        <FactGrid facts={ministryFacts} />
+        <FactGrid facts={churchFacts} style={{ gridTemplateColumns: 'repeat(2, 1fr)' }} />
 
         <div className="section-label" style={{ margin: '20px 0 10px' }}>{tr('member.field.notes')}</div>
         <FactGrid facts={notesFacts} />
-
-        <div className="section-label" style={{ margin: '20px 0 10px' }}>{tr('member.section.referral')}</div>
-        <FactGrid facts={referralFacts} />
 
         <div className="section-label" style={{ margin: '24px 0 12px' }}>{tr('member.trainingRecord')}</div>
         <div className="table-wrap">

@@ -80,7 +80,7 @@ export default function TrainingDetailPage() {
   if (detail.initialLoading)
     return (
       <>
-        <BackButton onClick={() => router.push('/trainings')} />
+        <BackButton fallbackHref="/trainings" />
         <SkeletonScreen>
           <SkeletonCard lines={2} />
           <div className="grid g2 mt-16">
@@ -253,7 +253,7 @@ export default function TrainingDetailPage() {
 
   return (
     <>
-      <BackButton onClick={() => router.push('/trainings')} />
+      <BackButton fallbackHref="/trainings" />
 
       <div className="card">
         <div className="flex-between flex-wrap">

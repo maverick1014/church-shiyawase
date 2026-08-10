@@ -114,7 +114,7 @@ export default function HappinessTermGroupsPage() {
   if (term.initialLoading)
     return (
       <>
-        <BackButton onClick={() => router.push('/happiness')} />
+        <BackButton fallbackHref="/happiness" />
         <SkeletonScreen>
           <SkeletonCard lines={3} />
           <SkeletonTable rows={5} columns={6} />
@@ -132,7 +132,7 @@ export default function HappinessTermGroupsPage() {
 
   return (
     <>
-      <BackButton onClick={() => router.push('/happiness')} />
+      <BackButton fallbackHref="/happiness" />
 
       <div className="card">
         <FactGrid facts={facts} />

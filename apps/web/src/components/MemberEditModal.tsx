@@ -164,7 +164,7 @@ export function MemberEditModal({
     <Modal title={t('member.edit.title')} onClose={onClose}>
       {err && <ErrorBanner message={err} />}
       <div className="form-row">
-        <Field label={t('members.field.name')}>
+        <Field label={t('members.field.chineseName')}>
           <input value={form.full_name} onChange={(e) => setForm({ ...form, full_name: e.target.value })} />
         </Field>
         <Field label={t('members.field.englishName')}>
@@ -201,23 +201,35 @@ export function MemberEditModal({
             ))}
           </select>
         </Field>
-        <Field label={t('members.col.status')}>
-          <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value as MemberStatus })}>
-            {MEMBER_STATUS_OPTIONS.map((st) => (
-              <option key={st} value={st}>{t(memberStatusKey(st))}</option>
-            ))}
-          </select>
-        </Field>
-      </div>
-      <div className="form-row">
         <Field label={t('member.field.birthday')}>
           <input type="date" className={form.date_of_birth ? undefined : 'date-empty'} value={form.date_of_birth} onChange={(e) => setForm({ ...form, date_of_birth: e.target.value })} />
         </Field>
-        <Field label={t('member.field.joined')}>
-          <input type="date" className={form.joined_at ? undefined : 'date-empty'} value={form.joined_at} onChange={(e) => setForm({ ...form, joined_at: e.target.value })} />
+      </div>
+      {/* From here down, the church-facing block — same grouping and order as
+          the member detail page's own Church section: hall + serving, life
+          group + its join date, then visit date + status. */}
+      <div className="form-row">
+        <Field label={t('hall.label')}>
+          <HallSelect value={form.hall_id} onChange={(id) => setForm({ ...form, hall_id: id })} />
+        </Field>
+        <Field label={t('members.field.serving')}>
+          <TagsInput
+            value={serving}
+            onChange={setServing}
+            suggestions={servingSuggestions}
+            placeholder={t('members.servingPlaceholder')}
+          />
         </Field>
       </div>
       <div className="form-row">
+        <Field label={t('members.field.group')}>
+          <select value={form.group_id} onChange={(e) => changeGroup(e.target.value)}>
+            <option value="">{t('members.filter.ungrouped')}</option>
+            {(allGroups.data ?? []).map((g) => (
+              <option key={g.id} value={g.id}>{g.name}</option>
+            ))}
+          </select>
+        </Field>
         <Field label={t('member.field.groupJoinedAt')}>
           <input
             type="date"
@@ -228,14 +240,13 @@ export function MemberEditModal({
         </Field>
       </div>
       <div className="form-row">
-        <Field label={t('hall.label')}>
-          <HallSelect value={form.hall_id} onChange={(id) => setForm({ ...form, hall_id: id })} />
+        <Field label={t('member.field.joined')}>
+          <input type="date" className={form.joined_at ? undefined : 'date-empty'} value={form.joined_at} onChange={(e) => setForm({ ...form, joined_at: e.target.value })} />
         </Field>
-        <Field label={t('members.field.group')}>
-          <select value={form.group_id} onChange={(e) => changeGroup(e.target.value)}>
-            <option value="">{t('members.filter.ungrouped')}</option>
-            {(allGroups.data ?? []).map((g) => (
-              <option key={g.id} value={g.id}>{g.name}</option>
+        <Field label={t('members.col.status')}>
+          <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value as MemberStatus })}>
+            {MEMBER_STATUS_OPTIONS.map((st) => (
+              <option key={st} value={st}>{t(memberStatusKey(st))}</option>
             ))}
           </select>
         </Field>
@@ -263,14 +274,6 @@ export function MemberEditModal({
           </Field>
         )}
       </div>
-      <Field label={t('members.field.serving')}>
-        <TagsInput
-          value={serving}
-          onChange={setServing}
-          suggestions={servingSuggestions}
-          placeholder={t('members.servingPlaceholder')}
-        />
-      </Field>
       <Field label={t('member.field.notes')}>
         <textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} rows={2} />
       </Field>

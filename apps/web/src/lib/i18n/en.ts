@@ -10,6 +10,7 @@ export const en = {
   'common.cancel': 'Cancel',
   'common.close': 'Close',
   'common.edit': 'Edit',
+  'common.view': 'View',
   'common.delete': 'Delete',
   'common.remove': 'Remove',
   'common.add': 'Add',
@@ -155,14 +156,15 @@ export const en = {
   'members.hint': '💡 Tap a member to see their training record and discipleship pairs, and to edit their profile there.',
   'members.new.title': 'Add member',
   'members.field.name': 'Name',
+  'members.field.chineseName': 'Chinese name',
   'members.field.englishName': 'English name',
   'members.field.phone': 'Phone',
   'members.field.email': 'Email',
   'members.field.address': 'Address',
-  'members.field.referrer': 'Referred by',
-  // The explicit default of the 推荐人 picker: nobody brought them, which is
+  'members.field.referrer': 'Guide',
+  // The explicit default of the 领路人 picker: nobody brought them, which is
   // the ordinary case and stores NULL rather than a placeholder person.
-  'members.noReferrer': 'No referral',
+  'members.noReferrer': 'No guide',
   'members.field.group': 'Life group',
   'members.field.churchRole': 'Church role',
   'members.field.groupRole': 'Group position',
@@ -286,8 +288,6 @@ export const en = {
   'member.section.personal': 'Personal',
   'member.section.contact': 'Contact',
   'member.section.church': 'Church',
-  'member.section.ministry': 'Ministry',
-  'member.section.referral': 'Referral',
   // "Leading X" / "Led by X" — the same mentor→trainee relationship
   // `disc.progress.direction` names, read off the OTHER person in the pair.
   'member.pair.leading': 'Leading {name}',
@@ -471,6 +471,8 @@ export const en = {
   'trainings.field.gender': 'Restricted to',
   'trainings.gender.any': 'Open to all',
   'trainings.genderOnly': '{gender} only',
+  'trainings.field.category': 'Category',
+  'trainings.category.unset': 'No category',
   'trainings.field.enrollable': 'Open for sign-up (self sign-up, still needs approval)',
   'trainings.err.name': 'Please enter a name',
   /* ---- 报名费: the fee, how to pay it, and the receipt ------------------ */
@@ -549,9 +551,7 @@ export const en = {
   'disc.field.traineeHint': 'Trainee (members already paired are hidden)',
   'disc.field.remark': 'Remark',
   'disc.field.remarkPlaceholder': 'A note for staff — not seen by the mentor or trainee',
-  'disc.field.backfillLabel': 'Days already completed (optional — carry on from where you got to offline, up to {total})',
-  'disc.backfillOn': '🕊 Days 1 to {n} are marked complete when the pair is created; entries continue from day {next}.',
-  'disc.backfillOff': '🕊 The pair starts at day 1 (progress 0 / {total}). It appears in the relay map once entries begin.',
+  'disc.field.backfillLabel': 'Days already completed',
   'disc.err.pick': 'Please choose a mentor and a trainee',
   'disc.err.same': 'The mentor and the trainee cannot be the same person',
   'disc.create': 'Create pair',
@@ -918,6 +918,13 @@ export const en = {
 
   'trainingKind.course': 'Training',
   'trainingKind.activity': 'Activity',
+
+  'trainingCategory.evangelism': 'Evangelism',
+  'trainingCategory.fellowship': 'Fellowship',
+  'trainingCategory.visitation': 'Visitation',
+  'trainingCategory.charity': 'Charity',
+  'trainingCategory.volunteer': 'Volunteer service',
+  'trainingCategory.recreation': 'Recreation',
 
   'accountRole.super_admin': 'Super admin',
   'accountRole.admin': 'Admin',
