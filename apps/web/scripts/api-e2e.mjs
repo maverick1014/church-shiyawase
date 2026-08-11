@@ -820,6 +820,28 @@ async function selfRegistration(adminCookie, hallId) {
     (await req('POST', '/api/members/register', {
       body: { full_name: `${chinese}-w`, hall_id: hallId, group_id: '00000000-0000-0000-0000-000000000000' },
     })).status === 400);
+  // A malformed id must be a refusal, never a 500: `.eq('id', …)` would hand
+  // this straight to Postgres as a uuid and answer 22P02 → 500 out of unwrap,
+  // on a path a stranger can reach without signing in.
+  ok('registration naming a life group id that is not even a uuid → 400, never 500',
+    (await req('POST', '/api/members/register', {
+      body: { full_name: `${chinese}-v`, hall_id: hallId, group_id: 'not-a-uuid' },
+    })).status === 400);
+  // Every field the form may send is capped, not just the name — the caps come
+  // from IMPORT_COLUMNS so a spreadsheet and this form agree on "too long".
+  ok('registration with an absurd 备注 → 400',
+    (await req('POST', '/api/members/register', {
+      body: { full_name: `${chinese}-u`, hall_id: hallId, notes: 'x'.repeat(5000) },
+    })).status === 400);
+  ok('registration with an absurd 地址 → 400',
+    (await req('POST', '/api/members/register', {
+      body: { full_name: `${chinese}-t`, hall_id: hallId, address: 'x'.repeat(5000) },
+    })).status === 400);
+  // Whatever those four refused, none of them may have left a row behind.
+  for (const suffix of ['v', 'u', 't', 'w']) {
+    ok(`…and no member was created by the refused “-${suffix}” registration`,
+      ((await req('GET', `/api/members?q=${encodeURIComponent(`${chinese}-${suffix}`)}`, H)).json || []).length === 0);
+  }
   // Only GET and POST are public on this exact path; nothing else under
   // /members is opened by it.
   ok('unauthenticated PATCH /members/register → 401',

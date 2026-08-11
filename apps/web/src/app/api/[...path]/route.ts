@@ -2069,6 +2069,27 @@ const REGISTER_FIELDS = [
 ] as const;
 
 /**
+ * How long each of those may be.
+ *
+ * This used to come free from `planImport`, which checked every row against
+ * `IMPORT_COLUMNS`' own `maxLength` before the register handler stopped
+ * running it (0128). Without it an UNAUTHENTICATED caller could post a
+ * megabyte of text into columns that are plain `text` with no length
+ * constraint of their own — which is exactly what the API E2E's "absurd name"
+ * check caught. The caps are READ from `IMPORT_COLUMNS` rather than retyped,
+ * so a column's limit cannot mean one thing to a spreadsheet and another to
+ * this form (rule G4); the two fields the importer has no column for get
+ * their own entry.
+ */
+const REGISTER_MAX_LENGTH = new Map<string, number>([
+  ...IMPORT_COLUMNS.map((c) => [c.field, c.maxLength] as [string, number]),
+  // A note is free text this form only started taking in 0128, and a life
+  // group arrives here as an ID rather than the importer's own name column.
+  ['notes', 2000],
+  ['group_id', 64],
+]);
+
+/**
  * `POST /api/members/register` — the public self-registration form (`/join`).
  *
  * The shape follows the public sign-up path exactly (`/trainings/enroll/:id`):
@@ -2121,6 +2142,15 @@ async function registerMember(
   // with three must be told which, or the person lands in the wrong roll call.
   const hall = hallId ? halls.find((h) => h.id === hallId) : halls.length === 1 ? halls[0] : null;
   if (!hall) throw new HttpError(400, 'Please choose your congregation');
+
+  // Before anything is looked up or written: nothing absurdly long gets in.
+  // This is an unauthenticated path, so the cap is a real limit rather than a
+  // nicety — see REGISTER_MAX_LENGTH above.
+  for (const field of REGISTER_FIELDS) {
+    const cap = REGISTER_MAX_LENGTH.get(field);
+    if (cap !== undefined && tidy(sent[field]).length > cap)
+      throw new HttpError(400, `That ${field.replace(/_/g, ' ')} is too long`);
+  }
 
   const fullName = tidy(sent.full_name);
   if (!fullName) throw new HttpError(400, 'Please enter a name');
@@ -2182,10 +2212,15 @@ async function registerMember(
   // rule `planImport` enforces on an imported row's own group column.
   const groupId = tidy(sent.group_id);
   if (groupId) {
+    // Matched in JS against the whole (small) table, exactly the way `hall` is
+    // resolved above — never `.eq('id', groupId)`, which hands an unvalidated
+    // string to Postgres as a uuid and answers a malformed one with 22P02,
+    // i.e. a 500 out of `unwrap` on a path a stranger can reach.
     const groups = unwrap<Array<{ id: string; hall_id: string }>>(
-      await db.from('groups').select('id,hall_id').eq('id', groupId),
+      await db.from('groups').select('id,hall_id'),
     );
-    if (groups.length === 0 || groups[0].hall_id !== hall.id)
+    const group = groups.find((g) => g.id === groupId);
+    if (!group || group.hall_id !== hall.id)
       throw new HttpError(400, 'That life group is not in this congregation');
     values.group_id = groupId;
   }
