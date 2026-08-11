@@ -1,11 +1,12 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { api } from '@/lib/api';
 import { BrandLogo } from '@/components/BrandLogo';
-import { Field, PhotoPicker } from '@/components/ui';
+import { Combobox, Field, PhotoPicker, TagsInput } from '@/components/ui';
 import { useChurchProfile } from '@/lib/church';
 import { GENDER_OPTIONS, genderKey } from '@/lib/labels';
+import type { ComboOption } from '@/lib/combobox';
 import { useT } from '@/lib/i18n';
 import type { MessageKey } from '@/lib/i18n';
 import type { HallRow } from '@/lib/types';
@@ -20,14 +21,22 @@ import { Gender } from '@tog/shared';
  * the church's own logo and name off `useChurchProfile`, and the app's default
  * language because there is no account to read a language preference from.
  *
- * What a visitor may set is deliberately small — their own contact details and
- * a photo. A church role, a life group, a status: those are the church's to
- * decide afterwards, and `POST /api/members/register` does not read them from
- * the body at all.
+ * The field set mirrors the staff-facing add-member form (church feedback:
+ * "all field is needed") — everything except a church RANK and a group SEAT,
+ * which stay the church's own calls: `POST /api/members/register` reads
+ * `church_role`/`group_position` from nowhere at all, so a body carrying
+ * either is silently ignored, never obeyed.
  */
 
-/** The bootstrap the form needs, and the only thing this path hands out. */
-type RegisterOptions = { halls: HallRow[] };
+/** The bootstrap the form needs, and the only thing this path hands out.
+ *  `members` carries only names (never phone/email/address/birthday) — the
+ *  minimum a 推荐人 Combobox needs and no more, on a page nobody has signed
+ *  into. */
+type RegisterOptions = {
+  halls: HallRow[];
+  groups: { id: string; name: string; hall_id: string }[];
+  members: { id: string; full_name: string; english_name: string | null }[];
+};
 
 type RegisterStatus = 'created' | 'updated';
 
@@ -41,7 +50,7 @@ const RESULT: Record<RegisterStatus, { icon: string; tone: string; title: Messag
 export default function JoinPage() {
   const t = useT();
   const church = useChurchProfile();
-  const [halls, setHalls] = useState<HallRow[]>([]);
+  const [options, setOptions] = useState<RegisterOptions>({ halls: [], groups: [], members: [] });
   const [form, setForm] = useState({
     full_name: '',
     english_name: '',
@@ -51,7 +60,13 @@ export default function JoinPage() {
     date_of_birth: '',
     address: '',
     hall_id: '',
+    // '' = 无推荐人 — the same convention the staff-facing form stores (nobody
+    // referred them is the ordinary case, not a gap somebody forgot).
+    referred_by: '',
+    group_id: '',
+    notes: '',
   });
+  const [serving, setServing] = useState<string[]>([]);
   const [photo, setPhoto] = useState<File | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -61,7 +76,7 @@ export default function JoinPage() {
     let alive = true;
     api
       .get<RegisterOptions>('/members/register')
-      .then((o) => alive && setHalls(o.halls))
+      .then((o) => alive && setOptions(o))
       // A congregation list that cannot be read is not worth blocking the form
       // for: a church with one congregation needs no choice at all, and the
       // server refuses a registration that genuinely needs one.
@@ -71,8 +86,24 @@ export default function JoinPage() {
     };
   }, []);
 
+  const { halls, groups, members } = options;
   // One congregation is not a question worth asking; several is.
   const hallId = form.hall_id || (halls.length === 1 ? halls[0].id : '');
+
+  // A member picker, never a `<select>` (rule G4) — 无推荐人 first, the same
+  // shape `referrerOptions` builds for the staff-facing form, over the
+  // narrower (names-only) list this public page is handed.
+  const referrerOpts: ComboOption[] = useMemo(
+    () => [
+      { value: '', label: t('members.noReferrer') },
+      ...members.map((m) => ({ value: m.id, label: m.full_name, sub: m.english_name })),
+    ],
+    [members, t],
+  );
+  // Only this congregation's own groups — the server refuses a group from a
+  // different one anyway, and offering it here would just be a guaranteed
+  // error after the rest of the form was filled in.
+  const hallGroups = useMemo(() => groups.filter((g) => g.hall_id === hallId), [groups, hallId]);
 
   const submit = async () => {
     const name = form.full_name.trim();
@@ -96,6 +127,10 @@ export default function JoinPage() {
         date_of_birth: form.date_of_birth,
         address: form.address.trim(),
         hall_id: hallId,
+        referred_by: form.referred_by,
+        group_id: form.group_id,
+        serving_roles: serving.join(','),
+        notes: form.notes.trim(),
       };
       let r: { status: RegisterStatus };
       if (photo) {
@@ -144,7 +179,20 @@ export default function JoinPage() {
                 className="btn ghost"
                 onClick={() => {
                   setResult(null);
-                  setForm({ full_name: '', english_name: '', phone: '', email: '', gender: '', date_of_birth: '', address: '', hall_id: form.hall_id });
+                  setForm({
+                    full_name: '',
+                    english_name: '',
+                    phone: '',
+                    email: '',
+                    gender: '',
+                    date_of_birth: '',
+                    address: '',
+                    hall_id: form.hall_id,
+                    referred_by: '',
+                    group_id: '',
+                    notes: '',
+                  });
+                  setServing([]);
                   setPhoto(null);
                 }}
               >
@@ -214,27 +262,57 @@ export default function JoinPage() {
                   />
                 </Field>
               </div>
-              {/* Where the church would visit them or post something — theirs
-                  to give, unlike 推荐人, which is the church's own record of how
-                  somebody arrived and is not on this form at all. */}
-              <Field label={t('join.field.address')}>
-                <input
-                  value={form.address}
-                  onChange={(e) => setForm({ ...form, address: e.target.value })}
-                />
-              </Field>
-              {/* Only asked when there is something to choose between: a church
-                  with one congregation files everyone in it anyway. */}
-              {halls.length > 1 && (
-                <Field label={t('join.field.hall')}>
-                  <select value={hallId} onChange={(e) => setForm({ ...form, hall_id: e.target.value })}>
-                    <option value="">{t('hall.choose')}</option>
-                    {halls.map((h) => (
-                      <option key={h.id} value={h.id}>{h.name}</option>
+              <div className="form-row">
+                {/* Where the church would visit them or post something —
+                    theirs to give, same as the phone/email above. */}
+                <Field label={t('join.field.address')}>
+                  <input
+                    value={form.address}
+                    onChange={(e) => setForm({ ...form, address: e.target.value })}
+                  />
+                </Field>
+                <Field label={t('members.field.referrer')}>
+                  <Combobox
+                    value={form.referred_by}
+                    onChange={(id) => setForm({ ...form, referred_by: id })}
+                    options={referrerOpts}
+                    ariaLabel={t('members.field.referrer')}
+                  />
+                </Field>
+              </div>
+              <div className="form-row">
+                {/* Only asked when there is something to choose between: a
+                    church with one congregation files everyone in it anyway. */}
+                {halls.length > 1 && (
+                  <Field label={t('join.field.hall')}>
+                    <select value={hallId} onChange={(e) => setForm({ ...form, hall_id: e.target.value, group_id: '' })}>
+                      <option value="">{t('hall.choose')}</option>
+                      {halls.map((h) => (
+                        <option key={h.id} value={h.id}>{h.name}</option>
+                      ))}
+                    </select>
+                  </Field>
+                )}
+                <Field label={t('members.field.group')}>
+                  <select value={form.group_id} onChange={(e) => setForm({ ...form, group_id: e.target.value })}>
+                    <option value="">{t('members.filter.ungrouped')}</option>
+                    {hallGroups.map((g) => (
+                      <option key={g.id} value={g.id}>{g.name}</option>
                     ))}
                   </select>
                 </Field>
-              )}
+              </div>
+              <Field label={t('members.field.serving')}>
+                <TagsInput
+                  value={serving}
+                  onChange={setServing}
+                  suggestions={[]}
+                  placeholder={t('members.servingPlaceholder')}
+                />
+              </Field>
+              <Field label={t('member.field.notes')}>
+                <textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} rows={2} />
+              </Field>
               <Field label={t('join.field.photo')}>
                 <PhotoPicker file={photo} onChange={setPhoto} name={form.full_name} />
               </Field>

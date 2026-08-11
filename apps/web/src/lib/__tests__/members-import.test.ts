@@ -3,6 +3,7 @@ import {
   IMPORT_COLUMNS,
   excelSerialToDate,
   matchImportColumn,
+  matchRegistrant,
   pairKey,
   parseImportDate,
   parseList,
@@ -425,5 +426,41 @@ describe('parseList', () => {
     // into the form and one written into a cell are split the same way.
     expect(parseList('敬拜，音响')).toEqual(['敬拜', '音响']);
     expect(parseList('敬拜；音响／招待')).toEqual(['敬拜', '音响', '招待']);
+  });
+});
+
+describe('matchRegistrant', () => {
+  // A different question from `pairKey`'s exact composite match (0128): a
+  // public registrant does not reliably retype the exact English-name
+  // spelling the church has on file, so the Chinese name alone is the
+  // anchor, with a phone-number tie-break only when it names several people.
+  const john = { id: 'm1', full_name: '陈约翰', phone: '012-111 1111' };
+  const twinA = { id: 't1', full_name: '张伟', phone: '011-100 0001' };
+  const twinB = { id: 't2', full_name: '张伟', phone: '011-100 0002' };
+
+  it('matches on the Chinese name alone when it names exactly one person', () => {
+    expect(matchRegistrant('陈约翰', '', [john])).toEqual(john);
+    // Whatever (if anything) the visitor typed as an English name is
+    // irrelevant here — there is no English name in this function's input
+    // at all, unlike `pairKey`.
+    expect(matchRegistrant(' 陈约翰 ', '', [john])).toEqual(john);
+  });
+
+  it('is a stranger when the Chinese name matches nobody', () => {
+    expect(matchRegistrant('王小明', '', [john])).toBeNull();
+  });
+
+  it('falls back to the phone number when the Chinese name names several people', () => {
+    expect(matchRegistrant('张伟', '011-100 0002', [twinA, twinB])).toEqual(twinB);
+    expect(matchRegistrant('张伟', '011-100 0001', [twinA, twinB])).toEqual(twinA);
+  });
+
+  it('is a NEW person, never a guess, when no phone was given or none matches', () => {
+    expect(matchRegistrant('张伟', '', [twinA, twinB])).toBeNull();
+    expect(matchRegistrant('张伟', '019-999 9999', [twinA, twinB])).toBeNull();
+  });
+
+  it('folds whitespace the same way pairKey does', () => {
+    expect(matchRegistrant('  张伟  ', ' 011-100 0001 ', [twinA, twinB])).toEqual(twinA);
   });
 });

@@ -18,8 +18,14 @@ import {
 import type { SheetCell, SheetMeeting } from '@/lib/types';
 import {
   IMPORT_COLUMNS,
+  looksLikeEmail,
+  looksLikePhone,
   MAX_IMPORT_ROWS,
+  matchRegistrant,
+  parseImportDate,
+  parseList,
   planImport,
+  tidy,
   type ImportContext,
   type ImportIssue,
   type ImportRow,
@@ -29,6 +35,7 @@ import {
   AccountRole,
   AccountStatus,
   ChurchRole,
+  Gender,
   GroupPosition,
   isOptionalModule,
   isTrainingCategory,
@@ -530,25 +537,32 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
     // in their own details instead of somebody typing them off a paper slip.
     //
     // What this path CAN do, deliberately and exhaustively: add one member
-    // carrying a name pair, a phone, an email, an address, a gender, a
-    // birthday, a congregation and one photo — or, when that pair is already on
-    // the roll, update those same contact details on that one row. What it
-    // CANNOT do: set a church role (every registration is an ordinary member),
-    // a status, a life group, a group position, notes, a 服侍岗位, or a 推荐人
-    // — a ministry is something the church hands out and a referral is the
-    // church's record of how somebody arrived, never something a visitor claims
-    // for themselves. The fields are read by name from an allow-list, so a body
-    // carrying `church_role: 'pastor'` or `serving_roles: ['敬拜']` has it
-    // ignored rather than obeyed; it can touch nobody but the single person
-    // whose name pair was typed; and it reads nothing back — the answer is one
-    // word, the same shape either way, and never a member's stored data.
+    // carrying almost everything the staff-facing add-member form does — a
+    // name pair, a phone, an email, an address, a gender, a birthday, a
+    // 推荐人, a life group, a 服侍岗位 list, notes and a photo — or, when a
+    // match is found (see `matchRegistrant`), update those same fields on
+    // that one row. What it CANNOT do: set a church role or a group POSITION
+    // — those are things the church hands out, never something a visitor
+    // claims for themselves on the way in; that split is the whole reason
+    // `church_role` and `group_position` stay off REGISTER_FIELDS while
+    // `referred_by`/`group_id`/`serving_roles`/`notes` are on it now. The
+    // fields are read by name from an allow-list, so a body carrying
+    // `church_role: 'pastor'` or `group_position: 'leader'` has it ignored
+    // rather than obeyed; it can touch nobody but the single person whose
+    // name was typed; and it reads nothing back — the answer is one word,
+    // the same shape either way, and never a member's stored data.
     if (r1 === 'register' && !r2) {
       if (method === 'GET') {
-        // The form's own bootstrap. A public page cannot call /halls (that
-        // needs a session), and it must offer the real congregations rather
-        // than a free-text box nobody can match later. Id + name only.
+        // The form's own bootstrap. A public page cannot call
+        // /halls·/groups·/members (those need a session), and it must offer
+        // the real congregations/groups/people rather than free-text boxes
+        // nobody could match later. Only names travel here — never phone,
+        // email, address or birthday — the minimum a 推荐人 Combobox and a
+        // 小组 select need to work, and no more.
         return json({
           halls: unwrap(await db.from('halls').select('id,name').order('sort_order')),
+          groups: unwrap(await db.from('groups').select('id,name,hall_id').order('name')),
+          members: unwrap(await db.from('members').select('id,full_name,english_name').order('full_name')),
         });
       }
       if (method === 'POST') return json(await registerMember(db, req));
@@ -2037,14 +2051,21 @@ const REGISTER_FIELDS = [
   'english_name',
   'phone',
   'email',
-  // An address is a contact detail like the two above it — the church visits
-  // people and posts them things, and the person themselves is the one who
-  // knows it. `referred_by` is deliberately NOT here: who brought somebody is
-  // the CHURCH's record of how they arrived, not a claim the arriving person
-  // gets to make about themselves — the same reason `church_role` is absent.
   'address',
   'gender',
   'date_of_birth',
+  // Everything below reads like the staff-facing add-member form now
+  // (church feedback: "all field is needed"), with two deliberate holdouts —
+  // `church_role` and `group_position` stay off this list, because who
+  // somebody RANKS as and what SEAT they hold in a group are the church's own
+  // calls, never something a visitor gets to claim on the way in. A referral,
+  // a life group, a ministry and a note are different: they read like facts
+  // a person (or whoever is helping them fill this in at the door) can
+  // reasonably supply about themselves.
+  'referred_by',
+  'group_id',
+  'serving_roles',
+  'notes',
 ] as const;
 
 /**
@@ -2057,12 +2078,21 @@ const REGISTER_FIELDS = [
  * anonymous file storage: every check below runs first, and nothing reaches the
  * bucket until this row is going to be written.
  *
+ * Matching is `matchRegistrant` (lib/members-import.ts), NOT `planImport`'s own
+ * `pairKey` — a deliberately different question. An imported spreadsheet row is
+ * trusted to carry the church's own exact spelling of both names; a person
+ * typing their own registration is not, so requiring the English name to match
+ * too would file a returning visitor as a stranger the moment they left it
+ * blank the second time. The Chinese name alone is the anchor, with the phone
+ * number as the tie-breaker on the rare collision — see that function's own
+ * comment for the full rule.
+ *
  * The answer is one word — `created` or `updated` — and the same shape either
  * way. It carries no member data at all: not an id, not a phone number, not
  * even the name that was typed. The one thing it does reveal is whether that
- * exact pair of names was already on the roll, which is unavoidable given the
- * church asked to be told "we have updated your details" rather than "welcome",
- * and is a fact about the visitor's own name.
+ * name was already on the roll, which is unavoidable given the church asked to
+ * be told "we have updated your details" rather than "welcome", and is a fact
+ * about the visitor's own name.
  */
 async function registerMember(
   db: ReturnType<typeof getDb>,
@@ -2092,38 +2122,81 @@ async function registerMember(
   const hall = hallId ? halls.find((h) => h.id === hallId) : halls.length === 1 ? halls[0] : null;
   if (!hall) throw new HttpError(400, 'Please choose your congregation');
 
-  const existing = unwrap<ImportContext['existing']>(
-    await db.from('members').select('id,full_name,english_name,hall_id,group_position'),
+  const fullName = tidy(sent.full_name);
+  if (!fullName) throw new HttpError(400, 'Please enter a name');
+
+  const existing = unwrap<Array<{ id: string; full_name: string; phone: string | null }>>(
+    await db.from('members').select('id,full_name,phone'),
   );
+  const matched = matchRegistrant(fullName, tidy(sent.phone), existing);
 
-  // The same decision an imported row goes through, with only the columns this
-  // form is allowed to carry — so "an existing pair is an update, not a second
-  // row" is one rule with one implementation. `hallScope: null` because there
-  // is no account here to scope anything to; the congregation is the one the
-  // visitor picked, and it is only used when the person is NEW (an existing
-  // member keeps the congregation the church filed them under).
-  const row: ImportRow = { row: 1 };
-  for (const field of REGISTER_FIELDS) if (sent[field]) row[field] = sent[field];
-  const [planned] = planImport([row], {
-    halls,
-    groups: [],
-    existing,
-    hallScope: null,
-    defaultHallId: hall.id,
-  }).rows;
-  if (planned.action === 'skip')
-    throw new HttpError(400, IMPORT_ISSUE_MESSAGE[planned.issue ?? 'name_missing']);
-
-  const values = { ...planned.values };
-  if (planned.action === 'update') {
-    // A visitor may correct their own phone number; they may not re-spell the
-    // church's record of their name. The pair already matched, so these two
-    // differ from what is stored only in capitalisation or spacing anyway.
-    delete values.full_name;
-    delete values.english_name;
+  const values: Record<string, unknown> = {};
+  if (!matched) {
+    // A visitor may correct their own phone number on a later visit; they may
+    // not re-spell the church's record of their name, and a brand-new person
+    // starts in the congregation they picked, never one guessed at.
+    values.full_name = fullName;
+    const englishName = tidy(sent.english_name);
+    if (englishName) values.english_name = englishName;
+    values.hall_id = hall.id;
   }
 
-  // Only now — the name has been resolved and the row is going to be written.
+  const phone = tidy(sent.phone);
+  if (phone) {
+    if (!looksLikePhone(phone)) throw new HttpError(400, 'That does not look like a phone number');
+    values.phone = phone;
+  }
+  const email = tidy(sent.email);
+  if (email) {
+    if (!looksLikeEmail(email)) throw new HttpError(400, 'That does not look like an email address');
+    // Sign-in matches on a lower-cased address, so stored emails are too.
+    values.email = email.toLowerCase();
+  }
+  const address = tidy(sent.address);
+  if (address) values.address = address;
+  const gender = tidy(sent.gender);
+  if (gender) {
+    if (!(Object.values(Gender) as string[]).includes(gender))
+      throw new HttpError(400, 'Unknown gender');
+    values.gender = gender;
+  }
+  const dob = tidy(sent.date_of_birth);
+  if (dob) {
+    const date = parseImportDate(dob);
+    if (!date) throw new HttpError(400, 'That does not look like a date');
+    values.date_of_birth = date;
+  }
+  // 推荐人 — a member id straight from the form's own Combobox (unlike a
+  // spreadsheet row, this form has no name to resolve: it already has ids to
+  // pick from). Silently dropped on a self-referral rather than rejected —
+  // the UI never offers it, so it can only happen from a stale id — and
+  // refused outright when it names nobody at all, which is a real bug.
+  const referredBy = tidy(sent.referred_by);
+  if (referredBy && referredBy !== matched?.id) {
+    if (!existing.some((m) => m.id === referredBy))
+      throw new HttpError(400, 'Unknown referrer');
+    values.referred_by = referredBy;
+  }
+  // 小组 — same shape: an id from a `<select>`, not a name to resolve. Must
+  // belong to the SAME congregation the visitor is joining, the identical
+  // rule `planImport` enforces on an imported row's own group column.
+  const groupId = tidy(sent.group_id);
+  if (groupId) {
+    const groups = unwrap<Array<{ id: string; hall_id: string }>>(
+      await db.from('groups').select('id,hall_id').eq('id', groupId),
+    );
+    if (groups.length === 0 || groups[0].hall_id !== hall.id)
+      throw new HttpError(400, 'That life group is not in this congregation');
+    values.group_id = groupId;
+  }
+  // 服侍岗位 — free text, several per cell, exactly like the import column
+  // and the shared TagsInput both already read it (rule G4).
+  const serving = parseList(sent.serving_roles ?? '');
+  if (serving.length > 0) values.serving_roles = serving;
+  const notes = tidy(sent.notes);
+  if (notes) values.notes = notes;
+
+  // Only now — every field has validated and the row is going to be written.
   if (photo) {
     const file = checkedFile(photo, PHOTO_UPLOAD);
     values.avatar_url = await storeFile(
@@ -2136,12 +2209,12 @@ async function registerMember(
     );
   }
 
-  if (planned.action === 'update' && planned.member_id) {
+  if (matched) {
     // Somebody who filled in nothing but their name has told us nothing new —
     // and PostgREST refuses an empty patch anyway. They are still on the roll,
     // which is what the answer says.
     if (Object.keys(values).length === 0) return { status: 'updated' };
-    unwrap(await db.from('members').update(values).eq('id', planned.member_id).select('id').single());
+    unwrap(await db.from('members').update(values).eq('id', matched.id).select('id').single());
     return { status: 'updated' };
   }
   unwrap(

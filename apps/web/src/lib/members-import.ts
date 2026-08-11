@@ -325,7 +325,7 @@ export function excelSerialToDate(serial: number): string | null {
 }
 
 /** An address the church could actually write to. Deliberately loose. */
-function looksLikeEmail(value: string): boolean {
+export function looksLikeEmail(value: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(value);
 }
 
@@ -334,9 +334,37 @@ function looksLikeEmail(value: string): boolean {
  * them with. A cell holding a name or a note is what this is here to catch,
  * not to police how a 012 number is spaced.
  */
-function looksLikePhone(value: string): boolean {
+export function looksLikePhone(value: string): boolean {
   if (!/^[0-9+()\-\s]+$/.test(value)) return false;
   return (value.match(/\d/g) ?? []).length >= 6;
+}
+
+/**
+ * Which existing member a PUBLIC self-registration (`/join`) refers to, if
+ * any — a different question from `pairKey`'s exact composite match. A
+ * registrant does not reliably know or retype the exact English-name
+ * spelling the church already has on file, so the Chinese name alone is the
+ * anchor: it names exactly one person in the ordinary case, and that person
+ * is the match regardless of what (if anything) they typed as an English
+ * name. When it names SEVERAL people — two members who happen to share a
+ * Chinese name — the phone number is what tells them apart: one exact match
+ * settles it, and anything else (none, or more than one, which should not
+ * happen since phone numbers are effectively unique) means this is
+ * genuinely a new person, never a guess at an existing one.
+ */
+export function matchRegistrant<T extends { full_name: string; phone: string | null }>(
+  fullName: string,
+  phone: string,
+  existing: readonly T[],
+): T | null {
+  const key = nameKey(fullName);
+  const byName = existing.filter((m) => nameKey(m.full_name) === key);
+  if (byName.length === 0) return null;
+  if (byName.length === 1) return byName[0];
+  const phoneKey = tidy(phone);
+  if (!phoneKey) return null;
+  const byPhone = byName.filter((m) => tidy(m.phone ?? '') === phoneKey);
+  return byPhone.length === 1 ? byPhone[0] : null;
 }
 
 /* -------------------------------------------------------------------------

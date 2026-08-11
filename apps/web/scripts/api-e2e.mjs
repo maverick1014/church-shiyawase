@@ -640,31 +640,46 @@ async function memberImport(adminCookie, hallId) {
 /**
  * `/members/register` — the PUBLIC self-registration form (/join).
  *
- * The only unauthenticated write that touches the member roll, so what is
- * asserted is mostly what it REFUSES: a stranger may leave their contact
- * details, and may not make themselves a pastor, put themselves on a ministry,
- * park a note on their own record, or reach any other method on the path. And
- * the same pair rule as everywhere else — registering twice updates the one row
- * rather than growing a twin.
+ * The only unauthenticated write that touches the member roll. Its field set
+ * now mirrors the staff-facing add-member form (0128) — a stranger MAY leave
+ * a 推荐人, a life group, a 服侍岗位 list and a note about themselves — with
+ * two deliberate holdouts: `church_role` and `group_position` stay refused,
+ * because a RANK and a group SEAT are the church's own calls, never a
+ * visitor's to claim walking in. Matching is `matchRegistrant`, not the
+ * import's own `pairKey`: Chinese name alone is the anchor, with the phone
+ * number as the tie-breaker when it names more than one person — asserted
+ * below with two members sharing a Chinese name.
  */
 async function selfRegistration(adminCookie, hallId) {
   const H = { cookie: adminCookie };
   const stamp = Date.now();
   const chinese = `E2E注册-${stamp}`;
   const made = [];
+  const madeGroups = [];
   // A real member id, so the 推荐人 the body claims below is a value the server
-  // COULD have written — being ignored has to be the allow-list's doing, not a
-  // foreign key happening to fail.
+  // COULD have written.
   const someone = ((await req('GET', '/api/members', H)).json || [])[0]?.id ?? null;
+  // A real group IN THIS HALL, so `group_id` is something the server could
+  // legitimately accept — a fixture rather than the fixed hall's own roster,
+  // since this run must not disturb a real life group's membership.
+  const groupRow = await req('POST', '/api/groups', { cookie: adminCookie, body: { name: `ZZ_UITEST_REGGROUP_${stamp}`, hall_id: hallId } });
+  const groupId = groupRow.json?.id ?? null;
+  if (groupId) madeGroups.push(groupId);
 
   const options = await req('GET', '/api/members/register');
-  ok('public GET /members/register → 200 + halls', options.status === 200 && Array.isArray(options.json?.halls),
+  ok('public GET /members/register → 200 + halls/groups/members', options.status === 200
+    && Array.isArray(options.json?.halls) && Array.isArray(options.json?.groups) && Array.isArray(options.json?.members),
     `status ${options.status}`);
   ok('…and hands out nothing but each hall’s id and name',
     (options.json?.halls || []).every((h) => Object.keys(h).sort().join(',') === 'id,name'),
     JSON.stringify(options.json?.halls || []).slice(0, 120));
+  // Names only — never phone, email, address or birthday — on a page nobody
+  // has signed into.
+  ok('…and each member only its id and both names, nothing sensitive',
+    (options.json?.members || []).every((m) => Object.keys(m).sort().join(',') === 'english_name,full_name,id'),
+    JSON.stringify((options.json?.members || [])[0] ?? {}));
 
-  // Deliberately carrying fields a stranger must not be able to set.
+  // Deliberately carrying fields a stranger must still not be able to set.
   const join = await req('POST', '/api/members/register', {
     body: {
       full_name: chinese,
@@ -676,10 +691,11 @@ async function selfRegistration(adminCookie, hallId) {
       hall_id: hallId,
       church_role: 'pastor',
       status: 'inactive',
-      notes: 'promote me',
-      serving_roles: ['敬拜'],
+      notes: 'first visit, brought by a friend',
+      serving_roles: ['敬拜', '音响'],
       referred_by: someone,
-      group_id: '00000000-0000-0000-0000-000000000000',
+      group_id: groupId,
+      group_position: 'leader',
       group_joined_at: '2024-01-01',
     },
   });
@@ -694,19 +710,24 @@ async function selfRegistration(adminCookie, hallId) {
   const person = found[0];
   ok('…as an ordinary member, whatever the body claimed', person?.church_role === 'member', person?.church_role);
   ok('…on the roll, not with the status it asked for', person?.status === 'active', person?.status);
-  ok('…with no notes and no life group', !person?.notes && !person?.group_id,
-    `${person?.notes} / ${person?.group_id}`);
-  ok('…and no 加入小组日期, refused exactly like a role or a referral',
-    person?.group_joined_at === null, String(person?.group_joined_at));
-  // A ministry is something the church hands out, so the allow-list simply does
-  // not read the field — the row comes back serving nowhere, not serving 敬拜.
-  ok('…and serving nowhere, whatever ministry the body claimed',
-    (person?.serving_roles || []).length === 0, JSON.stringify(person?.serving_roles));
-  // Who brought somebody is the CHURCH's record of how they arrived, so the
-  // allow-list does not read the field at all — exactly like `church_role`.
-  ok('…and with no 推荐人, whatever the body claimed',
-    person?.referred_by === null, String(person?.referred_by));
-  ok('…and the details it WAS allowed to set',
+  // A group SEAT is still the church's own call, even though which group to
+  // join is now the visitor's — group_position/group_joined_at stay refused
+  // exactly like church_role, independent of group_id being accepted.
+  ok('…joined the group it asked for, but with no seat and no 加入小组日期',
+    person?.group_id === groupId && person?.group_position === null && person?.group_joined_at === null,
+    `${person?.group_id} / ${person?.group_position} / ${person?.group_joined_at}`);
+  // A ministry list and a note are now things a registrant may supply about
+  // themselves (0128) — they round-trip rather than being silently dropped.
+  ok('…serving what it asked to serve',
+    JSON.stringify((person?.serving_roles || []).slice().sort()) === JSON.stringify(['敬拜', '音响']),
+    JSON.stringify(person?.serving_roles));
+  ok('…and the note it left',
+    person?.notes === 'first visit, brought by a friend', person?.notes);
+  // Who brought somebody is now the one thing a fresh registration may say
+  // about how it arrived (0128) — an id straight off the form's own picker.
+  ok('…and the 推荐人 it named',
+    person?.referred_by === someone, String(person?.referred_by));
+  ok('…and the details it WAS always allowed to set',
     person?.phone === '012-222 2222' && person?.gender === 'male' && person?.date_of_birth === '1990-05-04',
     `${person?.phone} / ${person?.gender} / ${person?.date_of_birth}`);
   ok('…including the address, which is a contact detail like the phone',
@@ -724,6 +745,43 @@ async function selfRegistration(adminCookie, hallId) {
   ok('…with the new phone', reread[0]?.phone === '012-333 3333', reread[0]?.phone);
   ok('…and the name the church filed them under, not the visitor’s re-spelling',
     reread[0]?.english_name === 'Join One', reread[0]?.english_name);
+
+  // The name-collision rule: two members sharing a Chinese name — matching
+  // is `matchRegistrant`, not the import's own `pairKey`, so the English name
+  // never enters this decision at all. A registration naming their Chinese
+  // name AND the phone of ONE of them updates exactly that one; naming a
+  // phone that matches NEITHER creates a third, distinct person, rather than
+  // guessing.
+  const twinName = `E2E撞名-${stamp}`;
+  const twinA = await req('POST', '/api/members', { cookie: adminCookie, body: { full_name: twinName, english_name: 'Twin A', phone: '011-100 0001', hall_id: hallId } });
+  const twinB = await req('POST', '/api/members', { cookie: adminCookie, body: { full_name: twinName, english_name: 'Twin B', phone: '011-100 0002', hall_id: hallId } });
+  if (twinA.json?.id) made.push(twinA.json.id);
+  if (twinB.json?.id) made.push(twinB.json.id);
+  ok('fixture: two members sharing one Chinese name, different English names/phones',
+    twinA.status === 200 && twinB.status === 200, `${twinA.status} / ${twinB.status}`);
+
+  const collideUpdate = await req('POST', '/api/members/register', {
+    body: { full_name: twinName, phone: '011-100 0002', address: 'updated via collision', hall_id: hallId },
+  });
+  ok('registering a collided name WITH the phone of one of them → updates that one',
+    collideUpdate.status === 200 && collideUpdate.json?.status === 'updated',
+    `status ${collideUpdate.status} ${JSON.stringify(collideUpdate.json)}`);
+  const afterCollideUpdate = (await req('GET', `/api/members?q=${encodeURIComponent(twinName)}`, H)).json || [];
+  ok('…exactly Twin B changed, Twin A untouched',
+    afterCollideUpdate.find((m) => m.id === twinB.json?.id)?.address === 'updated via collision'
+      && afterCollideUpdate.find((m) => m.id === twinA.json?.id)?.address !== 'updated via collision',
+    JSON.stringify(afterCollideUpdate.map((m) => ({ id: m.id, address: m.address }))));
+  ok('…and still only the two of them — no new row', afterCollideUpdate.length === 2, String(afterCollideUpdate.length));
+
+  const collideCreate = await req('POST', '/api/members/register', {
+    body: { full_name: twinName, phone: '011-100 9999', hall_id: hallId },
+  });
+  ok('…but a phone matching NEITHER of them creates a third, distinct person, never a guess',
+    collideCreate.status === 200 && collideCreate.json?.status === 'created',
+    `status ${collideCreate.status} ${JSON.stringify(collideCreate.json)}`);
+  const afterCollideCreate = (await req('GET', `/api/members?q=${encodeURIComponent(twinName)}`, H)).json || [];
+  for (const m of afterCollideCreate) if (!made.includes(m.id)) made.push(m.id);
+  ok('…now three rows share that Chinese name', afterCollideCreate.length === 3, String(afterCollideCreate.length));
 
   // The photo rides along with the registration, and an SVG is a script that
   // renders — this is the one unauthenticated upload of an image into a public
@@ -754,6 +812,14 @@ async function selfRegistration(adminCookie, hallId) {
     (await req('POST', '/api/members/register', {
       body: { full_name: `${chinese}-y`, hall_id: '00000000-0000-0000-0000-000000000000' },
     })).status === 400);
+  ok('registration naming a 推荐人 who does not exist → 400',
+    (await req('POST', '/api/members/register', {
+      body: { full_name: `${chinese}-z`, hall_id: hallId, referred_by: '00000000-0000-0000-0000-000000000000' },
+    })).status === 400);
+  ok('registration naming a life group from a DIFFERENT congregation → 400',
+    (await req('POST', '/api/members/register', {
+      body: { full_name: `${chinese}-w`, hall_id: hallId, group_id: '00000000-0000-0000-0000-000000000000' },
+    })).status === 400);
   // Only GET and POST are public on this exact path; nothing else under
   // /members is opened by it.
   ok('unauthenticated PATCH /members/register → 401',
@@ -763,7 +829,8 @@ async function selfRegistration(adminCookie, hallId) {
     (await req('DELETE', '/api/members/register', H)).status === 404);
 
   for (const id of made) await req('DELETE', `/api/members/${id}`, H);
-  ok('registration fixtures cleaned up', true, `${made.length} removed`);
+  for (const id of madeGroups) await req('DELETE', `/api/groups/${id}`, H);
+  ok('registration fixtures cleaned up', true, `${made.length} member(s), ${madeGroups.length} group(s) removed`);
 }
 
 async function activityShape(adminCookie, members, hallId) {

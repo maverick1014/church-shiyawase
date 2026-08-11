@@ -119,10 +119,17 @@ The two of them split on **who the fact belongs to**, and that split is the
 whole reason each allow-list looks the way it does. An address is a contact
 detail the person themselves knows best, so it is writable by `/join`
 (`REGISTER_FIELDS`) and by a member's own profile page (`SELF_MEMBER_FIELDS`),
-beside their phone and email. A 推荐人 is in **neither**: who brought somebody
-is the CHURCH's record of how they arrived, not a claim the arriving person gets
-to make about themselves — the same reason `church_role` and `serving_roles` are
-absent from both. It is written by the church's own two forms and by the import.
+beside their phone and email. A 推荐人 used to be excluded from both for the
+same reason as `church_role` — who brought somebody is the CHURCH's record of
+how they arrived, not a claim the arriving person makes about themselves — but
+church feedback (0128) moved it INTO `REGISTER_FIELDS` specifically: a
+brand-new registration is the one moment a person plausibly knows and can
+usefully say who invited them, arriving as a member id off the form's own
+Combobox rather than a name to resolve. It stays absent from
+`SELF_MEMBER_FIELDS`: rewriting who referred you, after the fact, from your
+own profile is not the same act. `church_role` and `group_position` remain
+absent from **both** — those are the church's own calls regardless of when
+the record is touched.
 
 **服侍岗位 is a LIST, and it is the same list `groups.tags` is** (migration
 0019). `members.serving_roles` is a `text[]`, NOT NULL DEFAULT `'{}'`: which
@@ -148,10 +155,12 @@ dropdown that only appears once somebody serves somewhere, and the member page
 draws the ministries as badges and **nothing at all** when there are none — an
 empty list is a fact about that person, not a value the church has yet to fill
 in, which is exactly what the 家庭 tile it replaced got wrong. It is the
-church's to hand out: it is writable on `POST`/`PATCH /members` and by the
-import, and deliberately absent from BOTH allow-lists a person fills in about
-themselves — `REGISTER_FIELDS` (`/join`) and `SELF_MEMBER_FIELDS`
-(`/auth/me/profile`).
+church's to hand out: it is writable on `POST`/`PATCH /members`, by the
+import, and — church feedback, 0128 — by a fresh self-registration on `/join`
+(`REGISTER_FIELDS`), the one public path that now offers it. It stays
+deliberately absent from `SELF_MEMBER_FIELDS` (`/auth/me/profile`): a person
+already on the roll editing their OWN profile is not the same act as somebody
+joining and saying up front where they'd like to serve.
 
 **`joined_at` reads as 来访日期 / Visit Date on screen, and a member now
 carries a SECOND date** (migration 0023, `group_joined_at`): when they joined
@@ -210,18 +219,37 @@ re-import cannot un-serve the whole church.
 
 *自助注册* (`/join` + `GET`/`POST /members/register`) is the public link the
 church hands out — the fourth shell-less page, and the only public path under
-`/members`. It reads an allow-list of fields (names, phone, email, address,
-gender, birthday, congregation, photo), so a body carrying `church_role`,
-`serving_roles` or `referred_by` is ignored rather than obeyed: every
-self-registration is an ordinary member, serving nowhere, referred by nobody —
-because a role and a ministry are things the church hands out, and a referral is
-the church's own record of how somebody arrived. An existing
-pair is an update of that person's contact details — not their name, which is
-the church's spelling to keep — and the answer is one word (`created` /
-`updated`), the same shape either way, carrying no member data at all. The photo
-travels WITH the registration in one multipart POST, exactly like a paid
-sign-up's receipt: nothing reaches storage until the row is accepted, which is
-what keeps the unauthenticated upload paths from being file storage.
+`/members`. Its field set now mirrors the staff-facing add-member form
+(church feedback: "all field is needed") — names, phone, email, address,
+gender, birthday, congregation, 推荐人, a life group, 服侍岗位, notes, photo —
+with exactly two holdouts: `church_role` and `group_position` are read from
+nowhere, ever, because a RANK and a group SEAT are the church's own calls, not
+something a visitor gets to claim walking in the door; every self-registration
+is an ordinary member. `referred_by`/`group_id` arrive as ids straight from
+the form's own Combobox/select (`GET /members/register` hands the public page
+names-only lists to build them from — never phone, email, address or
+birthday), never a name to resolve the way an imported spreadsheet row is.
+
+Matching is `matchRegistrant` (`lib/members-import.ts`), deliberately NOT
+`planImport`'s own `pairKey` — a different question, and answered in its own
+function rather than by bending `planImport` to a second meaning, which would
+have put the CSV importer's carefully-tuned identity model at risk for a page
+that does not need it. An imported row is trusted to carry the church's exact
+spelling of both names; a person typing their own registration is not, so
+requiring the English name to match too would file a returning visitor as a
+stranger the moment they left it blank a second time. The Chinese name ALONE
+is therefore the anchor — it names exactly one person in the ordinary case,
+and an exact match on it is enough, whatever (if anything) was typed as an
+English name. When it names SEVERAL people, the phone number is the
+tie-breaker: one exact match settles it, and anything else (none, or more
+than one) means this is a new person, never a guess at an existing one. An
+update never re-spells the church's record of a name or moves an existing
+member's congregation — only a brand-new row gets `full_name`/`english_name`/
+`hall_id` at all — and the answer is one word (`created` / `updated`), the
+same shape either way, carrying no member data at all. The photo travels WITH
+the registration in one multipart POST, exactly like a paid sign-up's receipt:
+nothing reaches storage until the row is accepted, which is what keeps the
+unauthenticated upload paths from being file storage.
 
 Both member forms take a photo through the shared `<PhotoPicker />`:
 `accept="image/*"` and deliberately **no `capture`** attribute — the OS sheet
@@ -520,12 +548,17 @@ Testing layers (in `apps/web`):
   matrix, full CRUD, **a member created under each of the five church roles** —
   the assertion that would have caught the database enum being two values short
   — a 地址 and a 推荐人 written and read back through the self-referencing embed,
-  the public forms — the training sign-up and the member self-registration, which
-  is refused a 服侍岗位 and a 推荐人 exactly as it is refused a church role — a
+  the public forms — the training sign-up and the member self-registration,
+  which now round-trips a 推荐人/life group/服侍岗位/备注 it names (0128, the
+  bootstrap it reads them from carrying nothing but names) while still
+  refusing a `church_role` and a `group_position` exactly as before, its
+  Chinese-name-only + phone-tiebreak matching (`matchRegistrant`, not
+  `pairKey`) proven with two members sharing a Chinese name — a matching
+  phone updates the right one, a non-matching phone creates a third rather
+  than guessing — a
   member import with its refusals, a member's 服侍岗位 written
   and read back, `joined_at`(来访日期)/`group_joined_at`(加入小组日期)/`notes`(备注)
-  round-tripped on the same `PATCH` and reread from a fresh `GET`, self-registration
-  refused a `group_joined_at` exactly like a role or a referral, the
+  round-tripped on the same `PATCH` and reread from a fresh `GET`, the
   group-scoped
   roll-call sheet: its rows are one roster, a Sunday ticked through it shows up
   on the UNSCOPED sheet, and a hall-pinned account cannot reach another
