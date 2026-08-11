@@ -546,6 +546,25 @@ export function formatDate(value: string | null | undefined): string {
   return `${p.year}-${pad2(p.month)}-${pad2(p.day)}`;
 }
 
+// A friendlier range than two full formatDate() calls stapled together: the
+// end date drops its year when it shares one with the start, since repeating
+// it twice is what made a range like "2026-09-06 – 2026-11-08" read too long.
+// Still numeric and year-first throughout (G6a) — never day/month-only, which
+// is exactly the ambiguity that rule forbids.
+export function formatDateRange(start: string | null | undefined, end: string | null | undefined): string {
+  if (!start && !end) return '—';
+  if (!start) return formatDate(end);
+  if (!end) return formatDate(start);
+  const sd = new Date(start);
+  const ed = new Date(end);
+  if (Number.isNaN(sd.getTime()) || Number.isNaN(ed.getTime())) return `${formatDate(start)} – ${formatDate(end)}`;
+  const sp = churchParts(sd);
+  const ep = churchParts(ed);
+  const startStr = `${sp.year}-${pad2(sp.month)}-${pad2(sp.day)}`;
+  const endStr = sp.year === ep.year ? `${pad2(ep.month)}-${pad2(ep.day)}` : `${ep.year}-${pad2(ep.month)}-${pad2(ep.day)}`;
+  return `${startStr} – ${endStr}`;
+}
+
 export function formatDateTime(value: string | null | undefined): string {
   if (!value) return '—';
   const d = new Date(value);

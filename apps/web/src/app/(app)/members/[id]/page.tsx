@@ -14,8 +14,8 @@ import { MemberEditModal } from '@/components/MemberEditModal';
 import { useLeaderAccountEvent } from '@/components/LeaderAccountEvent';
 import { can } from '@/lib/perms';
 import { useModuleEnabled } from '@/lib/church';
-import { EnrollmentRow, MemberRow, PairRow } from '@/lib/types';
-import { MODULE_DISCIPLESHIP } from '@tog/shared';
+import { EnrollmentRow, HappinessParticipationRow, MemberRow, PairRow } from '@/lib/types';
+import { MODULE_DISCIPLESHIP, MODULE_HAPPINESS } from '@tog/shared';
 import {
   enrollmentStatusClass,
   enrollmentStatusKey,
@@ -38,6 +38,10 @@ export default function MemberDetailPage() {
   // every /discipleship path, which would surface as an error banner here).
   const discipleshipOn = useModuleEnabled(MODULE_DISCIPLESHIP);
   const allPairs = useFetch<PairRow[]>(discipleshipOn ? '/discipleship/pairs' : null);
+  // Same rule as 守望 above: no fetch at all while the church has 幸福小组
+  // switched off, not just a hidden section.
+  const happinessOn = useModuleEnabled(MODULE_HAPPINESS);
+  const happinessRows = useFetch<HappinessParticipationRow[]>(happinessOn ? `/happiness/members/${id}` : null);
   const toast = useToast();
   const confirm = useConfirm();
   const perms = can(useMe().role);
@@ -305,6 +309,30 @@ export default function MemberDetailPage() {
               </div>
             );
           })
+        )}
+        </>
+        )}
+
+        {happinessOn && (
+        <>
+        <div className="section-label" style={{ margin: '24px 0 12px' }}>{tr('happy.title')}</div>
+        {(happinessRows.data ?? []).length === 0 ? (
+          <div className="faint" style={{ fontSize: 13 }}>{tr('member.noHappiness')}</div>
+        ) : (
+          (happinessRows.data ?? []).map((row) => (
+            <div
+              key={row.group.id}
+              className="flex items-center gap-10 flex-wrap"
+              style={{ background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 10, padding: '12px 14px', marginBottom: 8, cursor: 'pointer' }}
+              onClick={() => router.push(`/happiness/group/${row.group.id}`)}
+            >
+              <span style={{ fontSize: 13.5 }}>
+                {row.group.term ? tr('happy.term.pageTitle', { no: row.group.term.term_no }) : ''} · {row.group.name}
+              </span>
+              <div className="grow" />
+              {row.role && <span className="badge b-gray">{row.role}</span>}
+            </div>
+          ))
         )}
         </>
         )}

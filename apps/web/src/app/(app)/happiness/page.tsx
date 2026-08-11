@@ -21,7 +21,7 @@ import {
 import { can } from '@/lib/perms';
 import { useModuleEnabled } from '@/lib/church';
 import { exportRows } from '@/lib/export';
-import { formatDate } from '@/lib/labels';
+import { formatDateRange } from '@/lib/labels';
 import { endOfChurchDate, startOfChurchDate } from '@/lib/time';
 import { HappinessTermRow } from '@/lib/types';
 import { useT } from '@/lib/i18n';
@@ -86,7 +86,7 @@ export default function HappinessTermsPage() {
       [...current, ...upcoming, ...ended].map((term) => ({
         [t('happy.term.col.no')]: term.term_no,
         [t('happy.term.col.name')]: term.name ?? '',
-        [t('happy.term.col.dates')]: `${formatDate(term.starts_on)} – ${formatDate(term.ends_on)}`,
+        [t('happy.term.col.dates')]: formatDateRange(term.starts_on, term.ends_on),
         [t('happy.term.col.weeks')]: term.weeks,
         [t('happy.term.col.groups')]: term.group_count,
       })),
@@ -128,7 +128,7 @@ export default function HappinessTermsPage() {
             {term.name || t('happy.term.pageTitle', { no: term.term_no })}
           </h3>
           <div className="muted" style={{ fontSize: 12.5, lineHeight: 1.7 }}>
-            {formatDate(term.starts_on)} – {formatDate(term.ends_on)} · {t('happy.term.weeksLabel', { n: term.weeks })} · {t('happy.term.groupCount', { n: term.group_count })}
+            {formatDateRange(term.starts_on, term.ends_on)} · {t('happy.term.weeksLabel', { n: term.weeks })} · {t('happy.term.groupCount', { n: term.group_count })}
           </div>
           <div className="grow" />
           <div className="flex gap-8 mt-14">
@@ -224,7 +224,6 @@ function TermModal({
 }) {
   const t = useT();
   const toast = useToast();
-  const [termNo, setTermNo] = useState(term ? String(term.term_no) : '');
   const [name, setName] = useState(term?.name ?? '');
   const [weeks, setWeeks] = useState(term ? String(term.weeks) : '8');
   const [startsOn, setStartsOn] = useState(term?.starts_on ?? '');
@@ -233,9 +232,8 @@ function TermModal({
   const [err, setErr] = useState<string | null>(null);
 
   const save = async () => {
-    const no = Number(termNo);
-    if (!termNo || !Number.isInteger(no) || no < 1) {
-      setErr(t('happy.term.err.no'));
+    if (!name.trim()) {
+      setErr(t('happy.term.err.name'));
       return;
     }
     const weeksN = Number(weeks);
@@ -246,8 +244,7 @@ function TermModal({
     setSaving(true);
     setErr(null);
     const dto = {
-      term_no: no,
-      name: name.trim() || null,
+      name: name.trim(),
       weeks: weeksN,
       starts_on: startsOn || null,
       ends_on: endsOn || null,
@@ -272,16 +269,13 @@ function TermModal({
     <Modal title={term ? t('happy.term.edit.title') : t('happy.term.new.title')} onClose={onClose}>
       {err && <ErrorBanner message={err} />}
       <div className="form-row">
-        <Field label={t('happy.term.field.no')}>
-          <input type="number" min={1} step={1} value={termNo} onChange={(e) => setTermNo(e.target.value)} />
+        <Field label={t('happy.term.field.name')}>
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder={t('happy.term.namePlaceholder')} />
         </Field>
         <Field label={t('happy.term.field.weeks')}>
           <input type="number" min={1} max={52} step={1} value={weeks} onChange={(e) => setWeeks(e.target.value)} />
         </Field>
       </div>
-      <Field label={t('happy.term.field.name')}>
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder={t('happy.term.namePlaceholder')} />
-      </Field>
       <div className="form-row">
         <Field label={t('happy.term.field.startsOn')}>
           <input type="date" className={startsOn ? undefined : 'date-empty'} value={startsOn} onChange={(e) => setStartsOn(e.target.value)} />

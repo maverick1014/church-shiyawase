@@ -1852,19 +1852,20 @@ async function main() {
     // week that could be somebody's real attendance.
     mod('happiness groups · term → group → roster → weekly attendance');
     const fxHappyMember = await makeMember('HAPPY');
-    const happyTermNo = Math.floor(Date.now() / 1000);
     const happyTermName = fixtureName('TERM');
     const happyGroupName = fixtureName('GROUP');
     let happyTermId = null;
+    let happyTermNo = null;
+    let happyVisitorId = null;
     try {
       /* -- term, created through the UI ----------------------------------- */
       await page.goto(`${BASE}/happiness`, { waitUntil: 'domcontentloaded' });
       await page.locator('button:visible:has-text("Add term")').first().waitFor({ timeout: 20000 });
       await page.locator('button:visible:has-text("Add term")').first().click();
       await page.locator('.modal').waitFor({ timeout: 8000 });
-      // Term number, then weeks — both plain number inputs in that order.
-      await page.locator('.modal input[type=number]').first().fill(String(happyTermNo));
-      // The name field is the modal's only untyped text input.
+      // 期号 is no longer typed by the user (0117, server-assigned) — the
+      // name field is the modal's only untyped text input; weeks is the one
+      // number input left.
       await page.locator('.modal input:not([type=number]):not([type=date])').first().fill(happyTermName);
       await page.locator('.modal button:has-text("Save")').first().click();
       await w(1500);
@@ -1878,17 +1879,23 @@ async function main() {
       check('the catalog is bucketed Current / Upcoming / Ended, like 培训&活动',
         ['Current', 'Upcoming', 'Ended'].every((label) => catalogBody.includes(label)));
       const termsAfter = await apiGet('/happiness/terms');
-      happyTermId = termsAfter.find((t) => t.term_no === happyTermNo)?.id ?? null;
-      check('…and it is readable from the API, weeks defaulting to 8',
-        !!happyTermId && termsAfter.find((t) => t.id === happyTermId)?.weeks === 8,
-        JSON.stringify(termsAfter.find((t) => t.term_no === happyTermNo)));
+      const createdTerm = termsAfter.find((t) => t.name === happyTermName);
+      happyTermId = createdTerm?.id ?? null;
+      happyTermNo = createdTerm?.term_no ?? null;
+      check('…and it is readable from the API, weeks defaulting to 8, term number auto-assigned',
+        !!happyTermId && createdTerm?.weeks === 8 && Number.isInteger(happyTermNo),
+        JSON.stringify(createdTerm));
 
       /* -- group, under that term, created through the UI ------------------ */
       await termCard.locator('h3').first().click();
       await page.waitForURL(/\/happiness\/[0-9a-f-]+/, { timeout: 15000 });
       await page.locator('button:visible:has-text("Add group")').first().waitFor({ timeout: 20000 });
-      check('opening a term shows its own facts (period number, weeks)',
-        (await page.locator('.content').innerText()).includes(String(happyTermNo)));
+      // 期号 is no longer one of this card's facts (0118) — it is server-
+      // assigned and shown only as the page's own "Term {no}" badge/title, not
+      // repeated in the fact grid, which now reads name/weeks/starts/ends.
+      const termFactsBody = await page.locator('.content').innerText();
+      check('opening a term shows its own facts (name, weeks)',
+        termFactsBody.includes(happyTermName) && termFactsBody.includes('Weeks'));
       await page.locator('button:visible:has-text("Add group")').first().click();
       await page.locator('.modal').waitFor({ timeout: 8000 });
       await page.locator('.modal input').first().fill(happyGroupName);
@@ -1920,8 +1927,19 @@ async function main() {
       const happyGroupId = page.url().match(/\/happiness\/group\/([0-9a-f-]+)/)?.[1] ?? null;
       check('…and its own detail page opens', !!happyGroupId);
 
+      // 0120: attendance now sits ABOVE the roster (roll-call-first, the same
+      // order groups/[id]'s own page uses) rather than beside it, and the
+      // roster/edit form moved into a two-column grid below it. The roster
+      // card is scoped by its own heading — the "Group info" card to its left
+      // (0120) now carries its OWN Combobox (the leader picker) earlier in DOM
+      // order, so an unscoped "first combobox on the page" would grab that one
+      // instead of the roster's "Add member" combobox.
+      const rosterCard = page.locator('.card', { has: page.locator('h3', { hasText: 'Roster' }) });
+      const infoCard = page.locator('.card', { has: page.locator('h3', { hasText: 'Group info' }) });
+      await rosterCard.waitFor({ timeout: 15000 });
+
       // Roster add via the shared Combobox (rule G4) — never a native <select>.
-      const rosterCombo = page.locator('.combo input[role=combobox]').first();
+      const rosterCombo = rosterCard.locator('.combo input[role=combobox]').first();
       await rosterCombo.click();
       await rosterCombo.fill(fxHappyMember.name);
       await w(400);
@@ -1930,13 +1948,57 @@ async function main() {
         (await page.locator('.combo-list .combo-option').count()) === 1);
       await page.locator('.combo-list .combo-option').first().click();
       await w(300);
-      await page.locator('button:visible:has-text("Add member")').first().click();
+      await rosterCard.locator('button:visible:has-text("Add member")').first().click();
       // The attendance table below (including its week columns) only renders
       // once the roster is non-empty, so this add has to actually land before
       // either check below — a fixed sleep here silently broke both.
       const rosterAdded = await page.locator(`table td:has-text("${fxHappyMember.name}")`).first()
         .waitFor({ timeout: 10000 }).then(() => true).catch(() => false);
       check('adding a roster member via the Combobox shows them on the roster', rosterAdded);
+
+      // 0121: the roster's own role — free text, editable per row, and
+      // deliberately NOT the church_role/group_position badge this cell used
+      // to show (那与幸福小组无关). Committed on blur, like TagsInput's chips.
+      const rosterRow = rosterCard.locator('table:not(.sheet-table) tbody tr', { hasText: fxHappyMember.name });
+      await rosterRow.first().waitFor({ timeout: 10000 });
+      const roleInput = rosterRow.locator('input');
+      await roleInput.fill('Leader');
+      await roleInput.press('Tab');
+      await w(800);
+      const detailAfterRole = happyGroupId ? await apiGet(`/happiness/groups/${happyGroupId}`) : null;
+      check('setting a roster member’s OWN role in this group persists it, independent of church_role/group_position',
+        detailAfterRole?.members?.find((m) => m.id === fxHappyMember.id)?.happiness_role === 'Leader',
+        JSON.stringify(detailAfterRole?.members));
+
+      // 0120: the group's own info — name/hall/leader/day/time/location — is
+      // now an editable card on this page (editing/deleting no longer lives
+      // on the term's own list, 0119), the same "Field + Save button" shape
+      // groups/[id]'s own left panel uses.
+      const locationInput = infoCard.locator('.field', { hasText: /^Location$/ }).locator('input');
+      await locationInput.fill('ZZ_UITEST happiness room');
+      await infoCard.locator('button:has-text("Save settings")').click();
+      await w(1000);
+      const groupAfterSave = happyGroupId ? await apiGet(`/happiness/groups/${happyGroupId}`) : null;
+      check('saving the group info card persists a field change (location)',
+        groupAfterSave?.location === 'ZZ_UITEST happiness room', String(groupAfterSave?.location));
+      check('a Delete button for the group lives on its own detail page now, not the term’s list',
+        (await infoCard.locator('button:has-text("Delete group")').count()) > 0);
+
+      // 0122: the actual point of 幸福小组 — a leader meeting someone new can
+      // create them AND land them on the roster without leaving this page.
+      const happyVisitorName = fixtureName('VISITOR');
+      await rosterCard.locator('button:has-text("New visitor")').click();
+      const visitorNameInput = rosterCard.locator('.field', { hasText: /^Name$/ }).locator('input');
+      await visitorNameInput.waitFor({ timeout: 8000 });
+      await visitorNameInput.fill(happyVisitorName);
+      await rosterCard.locator('button:has-text("New visitor")').click();
+      const visitorAdded = await rosterCard.locator(`table td:has-text("${happyVisitorName}")`).first()
+        .waitFor({ timeout: 10000 }).then(() => true).catch(() => false);
+      check('the quick-add-visitor form creates a member and lands them on this roster', visitorAdded);
+      const visitorRow = (await apiGet(`/members?q=${encodeURIComponent(happyVisitorName)}`))?.[0] ?? null;
+      happyVisitorId = visitorRow?.id ?? null;
+      check('…created as an ordinary 访客 (church role visitor), never a claim they get to make about anything else',
+        visitorRow?.church_role === 'visitor', JSON.stringify(visitorRow));
 
       // The sheet's columns are WEEK NUMBERS, never dates — the one roll call
       // in the app that isn't date-based.
@@ -1945,11 +2007,11 @@ async function main() {
       check('the attendance sheet has a column per week (Week N), never a calendar date',
         (await weekHeads.count()) === 8, `${await weekHeads.count()} week column(s)`);
 
-      const rosterRow = page.locator('table.sheet-table tbody tr', { hasText: fxHappyMember.name });
-      await rosterRow.first().waitFor({ timeout: 20000 });
+      const sheetRow = page.locator('table.sheet-table tbody tr', { hasText: fxHappyMember.name });
+      await sheetRow.first().waitFor({ timeout: 20000 });
       // Week 1 is the first tick box in the row — the member-name cell carries
       // no checkbox of its own.
-      const week1Tick = rosterRow.locator('input[type=checkbox]').first();
+      const week1Tick = sheetRow.locator('input[type=checkbox]').first();
       await week1Tick.click();
       await w(1500);
       const attAfterTick = happyGroupId ? await apiGet(`/happiness/groups/${happyGroupId}/attendance`) : { records: [] };
@@ -1962,13 +2024,28 @@ async function main() {
       check('unticking it DELETES the row — a presence-only table, no absence to store',
         !(attAfterUntick.records || []).some((r) => r.week_number === 1 && r.member_id === fxHappyMember.id),
         JSON.stringify(attAfterUntick.records));
+
+      // 0123: a member's own page reads their 幸福小组 history now too.
+      await page.goto(`${BASE}/members/${fxHappyMember.id}`, { waitUntil: 'domcontentloaded' });
+      await page.locator('.section-label', { hasText: 'Happiness Groups' }).first().waitFor({ timeout: 15000 });
+      const memberHappyBody = await page.locator('.content').innerText();
+      check('a member’s own page shows their 幸福小组 participation history',
+        memberHappyBody.includes('Happiness Groups') && memberHappyBody.includes(happyGroupName));
     } finally {
       // Deleting the term cascades its group, roster and every week of
-      // attendance — nothing else here needs its own teardown.
+      // attendance — nothing else here needs its own teardown. The quick-added
+      // visitor (0122) is a real `members` row the cascade never reaches
+      // (deleting the roster ROW, not the member), so it needs its own delete
+      // — belt-and-suspenders against the final ZZ_UITEST_ sweep, which would
+      // otherwise be the only thing to catch it.
       if (happyTermId) {
         const gone = await apiDelete(`/happiness/terms/${happyTermId}`);
         console.log(`  ↳ cleanup: ${gone ? 'deleted' : 'COULD NOT DELETE'} happiness term ${happyTermName} (cascades its group)`);
         if (!gone) console.log(`  ↳ purge will retry: /happiness/terms/${happyTermId}`);
+      }
+      if (happyVisitorId) {
+        const gone = await apiDelete(`/members/${happyVisitorId}`);
+        console.log(`  ↳ cleanup: ${gone ? 'deleted' : 'COULD NOT DELETE'} quick-added visitor ${happyVisitorId}`);
       }
       await fxHappyMember.remove();
     }

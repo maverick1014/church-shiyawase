@@ -1535,8 +1535,23 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
     if (r1 === 'terms') {
       if (!r2) {
         if (method === 'GET') return json(await happinessTerms(db));
-        if (method === 'POST')
-          return json(unwrap(await db.from('happiness_terms').insert(await body()).select().single()));
+        if (method === 'POST') {
+          // 期号 is no longer typed by the user — a church just names a term
+          // and picks its dates; the number is assigned here, one past the
+          // highest one on record, so it still sorts and reads the way
+          // `happy.term.pageTitle`("第 {no} 期") always has.
+          const b = await body();
+          if (b.term_no == null) {
+            const { data: maxRow } = await db
+              .from('happiness_terms')
+              .select('term_no')
+              .order('term_no', { ascending: false })
+              .limit(1)
+              .maybeSingle();
+            b.term_no = (maxRow?.term_no ?? 0) + 1;
+          }
+          return json(unwrap(await db.from('happiness_terms').insert(b).select().single()));
+        }
       } else if (!r3) {
         if (method === 'GET')
           return json(unwrap(await db.from('happiness_terms').select('*').eq('id', r2).single()));
@@ -1603,6 +1618,24 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
           );
           return json({ group_id: r2, member_ids: memberIds, count: memberIds.length });
         }
+        if (r4 && method === 'PATCH') {
+          // The roster row's OWN role (0027) — e.g. 组长/组员 within THIS
+          // happiness group, never the person's church_role or their life
+          // group's group_position. A raw passthrough of `{ role }` only:
+          // nothing else on a roster row is writable here.
+          await assertOwnsRow('happiness_groups', r2);
+          const dto = await body();
+          unwrap(
+            await db
+              .from('happiness_group_members')
+              .update({ role: dto.role ?? null })
+              .eq('group_id', r2)
+              .eq('member_id', r4)
+              .select()
+              .single(),
+          );
+          return json({ group_id: r2, member_id: r4, role: dto.role ?? null });
+        }
         if (r4 && method === 'DELETE') {
           // Deletes the ROSTER row only — `happiness_attendance` carries no FK
           // to `happiness_group_members`, so a week they attended stays on the
@@ -1654,6 +1687,24 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
           unwrap(await db.from('happiness_groups').delete().eq('id', r2).select().single());
           return json({ id: r2 });
         }
+      }
+    } else if (r1 === 'members' && r2 && !r3) {
+      // A member's own participation history — nested under the `happiness`
+      // prefix (rather than `/members/:id/happiness`) specifically so the
+      // module gate above still sees and refuses it when a church has 幸福小组
+      // switched off; `moduleForApiPath` matches on the FIRST segment.
+      if (method === 'GET') {
+        await assertRowReadable('members', r2);
+        await assertMemberGroupReadable(r2);
+        return json(
+          unwrap(
+            await db
+              .from('happiness_group_members')
+              .select('role, group:happiness_groups(id,name,term:happiness_terms(id,term_no,name))')
+              .eq('member_id', r2)
+              .order('created_at', { ascending: false }),
+          ),
+        );
       }
     }
   }
@@ -2490,7 +2541,7 @@ async function happinessGroupDetail(db: ReturnType<typeof getDb>, groupId: strin
     db.from('happiness_groups').select(HAPPINESS_GROUP_SELECT).eq('id', groupId).single(),
     db
       .from('happiness_group_members')
-      .select(`member:members(${MEMBER_BRIEF})`)
+      .select(`role, member:members(${MEMBER_BRIEF})`)
       .eq('group_id', groupId)
       .order('created_at'),
   ]);
@@ -2499,10 +2550,18 @@ async function happinessGroupDetail(db: ReturnType<typeof getDb>, groupId: strin
   // PostgREST gets right; the untyped client's own select-string parser
   // cannot know it without generated Database types, so it is force-cast
   // here rather than fought with a narrower generic on `unwrap`.
-  const rosterRows = unwrap(rosterRes) as unknown as Array<{ member: Record<string, unknown> | null }>;
+  const rosterRows = unwrap(rosterRes) as unknown as Array<{
+    role: string | null;
+    member: Record<string, unknown> | null;
+  }>;
   // Guarded (rule G6): a roster row whose member was somehow left dangling
   // would otherwise crash the page instead of just being one fewer name.
-  const members = rosterRows.map((r) => r.member).filter((m): m is Record<string, unknown> => !!m);
+  // `happiness_role` carries the ROSTER row's own role (0027) — never
+  // `member.church_role`/`group_position`, which belong to a different
+  // membership entirely.
+  const members = rosterRows
+    .filter((r): r is { role: string | null; member: Record<string, unknown> } => !!r.member)
+    .map((r) => ({ ...r.member, happiness_role: r.role }));
   return { ...group, members };
 }
 

@@ -416,6 +416,38 @@ toggleable add-on module (`church_modules`, `MODULE_HAPPINESS` in
 it has **no public-facing page at all**: roster and roll call are staff/leader
 only.
 
+**期号 is server-assigned, not typed** (church feedback: a term just needs a
+name). The term form (`happiness/page.tsx`) asks only for 名称 (now required)
+and 周数; `POST /happiness/terms` fills `term_no` itself — one past the
+highest on record — when the client sends none, so it still sorts and reads
+the way `happy.term.pageTitle` ("第 {no} 期") always has. The term detail
+card dropped 期号 as a fact (it is the page's own title already) and no
+longer collapses 起止日期 into one string — 开始/结束 are their own rows.
+**Editing and deleting a 幸福小组 now live on the GROUP's own detail page**
+(`/happiness/group/[groupId]`), not on the term's list: that list (both the
+desktop table and the mobile tile) is nav-only now, matching `/groups`'s own
+list exactly (rule G4) — a row/tile opens the group, full stop. The group
+page's own top-left card is an editable form (名称/hall/组长/星期/时间/地点)
+with its own Save/Delete, replacing the read-only 期号+聚会安排 text it used
+to show; the roll-call card moved above it, roll-call-first, the same order
+`/groups/[id]` already uses. **A roster row's role is its own fact**
+(`happiness_group_members.role`, migration 0027) — free text (组长/组员/…),
+editable inline, committed on blur — and is deliberately NOT
+`members.church_role`/`group_position`: those belong to the church-wide
+membership and the life-group membership respectively, neither of which this
+church's own use of 幸福小组 role means the same thing. **Adding a roster
+member can create them on the spot** (church feedback: this — reaching people
+who have no record yet — is the actual point of 幸福小组): the roster panel's
+"＋ New visitor" form takes just 中文名/英文名/电话, `POST /members` with
+`church_role: visitor` and the GROUP's own `hall_id`, then adds the new row to
+this roster in the same flow — a leader never has to leave the page to create
+a 福友 first. A member's own participation also now reads back on their own
+profile: `GET /happiness/members/:memberId` (nested under the `happiness`
+prefix, not `/members/:id/happiness`, specifically so `moduleForApiPath` still
+gates it — it matches on the FIRST path segment) returns every group/term the
+member has served in, drawn on `/members/[id]` as its own section
+(`happy.title`, same list-row shape the 四十天守望 pairs list already uses).
+
 **The dashboard (`/`) is three sections, not four KPI tiles and two cards.**
 The first is a hand-rolled SVG line chart — this app has no charting library
 and does not gain one, the same convention every other "chart" here follows —

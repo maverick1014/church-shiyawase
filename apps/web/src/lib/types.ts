@@ -446,7 +446,23 @@ export interface HappinessGroupDetail extends HappinessGroupRow {
     english_name: string | null;
     church_role: ChurchRole;
     group_position: GroupPosition | null;
+    /** This roster row's OWN role within THIS happiness group (0027) — free
+     *  text, e.g. 组长/组员; independent of church_role/group_position. */
+    happiness_role: string | null;
   }[];
+}
+
+/** `GET /api/happiness/members/:memberId` — one member's own participation
+ *  history, newest first. Read by the member detail page's own experience
+ *  section, never by anything reading the member row itself. */
+export interface HappinessParticipationRow {
+  /** This roster row's own role in that group (0027) — free text, may be null. */
+  role: string | null;
+  group: {
+    id: string;
+    name: string;
+    term: { id: string; term_no: number; name: string | null } | null;
+  };
 }
 
 /** `GET /api/happiness/groups/:id/attendance` — one group's whole roll call. */

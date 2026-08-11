@@ -343,13 +343,15 @@ export default function MembersPage() {
               return (
                 <div key={m.id} className="mtile" onClick={() => router.push(`/members/${m.id}`)}>
                   <div className="mtile-row1">
-                    <div className="flex items-center gap-8 flex-wrap" style={{ minWidth: 0 }}>
-                      <MemberName member={m} />
-                      <span className="muted" style={{ fontSize: 12.5 }}>· {m.group?.name ?? t('members.filter.ungrouped')}</span>
+                    <MemberName member={m} />
+                    <div className="flex items-center gap-8" style={{ flexShrink: 0 }}>
                       <RoleBadge role={role} />
+                      <span className="mtile-cta"><ChevronRightIcon /></span>
                     </div>
-                    <span className="mtile-cta"><ChevronRightIcon /></span>
                   </div>
+                  {/* The group now gets its own line — row1's right side is the
+                      role tag alone, not squeezed beside a two-line name. */}
+                  <div className="mtile-line">{m.group?.name ?? t('members.filter.ungrouped')}</div>
                   {/* Only render detail lines that have real content — a tile with no
                       phone/remark shouldn't show bare “—” placeholder rows. */}
                   {m.phone && <div className="mtile-line">{m.phone}</div>}

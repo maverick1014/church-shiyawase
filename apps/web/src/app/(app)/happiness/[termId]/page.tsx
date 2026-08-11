@@ -24,7 +24,6 @@ import {
   SkeletonScreen,
   SkeletonTable,
   SortTh,
-  useConfirm,
   useToast,
 } from '@/components/ui';
 import { can } from '@/lib/perms';
@@ -39,7 +38,6 @@ export default function HappinessTermGroupsPage() {
   const router = useRouter();
   const t = useT();
   const toast = useToast();
-  const confirm = useConfirm();
   const me = useMe();
   const perms = can(me.role);
   const { locked: hallLocked, hallId } = useHallScope();
@@ -49,7 +47,7 @@ export default function HappinessTermGroupsPage() {
   const groups = useFetch<HappinessGroupRow[]>(`/happiness/groups?term_id=${termId}`);
   const members = useFetch<MemberRow[]>('/members');
 
-  const [formGroup, setFormGroup] = useState<HappinessGroupRow | 'new' | null>(null);
+  const [addOpen, setAddOpen] = useState(false);
   // The one filter the life-groups list page has that this term-scoped list
   // didn't (rule G4/G7a): a group by name or its leader's name, lowercased
   // on both sides so a leader is found as "grace" as often as "Grace".
@@ -100,23 +98,6 @@ export default function HappinessTermGroupsPage() {
     );
   };
 
-  const deleteGroup = async (g: HappinessGroupRow) => {
-    const ok = await confirm({
-      title: t('happy.group.delete.title'),
-      message: t('happy.group.delete.message', { name: g.name, n: g.roster_count }),
-      confirmText: t('common.delete'),
-      danger: true,
-    });
-    if (!ok) return;
-    try {
-      await api.delete(`/happiness/groups/${g.id}`);
-      groups.reload();
-      toast(t('happy.group.toast.deleted'));
-    } catch (e) {
-      toast((e as Error).message, 'error');
-    }
-  };
-
   // `happiness` is outside a group_leader's allowed API prefixes — reachable
   // here only by a bookmark, the catalog it is normally opened from being
   // itself `RoleRestricted`.
@@ -134,18 +115,22 @@ export default function HappinessTermGroupsPage() {
     );
   if (term.error || !term.data) return <ErrorBanner message={term.error ?? t('happy.term.notFound')} />;
 
+  // 期号 is already the page title — repeating it here would be the same fact
+  // twice. Paired the way the term is actually thought of: what it's called
+  // and how long it runs, then when it starts and ends as their own rows
+  // rather than one combined range string.
   const facts = [
-    { label: t('happy.term.col.no'), value: term.data.term_no },
     { label: t('happy.term.col.name'), value: term.data.name || <span className="faint">—</span> },
-    { label: t('happy.term.col.dates'), value: `${formatDate(term.data.starts_on)} – ${formatDate(term.data.ends_on)}` },
     { label: t('happy.term.col.weeks'), value: term.data.weeks },
+    { label: t('happy.term.field.startsOn'), value: formatDate(term.data.starts_on) },
+    { label: t('happy.term.field.endsOn'), value: formatDate(term.data.ends_on) },
   ];
 
   return (
     <>
       <BackButton fallbackHref="/happiness" />
 
-      <div className="card">
+      <div className="card mb-16">
         <FactGrid facts={facts} />
       </div>
 
@@ -157,7 +142,7 @@ export default function HappinessTermGroupsPage() {
           <>
             <ExportButton onClick={exportGroups} disabled={sorted.length === 0} />
             {perms.write && (
-              <button className="btn" onClick={() => setFormGroup('new')}>{t('happy.group.add')}</button>
+              <button className="btn" onClick={() => setAddOpen(true)}>{t('happy.group.add')}</button>
             )}
           </>
         }
@@ -203,17 +188,7 @@ export default function HappinessTermGroupsPage() {
                         )}
                       </td>
                       <td className="muted tnum">{g.roster_count}</td>
-                      <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }} onClick={(e) => e.stopPropagation()}>
-                        {perms.write && (
-                          <button className="btn ghost sm" style={{ marginRight: 6 }} onClick={() => setFormGroup(g)}>
-                            {t('happy.group.edit')}
-                          </button>
-                        )}
-                        {perms.delete && (
-                          <button className="btn ghost sm" style={{ color: 'var(--crit)', marginRight: 6 }} onClick={() => deleteGroup(g)}>
-                            {t('common.delete')}
-                          </button>
-                        )}
+                      <td style={{ textAlign: 'right' }} onClick={(e) => e.stopPropagation()}>
                         <RowChevron title={t('happy.group.viewDetail')} onClick={() => router.push(`/happiness/group/${g.id}`)} />
                       </td>
                     </tr>
@@ -234,7 +209,7 @@ export default function HappinessTermGroupsPage() {
                     <strong>{g.name}</strong>
                     <span className="muted" style={{ fontSize: 12.5 }}>
                       {' '}
-                      {g.leader ? g.leader.full_name : t('common.vacant')}
+                      {t('groups.leaderInline', { name: g.leader ? g.leader.full_name : t('common.vacant') })}
                     </span>
                   </div>
                   <span className="mtile-cta"><ChevronRightIcon /></span>
@@ -248,24 +223,6 @@ export default function HappinessTermGroupsPage() {
                     {t('happy.group.rosterCount', { n: g.roster_count })}
                   </span>
                 </div>
-                {(perms.write || perms.delete) && (
-                  <div className="flex gap-10" style={{ marginTop: 8 }}>
-                    {perms.write && (
-                      <button className="tile-action" onClick={(e) => { e.stopPropagation(); setFormGroup(g); }}>
-                        {t('happy.group.edit')}
-                      </button>
-                    )}
-                    {perms.delete && (
-                      <button
-                        className="tile-action"
-                        style={{ color: 'var(--crit)' }}
-                        onClick={(e) => { e.stopPropagation(); deleteGroup(g); }}
-                      >
-                        {t('common.delete')}
-                      </button>
-                    )}
-                  </div>
-                )}
               </div>
             ))}
             {sorted.length === 0 && <div className="empty-inline">{t('happy.group.empty')}</div>}
@@ -273,16 +230,15 @@ export default function HappinessTermGroupsPage() {
         </>
       )}
 
-      {formGroup && (
-        <GroupModal
+      {addOpen && (
+        <AddGroupModal
           termId={termId}
-          group={formGroup === 'new' ? null : formGroup}
           members={members.data ?? []}
-          onClose={() => setFormGroup(null)}
-          onSaved={(created) => {
-            setFormGroup(null);
-            groups.reload();
-            toast(created ? t('happy.group.toast.created') : t('happy.group.toast.saved'));
+          onClose={() => setAddOpen(false)}
+          onSaved={(id) => {
+            setAddOpen(false);
+            toast(t('happy.group.toast.created'));
+            router.push(`/happiness/group/${id}`);
           }}
         />
       )}
@@ -290,28 +246,30 @@ export default function HappinessTermGroupsPage() {
   );
 }
 
-function GroupModal({
+// Create-only, matching groups/page.tsx's own AddGroupModal (rule G4): once a
+// group exists, editing and deleting it both happen on its own detail page
+// (happiness/group/[groupId]/page.tsx) rather than through a second copy of
+// this form reachable from the list.
+function AddGroupModal({
   termId,
-  group,
   members,
   onClose,
   onSaved,
 }: {
   termId: string;
-  group: HappinessGroupRow | null;
   members: MemberRow[];
   onClose: () => void;
-  onSaved: (created: boolean) => void;
+  onSaved: (id: string) => void;
 }) {
   const t = useT();
   const toast = useToast();
   const { halls, hallId } = useHallScope();
-  const [name, setName] = useState(group?.name ?? '');
-  const [leaderId, setLeaderId] = useState(group?.leader_id ?? '');
-  const [hall, setHall] = useState<string | null>(group?.hall_id ?? (hallId || null));
-  const [meetingDay, setMeetingDay] = useState<Weekday | ''>(group?.meeting_day ?? '');
-  const [meetingTime, setMeetingTime] = useState(group?.meeting_time?.slice(0, 5) ?? '');
-  const [location, setLocation] = useState(group?.location ?? '');
+  const [name, setName] = useState('');
+  const [leaderId, setLeaderId] = useState('');
+  const [hall, setHall] = useState<string | null>(hallId || null);
+  const [meetingDay, setMeetingDay] = useState<Weekday | ''>('');
+  const [meetingTime, setMeetingTime] = useState('');
+  const [location, setLocation] = useState('');
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -328,23 +286,17 @@ function GroupModal({
     }
     setSaving(true);
     setErr(null);
-    const dto = {
-      term_id: termId,
-      name: name.trim(),
-      leader_id: leaderId || null,
-      hall_id: effectiveHallId,
-      meeting_day: meetingDay || null,
-      meeting_time: meetingTime || null,
-      location: location.trim() || null,
-    };
     try {
-      if (group) {
-        await api.patch(`/happiness/groups/${group.id}`, dto);
-        onSaved(false);
-      } else {
-        await api.post('/happiness/groups', dto);
-        onSaved(true);
-      }
+      const g = await api.post<HappinessGroupRow>('/happiness/groups', {
+        term_id: termId,
+        name: name.trim(),
+        leader_id: leaderId || null,
+        hall_id: effectiveHallId,
+        meeting_day: meetingDay || null,
+        meeting_time: meetingTime || null,
+        location: location.trim() || null,
+      });
+      onSaved(g.id);
     } catch (e) {
       setErr((e as Error).message);
       toast((e as Error).message, 'error');
@@ -354,7 +306,7 @@ function GroupModal({
   };
 
   return (
-    <Modal title={group ? t('happy.group.edit.title') : t('happy.group.new.title')} onClose={onClose}>
+    <Modal title={t('happy.group.new.title')} onClose={onClose}>
       {err && <ErrorBanner message={err} />}
       <div className="form-row">
         <Field label={t('happy.group.field.name')}>
