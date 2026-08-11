@@ -624,12 +624,52 @@ async function main() {
         page.locator('input[type=password]').press('Enter'),
       ]);
       if (resp && resp.status() === 200) {
-        loggedIn = await page.locator('h1:has-text("Dashboard")').waitFor({ timeout: 20000 }).then(() => true).catch(() => false);
+        // Language-INDEPENDENT on purpose: the app shell's sidebar exists on
+        // every signed-in page and never on /login. Waiting on the dashboard's
+        // own `<h1>` ("Dashboard") instead made this first check require the
+        // account to already be in English — so the moment the church set its
+        // interface to 简体中文, the whole suite died here, 90s of retries
+        // deep, with a message that read like a broken login.
+        loggedIn = await page.locator('.sidebar').waitFor({ state: 'attached', timeout: 20000 })
+          .then(() => true).catch(() => false);
       }
       if (!loggedIn) await w(800);
     }
     check('submitting the login form lands on the dashboard', loggedIn);
     if (!loggedIn) throw new Error('login failed — aborting remaining checks');
+
+    /* -- pin the interface language for the whole run --------------------- */
+    // Every assertion below reads ENGLISH labels, but the language is a
+    // per-ACCOUNT setting the church changes for itself (this account runs in
+    // 简体中文 day to day). So the run takes it over and hands it back — the
+    // same contract the add-on module switches and the church theme already
+    // follow, and the reason `restoreLater` exists. Captured ONCE, here: the
+    // interface-language module further down used to be the first thing to
+    // read it, which is far too late to help anything above it.
+    {
+      const me = await (await ctx.request.get(`${BASE}/api/auth/me`)).json();
+      accountId = me.id;
+      originalLanguage = me.language;
+      restoreLater(`the account language to ${originalLanguage}`, async () => {
+        if (!originalLanguage) return; // the run already put it back
+        const r = await ctx.request.patch(`${BASE}/api/accounts/${accountId}`, {
+          data: { language: originalLanguage },
+        });
+        if (!r.ok()) throw new Error(`restore failed: ${r.status()}`);
+      });
+      if (originalLanguage !== 'en') {
+        const r = await ctx.request.patch(`${BASE}/api/accounts/${accountId}`, { data: { language: 'en' } });
+        check(`pinned the interface language to English for this run (was ${originalLanguage})`,
+          r.ok(), `status ${r.status()}`);
+        await page.reload({ waitUntil: 'domcontentloaded' });
+        await page.locator('.sidebar').waitFor({ state: 'attached', timeout: 20000 });
+      }
+    }
+    // Now that the language is known, the dashboard's own heading is worth
+    // asserting for real rather than being used as a proxy for "logged in".
+    check('…and the dashboard is the page it lands on',
+      (await page.locator('h1').first().innerText()).includes('Dashboard'));
+
     const sidebar = await page.locator('.sidebar').innerText();
     check(
       'sidebar lists every module + Users and Church settings (super admin only)',
@@ -1903,13 +1943,20 @@ async function main() {
       const groupHallOpt = await groupHallSel.locator('option').nth(1).getAttribute('value').catch(() => null);
       if (groupHallOpt) await groupHallSel.selectOption(groupHallOpt);
       await page.locator('.modal button:has-text("Save")').first().click();
-      await w(1500);
+      // Creating a group OPENS it (0119) — the same thing /groups' own add
+      // modal does. The term's list is nav-only now, with no inline editor to
+      // return to, so there is no tile to wait for on this page at all.
+      await page.waitForURL(/\/happiness\/group\/[0-9a-f-]+/, { timeout: 20000 });
+      const happyGroupId = page.url().match(/\/happiness\/group\/([0-9a-f-]+)/)?.[1] ?? null;
+      check('creating a group through the UI opens its own detail page', !!happyGroupId);
+
+      // Back to the term to check the LIST: the new group is on it, and the
+      // search box narrows it (0116, the one affordance groups/page.tsx has
+      // that this term-scoped list didn't).
+      await page.goto(`${BASE}/happiness/${happyTermId}`, { waitUntil: 'domcontentloaded' });
       const groupTile = page.locator('.mtile', { hasText: happyGroupName });
       await groupTile.first().waitFor({ timeout: 20000 });
-      check('creating a group through the UI adds it to the term’s own list', (await groupTile.count()) === 1);
-
-      // The term's own group list offers a search box now (0116, the one
-      // affordance groups/page.tsx has that this term-scoped list didn't).
+      check('…and it is listed under its own term', (await groupTile.count()) === 1);
       await page.fill('.page-bar-filters input', 'ZZ_NOMATCH_QUERY');
       await w(400);
       check('the group search box narrows the term’s list to nothing on a query that matches no group',
@@ -1922,10 +1969,11 @@ async function main() {
       await w(400);
 
       /* -- group detail: roster + week-numbered attendance sheet ---------- */
+      // A row/tile is pure navigation now (0119) — no inline Edit or Delete.
       await groupTile.first().click();
       await page.waitForURL(/\/happiness\/group\/[0-9a-f-]+/, { timeout: 15000 });
-      const happyGroupId = page.url().match(/\/happiness\/group\/([0-9a-f-]+)/)?.[1] ?? null;
-      check('…and its own detail page opens', !!happyGroupId);
+      check('…and tapping its tile opens that same detail page',
+        page.url().includes(happyGroupId ?? ' '));
 
       // 0120: attendance now sits ABOVE the roster (roll-call-first, the same
       // order groups/[id]'s own page uses) rather than beside it, and the
@@ -2635,20 +2683,12 @@ async function main() {
     }
 
     // The language is a per-account setting, so switch this account's own and
-    // confirm the whole shell re-renders in it (then switch straight back).
-    const meRes = await ctx.request.get(`${BASE}/api/auth/me`);
-    const me = await meRes.json();
-    accountId = me.id;
-    originalLanguage = me.language;
-    // Same reasoning as the module switch: the `finally` handles a failed
-    // check, this handles the process being killed mid-switch.
-    restoreLater(`the account language to ${originalLanguage}`, async () => {
-      if (!originalLanguage) return; // the run already put it back
-      const r = await ctx.request.patch(`${BASE}/api/accounts/${accountId}`, {
-        data: { language: originalLanguage },
-      });
-      if (!r.ok()) throw new Error(`restore failed: ${r.status()}`);
-    });
+    // confirm the whole shell re-renders in it (then switch back to the
+    // English this run pinned at login). The account id and the church's TRUE
+    // original language were captured up there, before any English-reading
+    // check ran — re-reading them here would only ever record the pin itself
+    // and hand the church back a language it never chose.
+    const me = await (await ctx.request.get(`${BASE}/api/auth/me`)).json();
     check('/api/auth/me reports the account language', typeof me.language === 'string', String(me.language));
 
     const setLang = (lang) =>
@@ -2669,11 +2709,14 @@ async function main() {
     const badLang = await ctx.request.patch(`${BASE}/api/accounts/${accountId}`, { data: { language: 'fr' } });
     check('the server rejects an unsupported language', badLang.status() === 400, `status ${badLang.status()}`);
 
-    await setLang(originalLanguage);
-    originalLanguage = null; // restored — nothing left for the finally block
+    // Back to the English this run pinned at login — NOT to `originalLanguage`,
+    // which is the church's own choice and belongs to the `finally` alone. The
+    // checks after this one go on reading English labels, so the run has to
+    // leave itself in the language it started in.
+    await setLang('en');
     await page.goto(`${BASE}/members`, { waitUntil: 'domcontentloaded' });
     await page.locator('h1').first().waitFor({ timeout: 20000 });
-    check('switching back restores the original language',
+    check('switching back restores the previous language',
       (await page.locator('.sidebar').innerText()).includes('Life Groups'));
     await shot('09-language');
 

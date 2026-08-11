@@ -611,6 +611,17 @@ Testing layers (in `apps/web`):
   attendance and would be genuinely deleted.
   It restores anything it changes — including the module states and the
   church's theme, which it reads first and puts back in a `finally`.
+  **Every assertion in it reads ENGLISH labels, so the run pins the account's
+  interface language to `en` immediately after login** and hands the church's
+  own choice back in that same `finally` (this account runs in 简体中文 day to
+  day). That pin is captured ONCE, at login, before anything English-reading
+  executes — the 语言 module further down must never re-read it, or the restore
+  would hand back the pin instead of the church's real setting. The login check
+  itself is therefore language-INDEPENDENT (it waits on `.sidebar`, which exists
+  on every signed-in page and never on `/login`): waiting on the dashboard's own
+  translated `<h1>` made the very first check silently require English, so the
+  day the church switched to Chinese the whole suite died there, 90s of retries
+  deep, reporting what looked like a broken login.
   **Both e2e scripts end by deleting every fixture-named row in the church**
   (`ZZ_UITEST_…` / `E2E…`), whichever run created it — the registered-fixture
   sweep can only see this process's own rows, so residue from a run that died
