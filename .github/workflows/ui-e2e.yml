@@ -1,23 +1,26 @@
 name: UI E2E (browser interaction test)
 
 # Drives the deployed site in a real Chromium and asserts each interaction's
-# expected outcome (scripts/ui-e2e.mjs). Runs automatically after each
-# successful deploy (via workflow_run) and on manual dispatch — but NOT as a
-# deploy gate, so a browser hiccup never blocks a release. The always-on
-# coverage is the API E2E inside deploy.yml. Every write it performs (one
-# throwaway member) is deleted again, with an API fallback, so the target stays
-# clean.
+# expected outcome (scripts/ui-e2e.mjs).
 #
-# THE SCRIPT MUST COME FROM THE COMMIT THAT WAS DEPLOYED. A workflow_run job
-# checks out the default branch by default, which was wrong while deploy.yml
-# fired on feature branches: main's script was pointed at a branch's build and
-# failed on every UI change that had not landed yet — a permanent red-email
-# generator, every automatic run failing while every manual dispatch passed.
-# deploy.yml runs on main now, so the two usually agree, but the pin stays:
-# a manual branch deploy still happens, and a merge landing while this runs
-# would otherwise leave it asserting against a newer build than it was written
-# for. Pin the checkout to the deployed SHA and make the script confirm that
-# SHA is actually live before it asserts anything.
+# MANUAL DISPATCH ONLY — it does NOT run automatically any more.
+#
+# It used to fire after every successful deploy (via `workflow_run`), and that
+# is what made it expensive: each run downloads ~300MB of Chromium before it
+# asserts anything, on top of a ~3 minute suite, for every single push to main.
+# The suite itself is not going away — it is the only thing that checks the app
+# through a browser — it just runs where it is free: LOCALLY, before a push, as
+# golden rule G0 in CLAUDE.md now requires.
+#
+# What still runs automatically is the API E2E inside deploy.yml, which is the
+# real release gate: no Chromium, no browser, ~2 minutes, and it is what caught
+# the register-form length-cap regression.
+#
+# Dispatch this when you want the browser suite run against the SHARED
+# deployment rather than your own machine — after a branch deploy, say, or to
+# confirm a fix on the live site. `UI_E2E_EXPECT_BUILD` is deliberately unset:
+# a manual run tests whatever is live right now, which is the whole point of
+# asking for one.
 on:
   workflow_dispatch:
     inputs:
@@ -25,11 +28,6 @@ on:
         description: Target base URL
         required: false
         default: https://tog.tabernacleofgrace-cn.workers.dev
-  # Run automatically after each deployment finishes (decoupled from the deploy
-  # job, so a browser hiccup here never blocks a release).
-  workflow_run:
-    workflows: ['Deploy web to Cloudflare Workers']
-    types: [completed]
 
 permissions:
   contents: read
@@ -37,8 +35,6 @@ permissions:
 jobs:
   ui-e2e:
     runs-on: ubuntu-latest
-    # Only after a successful deploy (or when triggered manually).
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     timeout-minutes: 20
     env:
       UI_E2E_URL: ${{ github.event.inputs.base_url || 'https://tog.tabernacleofgrace-cn.workers.dev' }}
@@ -47,15 +43,10 @@ jobs:
       # when the SMOKE_PASSWORD secret isn't set — otherwise the script aborts
       # with "UI_E2E_PASSWORD is required" and the whole workflow shows red.
       UI_E2E_PASSWORD: ${{ secrets.SMOKE_PASSWORD || 'grace2026' }}
-      # Which build this run is allowed to test. Empty on a manual dispatch
-      # (test whatever is live); on workflow_run it is the deployed commit.
-      UI_E2E_EXPECT_BUILD: ${{ github.event.workflow_run.head_sha }}
     steps:
+      # No `ref:` — a dispatch checks out the ref it was made against, which is
+      # the version of the script you asked to run.
       - uses: actions/checkout@v4
-        with:
-          # Empty on workflow_dispatch → checkout falls back to the ref the
-          # dispatch was made against, which is the behaviour we want there.
-          ref: ${{ github.event.workflow_run.head_sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22

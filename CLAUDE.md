@@ -522,9 +522,12 @@ first demotes the incumbent). `/groups/[id]`'s own roster table offers an
 this same shared modal for that row's member — reloading the group's own
 member fetch on save, rather than a second, roster-only copy of the form.
 
-Run before every push: `npm run --workspace @tog/web -s build` (or in
-`apps/web`: `npx tsc --noEmit && npm test && npm run build`). Deploys are gated
-on unit tests + a post-deploy smoke test (`.github/workflows/deploy.yml`).
+Run before every push: `npx tsc --noEmit && npm test && npm run build`, plus
+`npm run test:ui-e2e` whenever a page, a component or `route.ts` changed —
+this is **golden rule G0**, and it is the only gate the browser suite has left
+now that `ui-e2e.yml` never fires on its own. Deploys are gated
+on unit tests + a post-deploy smoke test + the API E2E
+(`.github/workflows/deploy.yml`).
 **`deploy.yml` fires on a push to `main` — i.e. on a merge — and on manual
 dispatch, nothing else.** Iterating on a branch is not a release, and it used to
 deploy (and run the browser suite) on every commit of a branch in flight. The
@@ -634,14 +637,17 @@ Testing layers (in `apps/web`):
   `NODE_USE_ENV_PROXY=1 PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-browsers/chromium-1194/chrome-linux/chrome UI_E2E_PASSWORD=… npm run test:ui-e2e`.
   When you add/rename a page or a key interaction, add a matching check to
   `scripts/ui-e2e.mjs`.
-  **This script is only valid against the build it was checked out from.** The
-  site has one shared URL, and a deploy can be dispatched from a branch, so an
-  old script pointed at a newer deploy reports moved selectors as "failures". CI therefore pins the checkout to the deployed SHA
-  (`ref: github.event.workflow_run.head_sha`) and passes
-  `UI_E2E_EXPECT_BUILD`; the script waits for `/api/version` to report that
-  build and **skips with exit 0** if a newer deploy overtook it. Never "fix" a
-  red automatic run by loosening a selector before checking which build it
-  actually tested.
+  **This script is only valid against the build it is checked out from.** The
+  site has one shared URL, so an old script pointed at a newer deploy reports
+  moved selectors as "failures" — which is why the script can be handed
+  `UI_E2E_EXPECT_BUILD`, waits for `/api/version` to report that build, and
+  **skips with exit 0** if a newer deploy overtook it. Never "fix" a red run by
+  loosening a selector before checking which build it actually tested.
+  **It no longer runs in CI on its own** (`ui-e2e.yml` is `workflow_dispatch`
+  only): every automatic run pulled ~300MB of Chromium to re-check what a
+  laptop checks for free. Running it before a push is golden rule **G0**, and
+  it is now the ONLY thing checking the app through a browser — the deploy
+  gate is the API E2E, which never opens one.
 - `npm run ui:shots` — **screenshot sweep**: captures every list page at a phone
   and a desktop viewport into `$OUT` (default `/tmp/shots`; `WIDE=1` for
   desktop). A local tool for looking at a layout change with your own eyes —
@@ -655,6 +661,37 @@ Testing layers (in `apps/web`):
 
 These are hard requirements for this codebase. A change that breaks one is a
 review finding, not a preference. Cite the rule number in the finding.
+
+### G0 — Nothing is pushed that has not been verified LOCALLY first
+CI is not the place to find out whether a change works. The browser suite no
+longer runs automatically at all (`ui-e2e.yml` is manual-dispatch only) because
+every automatic run downloaded ~300MB of Chromium to re-check what a laptop can
+check for free — so the only thing standing between a broken change and the
+church's live site is the person pushing it.
+
+Before **every** push, in `apps/web`, run the checks the change can actually
+affect, and READ the output rather than glancing at the exit code:
+
+```
+npx tsc --noEmit && npm test && npm run build     # always, no exceptions
+NODE_USE_ENV_PROXY=1 \
+  PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-browsers/chromium-1194/chrome-linux/chrome \
+  UI_E2E_PASSWORD=… npm run test:ui-e2e           # any change to a page,
+                                                  # a component or route.ts
+```
+
+A push that skips the browser suite after touching the UI is the mistake this
+rule exists to stop: the last three times it was skipped, CI found a dropped
+length cap on an unauthenticated endpoint (which wrote a 500-character row to
+the live database), a test still driving a flow the same commit had changed,
+and a suite that had been dead at its first check for two days. All three were
+reproducible locally in three minutes.
+
+`test:ui-e2e` runs against the SHARED deployment, so run it only when nothing
+else is (`deploy.yml`'s own API E2E included) — two runs at once fight over the
+same live-database fixtures. It restores everything it touches, including the
+church's interface language; if it ever reports residue it did not clean, that
+is a FAILED run whatever its assertions said.
 
 ### G1 — CRUD completeness on every management page
 Every entity page (成员、小组、聚会（点名表上的一列）、培训&活动（培训与活动两种形态）、四十天守望模块与配对、幸福小组的期与小组、账户) must offer
