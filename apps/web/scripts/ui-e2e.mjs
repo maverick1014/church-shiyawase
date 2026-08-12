@@ -2076,9 +2076,19 @@ async function main() {
       // 0123: a member's own page reads their 幸福小组 history now too.
       await page.goto(`${BASE}/members/${fxHappyMember.id}`, { waitUntil: 'domcontentloaded' });
       await page.locator('.section-label', { hasText: 'Happiness Groups' }).first().waitFor({ timeout: 15000 });
-      const memberHappyBody = await page.locator('.content').innerText();
-      check('a member’s own page shows their 幸福小组 participation history',
-        memberHappyBody.includes('Happiness Groups') && memberHappyBody.includes(happyGroupName));
+      // Wait for the ROW, not just the heading above it. The section label is
+      // page shell and paints immediately; the list under it arrives with its
+      // own `/happiness/members/:id` fetch, so reading `.content` the instant
+      // the heading exists is a real race — it passed on a fast link and
+      // failed on a CI runner, which is exactly the trap the dashboard's own
+      // checks already warn about.
+      const historyShown = await page
+        .locator(`.content:has-text("${happyGroupName}")`)
+        .first()
+        .waitFor({ timeout: 15000 })
+        .then(() => true)
+        .catch(() => false);
+      check('a member’s own page shows their 幸福小组 participation history', historyShown);
     } finally {
       // Deleting the term cascades its group, roster and every week of
       // attendance — nothing else here needs its own teardown. The quick-added
