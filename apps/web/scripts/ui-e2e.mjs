@@ -1246,29 +1246,61 @@ async function main() {
       // the server, so the checkbox's own state is not the fact worth
       // asserting — the row in the sheet is, and that is what the next check
       // reads back through the API. Same reasoning as the group sheet above.
+      //
+      // Each round trip is awaited with `pollUntil`, the same helper the group
+      // sheet's own tick already used, and NOT a fixed sleep. Three things have
+      // to land between the click and the read — the PUT, the row's re-render,
+      // and this script's own re-fetch — and a flat 1500ms was a bet that all
+      // three would be quick. Under load that bet lost: the meeting's
+      // tick→untick pair went red twice in one run and green on the very next,
+      // with nothing changed. Polling states the same fact without naming a
+      // duration; only a genuine failure now waits out the full timeout.
+      const cellsWhen = (ok) => pollUntil(sheetCells, ok);
+      /*
+       * A tick has TWO halves to wait on, and waiting for only one is what made
+       * this block flaky in both directions. `cellsWhen` waits for the server;
+       * `settled` waits for the checkbox to have re-rendered into that state.
+       *
+       * Skipping the second is not hypothetical: polling alone returns the
+       * instant the server agrees, which can be mid-re-render, and the next
+       * click is then swallowed — the optimistic toggle is overwritten when the
+       * in-flight response lands, so the untick simply never happened. That is
+       * a different failure from the one the polling fixed, and it showed up
+       * the moment the old blanket sleep stopped covering for both.
+       */
+      const settled = (loc, want) =>
+        pollUntil(() => loc.isChecked().catch(() => null), (v) => v === want, 8000, 150);
+      /** The same, for a check-all — whose state is none / some / all, not a boolean. */
+      const tickAllState = (loc) =>
+        loc.evaluate((el) => (el.indeterminate ? 'some' : el.checked ? 'all' : 'none'));
+      const settledAll = (loc, want) =>
+        pollUntil(() => tickAllState(loc).catch(() => null), (v) => v === want, 8000, 150);
+      const isSundayTicked = (c) =>
+        Object.entries(c).some(([key, cell]) => key.startsWith('sunday:') && cell.pre_service);
       await firstTick.click();
-      await w(1500);
-      const ticked = await sheetCells();
+      const ticked = await cellsWhen(isSundayTicked);
       check('ticking a Sunday cell records it under a sunday column',
-        Object.entries(ticked).some(([key, c]) => key.startsWith('sunday:') && c.pre_service),
-        JSON.stringify(ticked));
+        isSundayTicked(ticked), JSON.stringify(ticked));
+      await settled(firstTick, true);
       await firstTick.click();
-      await w(1500);
-      const cleared = await sheetCells();
-      check('unticking it leaves no row behind', Object.keys(cleared).length === 0, JSON.stringify(cleared));
+      const isEmpty = (c) => Object.keys(c).length === 0;
+      const cleared = await cellsWhen(isEmpty);
+      check('unticking it leaves no row behind', isEmpty(cleared), JSON.stringify(cleared));
 
       const meetingTick = sheetRow.locator(`input[title*="${fxMeeting.name}"]`);
       check('the meeting’s column is ticked in the same row', (await meetingTick.count()) === 1);
+      const meetingKey = `meeting:${fxMeeting.id}`;
+      const meetingAttended = (c) => c[meetingKey]?.attended === true;
+      await settled(meetingTick.first(), false);
       await meetingTick.first().click();
-      await w(1500);
-      const came = await sheetCells();
+      const came = await cellsWhen(meetingAttended);
       check('ticking the meeting writes the OTHER table, on the same grid',
-        came[`meeting:${fxMeeting.id}`]?.attended === true, JSON.stringify(came));
+        meetingAttended(came), JSON.stringify(came));
+      await settled(meetingTick.first(), true);
       await meetingTick.first().click();
-      await w(1500);
-      const wentBack = await sheetCells();
+      const wentBack = await cellsWhen((c) => !c[meetingKey]);
       check('unticking the meeting leaves no row behind either',
-        !wentBack[`meeting:${fxMeeting.id}`], JSON.stringify(wentBack));
+        !wentBack[meetingKey], JSON.stringify(wentBack));
 
       /* -- the column check-all (全员到齐) ------------------------------- */
       // Deliberately driven on THIS RUN'S OWN MEETING column and never on a
@@ -1279,8 +1311,18 @@ async function main() {
       const meetingAll = page.locator(`input.sheet-tick-all[aria-label*="${fxMeeting.name}"]`);
       check('a column carries its check-all in the header, under the date',
         (await meetingAll.count()) === 1);
-      check('…reading as empty while nobody is ticked',
-        !(await meetingAll.isChecked()) && (await meetingAll.evaluate((el) => el.indeterminate)) === false);
+      // The row above is already gone server-side; give the header the moment
+      // it needs to re-render into that before reading it. `settledAll` gives
+      // up after its own timeout and hands back whatever it last saw, so a
+      // header that genuinely stays ticked still fails this — a wait, not a pass.
+      //
+      // It polls the header's THREE-way state, not `isChecked()`: a check-all
+      // reads none / some / all, and in the middle state `indeterminate` is set
+      // while `checked` is already false. Waiting on `checked` alone therefore
+      // returns instantly on a header that is still showing "some", which is
+      // exactly the stale frame this needs to wait out.
+      const headerState = await settledAll(meetingAll, 'none');
+      check('…reading as empty while nobody is ticked', headerState === 'none', headerState);
       // One check-all per sub-column, which is exactly one per tick in a
       // member's row: two per Sunday (会前 / 主日 filled separately) plus one
       // per meeting. Comparing the two counts states that without having to
@@ -1293,6 +1335,7 @@ async function main() {
 
       // One person ticked out of the whole sheet is the in-between state, and
       // it has to be reported honestly rather than rounded to on or off.
+      await settled(meetingTick.first(), false);
       await meetingTick.first().click();
       await page.waitForFunction(
         (el) => el.indeterminate || el.checked,
@@ -1317,10 +1360,16 @@ async function main() {
         columnPuts === 1, `${columnPuts} PUT(s)`);
       check('…and needs no confirmation, because nothing is lost',
         (await page.locator('.modal-backdrop').count()) === 0);
-      const wholeSheet = await apiGet(`/attendance/sheet?year=${SHEET_YEAR}&month=${Number(SHEET_MONTH)}`);
-      const onColumn = (wholeSheet.rows || []).filter(
-        (r) => r.cells?.[`meeting:${fxMeeting.id}`]?.attended === true,
-      ).length;
+      // The 2500ms above is a window for COUNTING requests, not for the write
+      // to land, so the read that follows still has to wait for the fill on its
+      // own terms: poll until every row carries the tick.
+      const filledCount = (s) =>
+        (s.rows || []).filter((r) => r.cells?.[meetingKey]?.attended === true).length;
+      const wholeSheet = await pollUntil(
+        () => apiGet(`/attendance/sheet?year=${SHEET_YEAR}&month=${Number(SHEET_MONTH)}`),
+        (s) => filledCount(s) === (s.rows || []).length && filledCount(s) > 0,
+      );
+      const onColumn = filledCount(wholeSheet);
       check('every member on the sheet is marked by that one call',
         onColumn === (wholeSheet.rows || []).length && onColumn > 0,
         `${onColumn} of ${(wholeSheet.rows || []).length}`);
@@ -1343,10 +1392,14 @@ async function main() {
       await meetingAll.click();
       await page.locator('.modal-backdrop').last().waitFor({ timeout: 8000 });
       await page.locator('.modal-backdrop').last().locator('button:has-text("Clear column")').last().click();
-      await w(2500);
-      const clearedSheet = await apiGet(`/attendance/sheet?year=${SHEET_YEAR}&month=${Number(SHEET_MONTH)}`);
-      check('confirming leaves no row behind anywhere in that column',
-        (clearedSheet.rows || []).every((r) => !r.cells?.[`meeting:${fxMeeting.id}`]));
+      // Clearing a whole column is one PUT carrying every member, so it is the
+      // slowest write on this page and the likeliest to outlast a fixed sleep.
+      const columnEmpty = (s) => (s.rows || []).every((r) => !r.cells?.[meetingKey]);
+      const clearedSheet = await pollUntil(
+        () => apiGet(`/attendance/sheet?year=${SHEET_YEAR}&month=${Number(SHEET_MONTH)}`),
+        columnEmpty,
+      );
+      check('confirming leaves no row behind anywhere in that column', columnEmpty(clearedSheet));
 
       // The meeting's own name in the header is where it is edited from.
       await meetingHead.locator(`button:has-text("${fxMeeting.name}")`).first().click();
