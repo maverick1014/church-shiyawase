@@ -778,6 +778,49 @@ async function main() {
       await filters.nth(1).selectOption('all');
       await w(300);
     }
+    /* The list opens in the order the church reads it: 小组, then rank inside
+       the group, then the name. Asserted STRUCTURALLY rather than by replaying
+       the comparison — the church's real group names collate however zh-CN
+       collates them, and a test that re-implements that is testing ICU. What
+       must hold whatever the data is: each group's rows form ONE contiguous
+       run, 未分组 is the tail, and ranks never climb back up inside a run. */
+    const headers = await page.locator('.only-desktop thead th').allInnerTexts();
+    const groupCol = headers.findIndex((h) => h.trim().startsWith('Life group'));
+    const roleCol = headers.findIndex((h) => h.trim().startsWith('Identity'));
+    if (groupCol >= 0 && roleCol >= 0) {
+      const RANKS = ['Pastor', 'Deacon', 'Co-worker', 'Group leader', 'Assistant leader',
+        'Intern leader', 'Core', 'Regular', 'New', 'Visitor', 'Ungrouped'];
+      const body = await page.locator('.only-desktop tbody tr').all();
+      const rows = [];
+      for (const tr of body) {
+        const tds = await tr.locator('td').allInnerTexts();
+        if (tds.length <= Math.max(groupCol, roleCol)) continue;
+        rows.push({ group: tds[groupCol].trim(), role: tds[roleCol].trim() });
+      }
+      const seen = [];
+      let contiguous = true;
+      let ranksDescend = true;
+      for (let i = 0; i < rows.length; i++) {
+        if (i === 0 || rows[i].group !== rows[i - 1].group) {
+          // A group already left behind must never come back.
+          if (seen.includes(rows[i].group)) contiguous = false;
+          seen.push(rows[i].group);
+        } else if (RANKS.indexOf(rows[i].role) < RANKS.indexOf(rows[i - 1].role)) {
+          ranksDescend = false;
+        }
+      }
+      check('the members list opens grouped by life group, each group in one run',
+        rows.length > 0 && contiguous, seen.join(' | ').slice(0, 160));
+      check('未分组 members are the tail of the list, not scattered through it',
+        seen.indexOf('Ungrouped') === -1 || seen.indexOf('Ungrouped') === seen.length - 1,
+        `${seen.indexOf('Ungrouped')} of ${seen.length}`);
+      check('inside a life group the rows run top rank to bottom', ranksDescend,
+        rows.map((r) => `${r.group}/${r.role}`).join(' ').slice(0, 160));
+    } else {
+      check('the members table exposes its life-group and identity columns',
+        false, headers.join(' | '));
+    }
+
     await shot('02-members');
 
     /* -- member detail ---------------------------------------------------- */
