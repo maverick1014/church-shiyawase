@@ -742,11 +742,15 @@ async function main() {
     await filters.first().selectOption('all');
     await w(300);
 
-    /* A person is TWO names (migration 0018) and every list draws both: the
-       Chinese name with the English one under it, on its own line. The fixture
-       brings its own English name — the church's real members may or may not
-       have one, and "the church happens to have somebody bilingual" is not
-       something a test may depend on. Searching for the Chinese name also
+    /* A person is TWO names (0018) but only ONE is DRAWN (0028): the one their
+       own congregation reads them by. The fixture lands in the church's first
+       hall, which is 中文堂, so its Chinese name is what a row shows and its
+       English name must NOT be on screen beside it — that stacked second line
+       is exactly what the church asked to be rid of.
+
+       The fixture brings its own English name: the church's real members may or
+       may not have one, and "the church happens to have somebody bilingual" is
+       not something a test may depend on. Searching for the Chinese name also
        proves the row is reachable at all. */
     const bilingual = await makeMember('BINAME', { english_name: 'E2E English Name' });
     await page.reload({ waitUntil: 'domcontentloaded' });
@@ -755,15 +759,16 @@ async function main() {
     await w(600);
     const nameTile = page.locator('.mtile').first();
     const nameTileText = (await nameTile.count()) ? await nameTile.innerText() : '';
-    check('a member row shows the Chinese name with the English one under it',
-      nameTileText.includes(bilingual.name) &&
-        nameTileText.includes('E2E English Name') &&
-        (await nameTile.locator('.member-name-en').count()) > 0,
+    check('a member row draws ONE name, the one their congregation reads them by',
+      nameTileText.includes(bilingual.name) && !nameTileText.includes('E2E English Name'),
       nameTileText.replace(/\n/g, ' ⏎ ').slice(0, 120));
-    // …and the search itself matches EITHER name.
+    check('…and no second name is stacked under it any more',
+      (await nameTile.locator('.member-name-en').count()) === 0);
+    // …but the name NOT drawn is still what a search matches, or somebody known
+    // to half the church by their English name becomes unfindable.
     await page.fill('input[placeholder*="Search"]', 'e2e english name');
     await w(600);
-    check('the search box finds a member by their English name',
+    check('the search box still finds a member by the name it does not show',
       (await page.locator('.mtile').count()) === 1 &&
         (await page.locator('.mtile').first().innerText()).includes(bilingual.name));
     await bilingual.remove();
@@ -876,6 +881,27 @@ async function main() {
       const groupTile = page.locator('.mtile', { hasText: fxGroup.name });
       check('the group search box narrows the list to one group',
         (await page.locator('.mtile').count()) === 1 && (await groupTile.count()) === 1);
+
+      /* Every mobile list tile has ONE shape — the members list's, made
+         canonical: what the row IS on the first line with its single tag
+         pinned to the right, then one fact per line under it. This tile used to
+         carry the leader inside its title and the health badge halfway down
+         beside the member count, so the tag sat somewhere different on every
+         page. Asserted structurally: the badge is inside row 1, the leader is
+         NOT, and the leader has a line of its own. */
+      const row1 = groupTile.first().locator('.mtile-row1');
+      check('a group tile puts its tag on the first row, beside the name',
+        (await row1.locator('.badge').count()) === 1,
+        `${await row1.locator('.badge').count()} badge(s) in row 1`);
+      const row1Text = await row1.innerText();
+      check('…and the leader is no longer crammed into that first row',
+        row1Text.includes(fxGroup.name) && !/leader/i.test(row1Text),
+        row1Text.replace(/\n/g, ' ⏎ ').slice(0, 90));
+      const tileLines = await groupTile.first().locator('.mtile-line').allInnerTexts();
+      check('…the leader gets a line of its own, with the member count under it',
+        tileLines.length >= 2 && /leader/i.test(tileLines[0]) && /member/i.test(tileLines[1]),
+        tileLines.join(' | ').slice(0, 110));
+
       await groupTile.first().click();
       await page.waitForURL(/\/groups\/[0-9a-f-]+/, { timeout: 15000 });
       await page.locator('text=Leadership trio').first().waitFor({ timeout: 15000 });
@@ -1100,9 +1126,17 @@ async function main() {
       const rosterRow = page.locator('table:has(button:has-text("Remove")) tr', { hasText: fxGroup.member.name }).first();
       await rosterRow.locator('button:has-text("View")').click();
       await page.waitForURL(new RegExp(`/members/${fxGroup.member.id}$`), { timeout: 10000 });
+      // The URL changes the moment the route does; the NAME arrives with the
+      // member's own fetch a beat later, so reading the body right here asks
+      // the skeleton whether it knows who this is. Polled, not slept — the same
+      // reason the roll-call sheet's ticks are.
+      const memberPageText = await pollUntil(
+        () => page.locator('body').innerText().catch(() => ''),
+        (text) => text.includes(fxGroup.member.name),
+      );
       check('the roster row’s View button opens that member’s own page',
-        (await page.locator('h1, .entity-header').first().innerText().catch(() => '')).includes(fxGroup.member.name) ||
-          (await page.locator('body').innerText()).includes(fxGroup.member.name));
+        memberPageText.includes(fxGroup.member.name),
+        memberPageText.replace(/\s+/g, ' ').slice(0, 90));
       await page.goBack({ waitUntil: 'domcontentloaded' });
       await page.locator('.sheet-table').first().waitFor({ timeout: 10000 });
     } finally {
@@ -2100,19 +2134,24 @@ async function main() {
         .waitFor({ timeout: 10000 }).then(() => true).catch(() => false);
       check('adding a roster member via the Combobox shows them on the roster', rosterAdded);
 
-      // 0121: the roster's own role — free text, editable per row, and
-      // deliberately NOT the church_role/group_position badge this cell used
-      // to show (那与幸福小组无关). Committed on blur, like TagsInput's chips.
+      // The roster row's own free-text role column (0121) is GONE again: the
+      // church asked for it back out, because the only thing worth saying about
+      // a roster row is who here is the 福友 — which is `church_role` being 访客
+      // (0021) — and a column of 组员 badges said nothing the roster did not
+      // already say by listing them. So: no editable cell, and the row offers
+      // the same View/Remove pair the life-group roster does (rule G4).
       const rosterRow = rosterCard.locator('table:not(.sheet-table) tbody tr', { hasText: fxHappyMember.name });
       await rosterRow.first().waitFor({ timeout: 10000 });
-      const roleInput = rosterRow.locator('input');
-      await roleInput.fill('Leader');
-      await roleInput.press('Tab');
-      await w(800);
-      const detailAfterRole = happyGroupId ? await apiGet(`/happiness/groups/${happyGroupId}`) : null;
-      check('setting a roster member’s OWN role in this group persists it, independent of church_role/group_position',
-        detailAfterRole?.members?.find((m) => m.id === fxHappyMember.id)?.happiness_role === 'Leader',
-        JSON.stringify(detailAfterRole?.members));
+      check('a roster row no longer carries an editable role of its own',
+        (await rosterRow.locator('input').count()) === 0,
+        `${await rosterRow.locator('input').count()} input(s)`);
+      check('…and offers View beside Remove, the same pair the life-group roster does',
+        (await rosterRow.locator('button:has-text("View")').count()) === 1 &&
+          (await rosterRow.locator('button:has-text("Remove")').count()) === 1);
+      // The fixture is an ordinary member, not a 访客, so it carries no tag —
+      // "everyone else gets no label at all" is half of what was asked for.
+      check('an ordinary roster member carries no tag at all',
+        (await rosterRow.locator('.badge').count()) === 0);
 
       // 0120: the group's own info — name/hall/leader/day/time/location — is
       // now an editable card on this page (editing/deleting no longer lives
@@ -2143,6 +2182,15 @@ async function main() {
       happyVisitorId = visitorRow?.id ?? null;
       check('…created as an ordinary 访客 (church role visitor), never a claim they get to make about anything else',
         visitorRow?.church_role === 'visitor', JSON.stringify(visitorRow));
+      // …and THAT is the one thing a roster row labels: the visitor this group
+      // exists to reach carries a 访客 tag, where an ordinary member above
+      // carried none.
+      const visitorRosterRow = rosterCard
+        .locator('table:not(.sheet-table) tbody tr', { hasText: happyVisitorName });
+      check('a 福友 on the roster is tagged as a visitor, and only they are',
+        (await visitorRosterRow.locator('.badge').count()) === 1 &&
+          /visitor/i.test(await visitorRosterRow.locator('.badge').first().innerText()),
+        await visitorRosterRow.innerText().catch(() => '(no row)'));
 
       // The sheet's columns are WEEK NUMBERS, never dates — the one roll call
       // in the app that isn't date-based.

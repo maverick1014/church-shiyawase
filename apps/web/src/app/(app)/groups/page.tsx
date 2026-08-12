@@ -283,25 +283,29 @@ export default function GroupsPage() {
           <div className="only-mobile">
             {sorted.map((g) => (
               <div key={g.id} className="mtile" onClick={() => router.push(`/groups/${g.id}`)}>
+                {/* The canonical mobile tile (see `.mtile-row1` in globals.css):
+                    what the row IS on the first line with its one tag pinned
+                    right, then one fact per line under it. The leader used to
+                    ride along inside the title and the health badge sat halfway
+                    down beside the member count — so the tag landed in a
+                    different place on every page and a long leader name pushed
+                    the title onto two lines. */}
                 <div className="mtile-row1">
-                  <div style={{ minWidth: 0 }}>
-                    <strong>{g.name}</strong>
-                    <span className="muted" style={{ fontSize: 12.5 }}>
-                      {' '}
-                      {t('groups.leaderInline', { name: g.leaderName ?? t('common.vacant') })}
-                    </span>
+                  <strong style={{ minWidth: 0 }}>{g.name}</strong>
+                  <div className="flex items-center gap-8" style={{ flexShrink: 0 }}>
+                    <span className={`badge ${groupHealthClass(g.status)}`}>{t(groupHealthKey(g.status))}</span>
+                    <span className="mtile-cta"><ChevronRightIcon /></span>
                   </div>
-                  <span className="mtile-cta"><ChevronRightIcon /></span>
                 </div>
-                <div className="mtile-line flex items-center gap-8 flex-wrap">
-                  <span>
-                    {t('groups.memberLine', {
-                      n: g.memberCount,
-                      newCount: g.newMemberCount,
-                      schedule: g.schedule ? ` · ${g.schedule}` : '',
-                    })}
-                  </span>
-                  <span className={`badge ${groupHealthClass(g.status)}`}>{t(groupHealthKey(g.status))}</span>
+                <div className="mtile-line">
+                  {t('groups.leaderInline', { name: g.leaderName ?? t('common.vacant') })}
+                </div>
+                <div className="mtile-line">
+                  {t('groups.memberLine', {
+                    n: g.memberCount,
+                    newCount: g.newMemberCount,
+                    schedule: g.schedule ? ` · ${g.schedule}` : '',
+                  })}
                 </div>
                 {g.tags.length > 0 && (
                   <div className="flex gap-4 flex-wrap" style={{ marginTop: 6 }}>

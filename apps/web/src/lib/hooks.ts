@@ -4,15 +4,24 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from './api';
 import { useHallScope, withHallParam } from './hall';
 
-export function useFetch<T>(path: string | null) {
+export function useFetch<T>(path: string | null, opts?: { allHalls?: boolean }) {
   const [data, setData] = useState<T | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   // Every list request carries the active hall, so switching halls in the
   // topbar refetches the whole page. Endpoints that aren't hall-scoped simply
   // ignore the parameter server-side.
+  //
+  // `allHalls` opts a single read out of the congregation SWITCHER — used by
+  // the life-group picker on the member forms, because a person belongs to one
+  // congregation while the group they attend may belong to another (a 马来文堂
+  // member sitting in a 中文堂 小组 is the case the church actually has). It
+  // opts out of the switcher only: a hall-PINNED account is still narrowed
+  // server-side, because that is the permission gate rather than a view
+  // preference, and the session's own hall always wins there (rule G2).
   const { hallId } = useHallScope();
-  const scopedPath = path === null ? null : withHallParam(path, hallId);
+  const scopedPath =
+    path === null ? null : opts?.allHalls ? path : withHallParam(path, hallId);
 
   // A write handler calls reload() right after its own POST/PUT resolves —
   // two reloads can be in flight together (a stray one from a hall switch,

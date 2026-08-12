@@ -28,6 +28,7 @@ import {
   Switch,
   useConfirm,
   useFormGuard,
+  useMemberOptions,
   useToast,
 } from '@/components/ui';
 import { AccountRow, MemberRow } from '@/lib/types';
@@ -186,16 +187,21 @@ export default function SettingsPage() {
           <div className="only-mobile">
             {sortedAccounts.map((u) => (
               <div key={u.id} className="mtile" onClick={() => setDetailId(u.id)}>
+                {/* Canonical tile (rule G4): the person on the first row with
+                    the one tag that identifies the row pinned right — for an
+                    ACCOUNT list that is what the account may do, not the
+                    holder's church rank, which moves down with the other
+                    facts. */}
                 <div className="mtile-row1">
-                  <div className="flex items-center gap-8 flex-wrap" style={{ minWidth: 0 }}>
-                    <MemberName member={u.member} />
-                    {u.member && <RoleBadge role={churchDisplayRole(u.member.church_role)} />}
+                  <div style={{ minWidth: 0 }}><MemberName member={u.member} /></div>
+                  <div className="flex items-center gap-8" style={{ flexShrink: 0 }}>
+                    <span className={`badge ${accountRoleClass(u.account_role)}`}>{t(accountRoleKey(u.account_role))}</span>
+                    <span className="mtile-cta"><ChevronRightIcon /></span>
                   </div>
-                  <span className="mtile-cta"><ChevronRightIcon /></span>
                 </div>
                 <div className="mtile-line">{u.email}</div>
                 <div className="mtile-line flex items-center gap-8 flex-wrap">
-                  <span className={`badge ${accountRoleClass(u.account_role)}`}>{t(accountRoleKey(u.account_role))}</span>
+                  {u.member && <RoleBadge role={churchDisplayRole(u.member.church_role)} />}
                   {/* Enabled is the normal state, so saying it on every tile is
                       noise on a phone where room is the scarce thing. Only the
                       exception is worth a badge. */}
@@ -490,6 +496,8 @@ function AddAccountModal({
   onSaved: () => void;
 }) {
   const t = useT();
+  /** Every member picker's options come from one builder (rule G4). */
+  const memberOptions = useMemberOptions();
   const toast = useToast();
   const takenMembers = new Set(existing.map((a) => a.member_id));
   const [memberId, setMemberId] = useState('');
@@ -560,14 +568,10 @@ function AddAccountModal({
         <Combobox
           value={memberId}
           onChange={pickMember}
-          options={members
-            .filter((m) => !takenMembers.has(m.id))
-            .map((m) => ({
-              value: m.id,
-              label: m.full_name,
-              sub: m.english_name,
-              hint: t(roleKey(memberRole(m))),
-            }))}
+          options={memberOptions(
+            members.filter((m) => !takenMembers.has(m.id)),
+            { hint: (m) => t(roleKey(memberRole(m as MemberRow))) },
+          )}
           placeholder={t('settings.chooseMember')}
           ariaLabel={t('settings.linkMember')}
         />

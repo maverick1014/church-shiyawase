@@ -313,13 +313,17 @@ const COURSE = {
   location: null,
 };
 
+/**
+ * `trainingMeta` answers in ROWS, not one flat list: who runs it on the first,
+ * when and where on the second. A phone wrapped the single joined line
+ * mid-date ("日期：2026-" / "09-13 14:30"), which is the one part of it that
+ * cannot be read broken in half.
+ */
 describe('trainingMeta', () => {
   it('reads a course as its PIC, contact, session count and date range', () => {
     expect(trainingMeta(COURSE, t)).toEqual([
-      'PIC: Pastor Tan',
-      'Contact 012-345 6789',
-      '4 sessions',
-      '2026-06-01 to 2026-08-15',
+      ['PIC: Pastor Tan', 'Contact 012-345 6789', '4 sessions'],
+      ['2026-06-01 to 2026-08-15'],
     ]);
   });
 
@@ -339,10 +343,8 @@ describe('trainingMeta', () => {
         t,
       ),
     ).toEqual([
-      'PIC: Pastor Tan',
-      'Contact 012-345 6789',
-      'On 2026-09-12 09:00',
-      'at the church car park',
+      ['PIC: Pastor Tan', 'Contact 012-345 6789'],
+      ['On 2026-09-12 09:00', 'at the church car park'],
     ]);
   });
 
@@ -361,7 +363,7 @@ describe('trainingMeta', () => {
         },
         t,
       ),
-    ).toEqual(['PIC: TBD', 'On 2026-09-12']);
+    ).toEqual([['PIC: TBD'], ['On 2026-09-12']]);
   });
 });
 

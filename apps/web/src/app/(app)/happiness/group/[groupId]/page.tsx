@@ -14,6 +14,7 @@ import {
   Field,
   HallSelect,
   MemberName,
+  RoleBadge,
   RoleRestricted,
   SheetTick,
   SheetTickAll,
@@ -24,6 +25,7 @@ import {
   SortTh,
   useConfirm,
   useFormGuard,
+  useMemberOptions,
   useToast,
 } from '@/components/ui';
 import { can, Perms } from '@/lib/perms';
@@ -32,7 +34,7 @@ import { HappinessAttendanceResponse, HappinessGroupDetail, MemberRow } from '@/
 import { columnTickState } from '@/lib/sheet';
 import { weekdayKey, WEEKDAY_OPTIONS } from '@/lib/labels';
 import { useT } from '@/lib/i18n';
-import { AccountRole, ChurchRole, Weekday } from '@tog/shared';
+import { AccountRole, ChurchRole, DisplayRole, Weekday } from '@tog/shared';
 
 export default function HappinessGroupDetailPage() {
   const { groupId } = useParams<{ groupId: string }>();
@@ -107,6 +109,9 @@ function GroupPanel({
   onDeleted: () => void;
 }) {
   const t = useT();
+  const router = useRouter();
+  /** Every member picker's options come from one builder (rule G4). */
+  const memberOptions = useMemberOptions();
   const toast = useToast();
   const confirm = useConfirm();
 
@@ -428,7 +433,7 @@ function GroupPanel({
             <Combobox
               value={leaderId}
               onChange={setLeaderId}
-              options={allMembers.map((m) => ({ value: m.id, label: m.full_name, sub: m.english_name }))}
+              options={memberOptions(allMembers)}
               placeholder={t('happy.group.leaderPlaceholder')}
               ariaLabel={t('happy.group.field.leader')}
             />
@@ -472,7 +477,7 @@ function GroupPanel({
               <Combobox
                 value={addSel}
                 onChange={setAddSel}
-                options={unassigned.map((m) => ({ value: m.id, label: m.full_name, sub: m.english_name }))}
+                options={memberOptions(unassigned)}
                 placeholder={t('happy.group.addMemberPlaceholder')}
                 ariaLabel={t('happy.group.addMember')}
                 style={{ flex: 1 }}
@@ -512,7 +517,7 @@ function GroupPanel({
               <thead>
                 <tr>
                   <SortTh sortKey="name" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>{t('members.field.name')}</SortTh>
-                  <th>{t('happy.group.col.role')}</th>
+                  <th />
                   <th />
                 </tr>
               </thead>
@@ -520,19 +525,27 @@ function GroupPanel({
                 {sortedRoster.map((m) => (
                   <tr key={m.id}>
                     <td><MemberName member={m} /></td>
+                    {/* A 福友 is simply a member whose church role is 访客
+                        (0021), and that is the ONE thing worth saying about a
+                        roster row: who here is the visitor this group exists
+                        to reach. Everybody else carries no tag at all — a
+                        column of 组员 badges says nothing the roster does not
+                        already say by listing them. */}
                     <td>
-                      <RosterRoleCell
-                        groupId={group.id}
-                        memberId={m.id}
-                        role={m.happiness_role}
-                        editable={perms.write}
-                        onSaved={onChanged}
-                      />
+                      {m.church_role === ChurchRole.Visitor && (
+                        <RoleBadge role={DisplayRole.Visitor} />
+                      )}
                     </td>
                     <td style={{ textAlign: 'right' }}>
-                      {perms.write && (
-                        <button className="btn danger" onClick={() => removeMember(m.id)}>{t('common.remove')}</button>
-                      )}
+                      {/* Same pair the life-group roster offers, in the same
+                          order (rule G4): View goes to the member's own page,
+                          which is where a person is actually edited. */}
+                      <div className="flex gap-6" style={{ justifyContent: 'flex-end' }}>
+                        <button className="btn ghost sm" onClick={() => router.push(`/members/${m.id}`)}>{t('common.view')}</button>
+                        {perms.write && (
+                          <button className="btn danger sm" onClick={() => removeMember(m.id)}>{t('common.remove')}</button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -548,53 +561,3 @@ function GroupPanel({
   );
 }
 
-/**
- * The roster row's OWN role within THIS happiness group (0027) — free text,
- * never `members.church_role`/`group_position`, which belong to a different
- * membership entirely and have no bearing on how this church runs its 幸福小组.
- * Committed on blur, the same "don't write on every keystroke" rule the
- * shared TagsInput follows for its own chip text.
- */
-function RosterRoleCell({
-  groupId,
-  memberId,
-  role,
-  editable,
-  onSaved,
-}: {
-  groupId: string;
-  memberId: string;
-  role: string | null;
-  editable: boolean;
-  onSaved: () => void;
-}) {
-  const t = useT();
-  const toast = useToast();
-  const [value, setValue] = useState(role ?? '');
-
-  if (!editable) {
-    return role ? <span>{role}</span> : <span className="faint">—</span>;
-  }
-
-  const commit = async () => {
-    const next = value.trim();
-    if (next === (role ?? '')) return;
-    try {
-      await api.patch(`/happiness/groups/${groupId}/members/${memberId}`, { role: next || null });
-      onSaved();
-    } catch (e) {
-      toast((e as Error).message, 'error');
-      setValue(role ?? '');
-    }
-  };
-
-  return (
-    <input
-      value={value}
-      onChange={(e) => setValue(e.target.value)}
-      onBlur={commit}
-      placeholder={t('happy.group.rolePlaceholder')}
-      style={{ width: 130 }}
-    />
-  );
-}

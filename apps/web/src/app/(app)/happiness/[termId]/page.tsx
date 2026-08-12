@@ -25,6 +25,7 @@ import {
   SkeletonTable,
   SortTh,
   useFormGuard,
+  useMemberOptions,
   useToast,
 } from '@/components/ui';
 import { can } from '@/lib/perms';
@@ -205,24 +206,22 @@ export default function HappinessTermGroupsPage() {
           <div className="only-mobile">
             {sorted.map((g) => (
               <div key={g.id} className="mtile" onClick={() => router.push(`/happiness/group/${g.id}`)}>
+                {/* The canonical tile, same as /groups' own (rule G4): name
+                    and its tag on the first row, one fact per row below. */}
                 <div className="mtile-row1">
-                  <div style={{ minWidth: 0 }}>
-                    <strong>{g.name}</strong>
-                    <span className="muted" style={{ fontSize: 12.5 }}>
-                      {' '}
-                      {t('groups.leaderInline', { name: g.leader ? g.leader.full_name : t('common.vacant') })}
-                    </span>
+                  <strong style={{ minWidth: 0 }}>{g.name}</strong>
+                  <div className="flex items-center gap-8" style={{ flexShrink: 0 }}>
+                    <span className="badge b-accent">{t('happy.group.rosterCount', { n: g.roster_count })}</span>
+                    <span className="mtile-cta"><ChevronRightIcon /></span>
                   </div>
-                  <span className="mtile-cta"><ChevronRightIcon /></span>
                 </div>
-                <div className="mtile-line flex items-center gap-8 flex-wrap">
-                  <span>
-                    {[g.meeting_day ? t(weekdayKey(g.meeting_day)) : '', g.meeting_time?.slice(0, 5), g.location]
-                      .filter(Boolean)
-                      .join(' · ') || t('common.unset')}
-                    {' · '}
-                    {t('happy.group.rosterCount', { n: g.roster_count })}
-                  </span>
+                <div className="mtile-line">
+                  {t('groups.leaderInline', { name: g.leader ? g.leader.full_name : t('common.vacant') })}
+                </div>
+                <div className="mtile-line">
+                  {[g.meeting_day ? t(weekdayKey(g.meeting_day)) : '', g.meeting_time?.slice(0, 5), g.location]
+                    .filter(Boolean)
+                    .join(' · ') || t('common.unset')}
                 </div>
               </div>
             ))}
@@ -263,6 +262,8 @@ function AddGroupModal({
   onSaved: (id: string) => void;
 }) {
   const t = useT();
+  /** Every member picker's options come from one builder (rule G4). */
+  const memberOptions = useMemberOptions();
   const toast = useToast();
   const { halls, hallId } = useHallScope();
   const [name, setName] = useState('');
@@ -324,7 +325,7 @@ function AddGroupModal({
         <Combobox
           value={leaderId}
           onChange={setLeaderId}
-          options={members.map((m) => ({ value: m.id, label: m.full_name, sub: m.english_name }))}
+          options={memberOptions(members)}
           placeholder={t('happy.group.leaderPlaceholder')}
           ariaLabel={t('happy.group.field.leader')}
         />

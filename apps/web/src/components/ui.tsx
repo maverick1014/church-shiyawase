@@ -16,6 +16,7 @@ import { initialOf, roleDot, roleKey, roleTagStyle } from '@/lib/labels';
 import { comboboxFilter, nextActiveIndex, type ComboOption } from '@/lib/combobox';
 import { isListSeparatorKey, parseList } from '@/lib/members-import';
 import { useHallScope } from '@/lib/hall';
+import { hallNameDisplay, memberAltName, memberDisplayName, type NameShape } from '@/lib/names';
 import { compressImage } from '@/lib/imageCompress';
 import type { ColumnTickState } from '@/lib/sheet';
 import { useLang, useT } from '@/lib/i18n';
@@ -318,19 +319,85 @@ export function Avatar({
 }
 
 /**
+ * Which name the CURRENT session should draw a member by — the one place that
+ * decides it, so no page re-derives the rule (G4).
+ *
+ * The halls are already in context (`HallContext`, fetched once by the shell),
+ * so a payload only has to carry the member's `hall_id` for this to work; on a
+ * public page there is no context at all and every member reads by their
+ * Chinese name, which is the documented fallback.
+ */
+export function useMemberName(): (m: NameShape | null | undefined) => string {
+  const { halls } = useHallScope();
+  return useCallback(
+    (m: NameShape | null | undefined) =>
+      memberDisplayName(m, hallNameDisplay(halls, (m as { hall_id?: string | null })?.hall_id)),
+    [halls],
+  );
+}
+
+/**
+ * The options of a member picker — built ONCE for every one of them (rule G4).
+ *
+ * Ten pages used to write `{ value: m.id, label: m.full_name, sub:
+ * m.english_name }` by hand, which meant ten copies of "how a person is named"
+ * sitting next to the one component that was supposed to own it. Now the rule
+ * lives here: the label is the single name that person's own congregation
+ * reads them by, exactly as `<MemberName />` draws it, and the OTHER name goes
+ * into `search` — matched, never drawn — so a picker still finds somebody by
+ * the name their congregation doesn't show.
+ *
+ * `lead` is an option pinned to the front (推荐人's own 无推荐人), `exclude`
+ * drops one id (the person being edited, who must never be offered as their
+ * own referrer), and `hint` is whatever secondary text that particular picker
+ * wants beside the name.
+ */
+export function useMemberOptions(): (
+  members: readonly (NameShape & { id: string; hall_id?: string | null })[],
+  opts?: {
+    lead?: ComboOption;
+    exclude?: string | null;
+    hint?: (m: NameShape & { id: string }) => string | undefined;
+  },
+) => ComboOption[] {
+  const { halls } = useHallScope();
+  return useCallback(
+    (members, opts) => {
+      const built = members
+        .filter((m) => !opts?.exclude || m.id !== opts.exclude)
+        .map((m) => {
+          const prefer = hallNameDisplay(halls, m.hall_id);
+          return {
+            value: m.id,
+            label: memberDisplayName(m, prefer),
+            search: memberAltName(m, prefer),
+            hint: opts?.hint?.(m),
+          };
+        });
+      return opts?.lead ? [opts.lead, ...built] : built;
+    },
+    [halls],
+  );
+}
+
+/**
  * A person's name — the ONE way any of them is drawn (rule G4).
  *
- * A member is two names (migration 0018): the Chinese name the church files
- * them under, and an English name that is often the only one half the
- * congregation knows. Both belong on screen wherever a person is listed, so
- * this renders the Chinese name and, on its own line beneath it, the English
- * one — smaller and muted, because the second line is the aid to recognition
- * and not the identity. An English name is nullable, and when there is none
- * nothing extra is drawn: the row stays exactly as tall as it used to be.
+ * A member is two names (migration 0018), and this used to draw BOTH: the
+ * Chinese name with the English one stacked under it. The church's own
+ * feedback is that the second line reads as noise on every screen at once, so
+ * exactly ONE name is drawn now (0028) — the member's own congregation decides
+ * which (`memberDisplayName`), and a person who has only one name is shown
+ * that one whatever their congregation prefers.
  *
- * It is a two-line block rather than "陈约翰 (John Tan)" on one line because an
- * English name is routinely three times the width of the Chinese one, and every
- * list this appears in already has a name column competing with real content.
+ * The PAIR is still who they are: it is still the unique index, still what the
+ * importer matches on, still both editable and both exported, and a search
+ * still matches either. Only the drawing narrowed — the same shape as the
+ * 来访日期 rename (G8), a display decision that stops at the API boundary.
+ *
+ * Because the rule reads the member's hall, a payload that carries no
+ * `hall_id` falls back to the Chinese name rather than erroring — a name is
+ * not the place to surface a missing join (G6).
  *
  * `member` may be null — an enrolment whose member row was deleted, an account
  * with nobody linked — and then the caller's `fallback` stands in, so no call
@@ -341,16 +408,18 @@ export function MemberName({
   fallback = '—',
   style,
 }: {
-  member: { full_name: string; english_name?: string | null } | null | undefined;
+  member: (NameShape & { hall_id?: string | null }) | null | undefined;
   fallback?: ReactNode;
   /** Typography only (a tile's smaller name); never geometry. */
   style?: React.CSSProperties;
 }) {
+  const nameOf = useMemberName();
   if (!member) return <>{fallback}</>;
+  const shown = nameOf(member);
+  if (!shown) return <>{fallback}</>;
   return (
     <span className="member-name" style={style}>
-      <strong>{member.full_name}</strong>
-      {member.english_name && <span className="member-name-en">{member.english_name}</span>}
+      <strong>{shown}</strong>
     </span>
   );
 }

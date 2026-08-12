@@ -6,7 +6,7 @@ import { useFetch } from '@/lib/hooks';
 import { useSortableRows } from '@/lib/sort';
 import { api } from '@/lib/api';
 import { usePageChrome, useMe } from '@/components/AppShell';
-import { BackButton, Combobox, ErrorBanner, ExportButton, Field, LinkIcon, MemberName, Modal, RoleRestricted, SheetTotals, SkeletonCard, SkeletonScreen, SortTh, useConfirm, useFormGuard, useToast } from '@/components/ui';
+import { BackButton, Combobox, ErrorBanner, ExportButton, Field, LinkIcon, MemberName, Modal, RoleRestricted, SheetTotals, SkeletonCard, SkeletonScreen, SortTh, useConfirm, useFormGuard, useMemberOptions, useToast } from '@/components/ui';
 import { can } from '@/lib/perms';
 import { exportMatrix } from '@/lib/export';
 import { EnrollmentRow, MemberRow, NamelistResponse, SessionRow, TrainingDetail } from '@/lib/types';
@@ -30,6 +30,8 @@ export default function TrainingDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const tr = useT();
+  /** Every member picker's options come from one builder (rule G4). */
+  const memberOptions = useMemberOptions();
   const toast = useToast();
   const confirm = useConfirm();
   const me = useMe();
@@ -270,10 +272,14 @@ export default function TrainingDetailPage() {
               </span>
             </div>
             <h2 style={{ margin: '10px 0 3px', fontSize: 22 }} className="serif">{t.name}</h2>
-            {/* Who is in charge, how to reach them, and when / where — the same
-                line the catalog card shows, built once (rules G4/G5). */}
+            {/* Who is in charge and how to reach them on one row, when and
+                where it happens on the next — the same rows the catalog card
+                shows, built once (rules G4/G5). Two rows rather than one
+                because a phone wrapped the single line mid-date. */}
             <div className="muted" style={{ fontSize: 12.5, lineHeight: 1.7 }}>
-              {trainingMeta(t, tr).join(' · ')}
+              {trainingMeta(t, tr).map((line) => (
+                <div key={line.join('|')}>{line.join(' · ')}</div>
+              ))}
             </div>
           </div>
           <div className="flex gap-8">
@@ -375,13 +381,9 @@ export default function TrainingDetailPage() {
               <Combobox
                 value={enrolPick}
                 onChange={enrollMember}
-                options={(members.data ?? [])
-                  .filter((m) => !t.enrollments.some((e) => e.member_id === m.id))
-                  .map((m) => ({
-                    value: m.id,
-                    label: m.full_name,
-                    sub: m.english_name,
-                  }))}
+                options={memberOptions(
+                  (members.data ?? []).filter((m) => !t.enrollments.some((e) => e.member_id === m.id)),
+                )}
                 placeholder={tr('training.addEnrollee')}
                 ariaLabel={tr('training.addEnrollee')}
                 style={{ flex: 1 }}

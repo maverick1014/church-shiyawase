@@ -11,15 +11,24 @@ export interface ComboOption {
   value: string;
   /** What the user reads and types against. */
   label: string;
-  /**
-   * A second line under the label, searched as well as shown. For a member
-   * picker this is their English name (migration 0018): the same two-line shape
-   * `<MemberName />` draws in every list, so somebody looked up as "John" is
-   * found here too, not only where they are filed as 陈约翰.
-   */
+  /** A second line under the label, searched as well as shown. */
   sub?: string | null;
   /** Secondary text (a role, a group…), searched as well as shown. */
   hint?: string;
+  /**
+   * Matched but never DRAWN — the only field here that is search-only.
+   *
+   * A member picker puts their other name in it (0018/0028): every list now
+   * shows ONE name, the one their own congregation reads them by, but a person
+   * must still be findable by the name it doesn't show. Typing "John" has to
+   * reach the 陈约翰 filed in 中文堂, and typing 陈约翰 has to reach the same
+   * person if they sit in 英文堂 and read as "John" on screen.
+   *
+   * It is separate from `sub` precisely because `sub` renders: putting the
+   * other name there would put both names back on screen, which is the thing
+   * 0028 removed.
+   */
+  search?: string | null;
 }
 
 /**
@@ -38,7 +47,7 @@ export function comboboxFilter<T extends ComboOption>(
   const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
   if (words.length === 0) return [...options];
   return options.filter((o) => {
-    const hay = `${o.label} ${o.sub ?? ''} ${o.hint ?? ''}`.toLowerCase();
+    const hay = `${o.label} ${o.sub ?? ''} ${o.hint ?? ''} ${o.search ?? ''}`.toLowerCase();
     return words.every((w) => hay.includes(w));
   });
 }

@@ -7,6 +7,7 @@ import {
   EventType,
   Gender,
   GroupPosition,
+  HallNameDisplay,
   Language,
   MemberStatus,
   PairStatus,
@@ -46,6 +47,8 @@ export interface HallRow {
   id: string;
   name: string;
   sort_order: number;
+  /** Which name this congregation reads people by (0028); absent = Chinese. */
+  name_display?: HallNameDisplay | null;
 }
 
 /**
@@ -96,7 +99,7 @@ export interface MemberRow {
    * The person `referred_by` points at, embedded by the API. Null whenever
    * nobody referred them — which is most people — so every reader guards it.
    */
-  referrer?: { id: string; full_name: string; english_name: string | null } | null;
+  referrer?: { id: string; full_name: string; english_name: string | null; hall_id: string } | null;
   /**
    * Present only when THIS write just promoted or demoted the member to/from
    * 小组长 and the server acted on their login account — `POST /members` and
@@ -131,6 +134,8 @@ export interface GroupDetail extends GroupRow {
     id: string;
     full_name: string;
     english_name: string | null;
+    /** The congregation that decides which of the two names is drawn (0028). */
+    hall_id: string;
     group_position: GroupPosition | null;
     status: MemberStatus;
   }[];
@@ -144,7 +149,7 @@ export interface GroupMeeting {
 export interface GroupAttendanceResponse {
   meetings: GroupMeeting[];
   rows: {
-    member: { id: string; full_name: string; english_name: string | null };
+    member: { id: string; full_name: string; english_name: string | null; hall_id: string };
     cells: { meeting_id: string; status: AttendanceStatus | null }[];
   }[];
 }
@@ -196,6 +201,8 @@ export interface RollCallSheetRow {
     id: string;
     full_name: string;
     english_name: string | null;
+    /** Which congregation the person belongs to — it decides which name shows (0028). */
+    hall_id: string;
     church_role: ChurchRole;
     group_position: GroupPosition | null;
   };
@@ -285,6 +292,8 @@ export interface EnrollmentRow {
     id: string;
     full_name: string;
     english_name: string | null;
+    /** The congregation that decides which of the two names is drawn (0028). */
+    hall_id: string;
     church_role: ChurchRole;
     group_position: GroupPosition | null;
   };
@@ -303,6 +312,8 @@ export interface NamelistResponse {
       id: string;
       full_name: string;
       english_name: string | null;
+      /** Which congregation the person belongs to — it decides which name shows (0028). */
+      hall_id: string;
       church_role: ChurchRole;
       group_position: GroupPosition | null;
     };
@@ -321,6 +332,8 @@ interface MemberBrief {
   id: string;
   full_name: string;
   english_name: string | null;
+  /** The congregation that decides which of the two names is drawn (0028). */
+  hall_id: string;
   church_role: ChurchRole;
   group_position: GroupPosition | null;
 }
@@ -370,6 +383,8 @@ export interface AccountRow {
     id: string;
     full_name: string;
     english_name: string | null;
+    /** The congregation that decides which of the two names is drawn (0028). */
+    hall_id: string;
     email: string | null;
     church_role: ChurchRole;
     group_position: GroupPosition | null;
@@ -433,7 +448,7 @@ export interface HappinessGroupRow {
   meeting_time: string | null;
   location: string | null;
   hall?: { id: string; name: string } | null;
-  leader?: { id: string; full_name: string; english_name: string | null } | null;
+  leader?: { id: string; full_name: string; english_name: string | null; hall_id: string } | null;
   term?: { id: string; term_no: number; name: string | null; weeks: number } | null;
   /** Server-computed roster size, for the group list and its delete confirmation. */
   roster_count: number;
@@ -444,6 +459,8 @@ export interface HappinessGroupDetail extends HappinessGroupRow {
     id: string;
     full_name: string;
     english_name: string | null;
+    /** The congregation that decides which of the two names is drawn (0028). */
+    hall_id: string;
     church_role: ChurchRole;
     group_position: GroupPosition | null;
     /** This roster row's OWN role within THIS happiness group (0027) — free
