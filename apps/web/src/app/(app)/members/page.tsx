@@ -153,9 +153,14 @@ export default function MembersPage() {
         return undefined;
     }
   };
+  // The church reads this list group by group: 小组 first, then rank inside the
+  // group, then the name — so 未分组 (a null group, sorted last) is the tail of
+  // the list rather than scattered through it. Clicking any header makes that
+  // column primary and leaves the same three as its tiebreakers.
   const { sorted, sortKey, sortDir, toggleSort } = useSortableRows(rows, getSortValue, {
-    key: 'role',
+    key: 'group',
     dir: 'asc',
+    tiebreak: ['role', 'name'],
   });
 
   const exportMembers = () => {
