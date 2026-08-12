@@ -102,13 +102,17 @@ export function SkeletonCard({
   title = true,
   lines = 3,
   style,
+  className,
 }: {
   title?: boolean;
   lines?: number;
   style?: React.CSSProperties;
+  /** Spacing the REAL card carries (e.g. `mb-16`), so the skeleton stands in
+   *  the same place and the page does not jump when the fetch lands. */
+  className?: string;
 }) {
   return (
-    <div className="card" aria-hidden="true" style={style}>
+    <div className={`card${className ? ` ${className}` : ''}`} aria-hidden="true" style={style}>
       {title && <Skeleton width="42%" height={16} style={{ marginBottom: 16 }} />}
       <SkeletonText lines={lines} />
     </div>

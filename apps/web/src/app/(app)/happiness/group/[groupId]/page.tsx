@@ -19,6 +19,7 @@ import {
   SheetTick,
   SheetTickAll,
   SheetTotals,
+  Skeleton,
   SkeletonCard,
   SkeletonScreen,
   SkeletonTable,
@@ -60,7 +61,13 @@ export default function HappinessGroupDetailPage() {
       <>
         <BackButton fallbackHref="/happiness" />
         <SkeletonScreen>
-          <SkeletonCard lines={3} />
+          {/* The first card is the roll-call sheet (0120 put it on top), so it
+              is a head plus a wide table — three lines of text stood a card's
+              worth of height short and shoved the grid below it upward. */}
+          <div className="card">
+            <div className="card-head"><Skeleton width="34%" height={16} /></div>
+            <SkeletonTable rows={3} columns={9} bare />
+          </div>
           <div
             className="grid mt-16"
             style={{ gridTemplateColumns: '360px 1fr', gap: 16, alignItems: 'start' }}
@@ -352,6 +359,13 @@ function GroupPanel({
             <h3>{t('happy.attendance.title')}</h3>
             <div className="muted" style={{ fontSize: 12.5, marginTop: 2 }}>{t('happy.attendance.sub', { n: weeks })}</div>
           </div>
+          {/* Top right of the page: the way through to this group's own 活动
+              记录 (0029). The roll call answers who came in week 5; the
+              activities page is the other half — what the group actually did,
+              with the photos. */}
+          <button className="btn ghost" onClick={() => router.push(`/happiness/group/${group.id}/activities`)}>
+            {t('happy.act.open')}
+          </button>
         </div>
         <div className="flex gap-8 mb-14 flex-wrap">
           <div className="grow" />

@@ -469,6 +469,25 @@ export interface HappinessGroupDetail extends HappinessGroupRow {
   }[];
 }
 
+/**
+ * 幸福小组活动记录 (0029) — what a group DID on a date, with photos and a note.
+ *
+ * Dated rather than week-numbered on purpose: the roll call answers "who came
+ * in week 5", and this answers "what did we do", which is how a leader
+ * remembers an evening and how the photos are filed. A group that met twice in
+ * one week, or gathered outside the term, has somewhere to put the second one.
+ */
+export interface HappinessActivityRow {
+  id: string;
+  group_id: string;
+  happened_on: string;
+  title: string | null;
+  notes: string | null;
+  /** NOT NULL DEFAULT '{}' server-side, so "no photos" needs no `?? []`. */
+  photo_urls: string[];
+  created_at: string;
+}
+
 /** `GET /api/happiness/members/:memberId` — one member's own participation
  *  history, newest first. Read by the member detail page's own experience
  *  section, never by anything reading the member row itself. */

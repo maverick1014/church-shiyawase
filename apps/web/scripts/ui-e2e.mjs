@@ -2167,6 +2167,44 @@ async function main() {
       check('a Delete button for the group lives on its own detail page now, not the term’s list',
         (await infoCard.locator('button:has-text("Delete group")').count()) > 0);
 
+      /* -- 活动记录 (0029): dated records with notes, reached from this page -- */
+      // The roll call answers "who came in week 5"; this is the other half —
+      // what the group actually DID. Driven end to end because it is a new
+      // write path: create a record, read it back through the API, then delete
+      // it so the run leaves nothing behind (the group itself is a fixture and
+      // cascades, but a failure between here and the sweep should not rely on
+      // that).
+      await page.locator('button:has-text("Activities")').first().click();
+      await page.waitForURL(/\/happiness\/group\/[0-9a-f-]+\/activities$/, { timeout: 15000 });
+      check('the group page opens its own 活动记录 page', true);
+      await page.locator('button:has-text("Add activity")').first().waitFor({ timeout: 15000 });
+      await page.locator('button:has-text("Add activity")').first().click();
+      await page.locator('.modal').waitFor({ timeout: 8000 });
+      const actTitle = fixtureName('ACTIVITY');
+      await page.locator('.modal input[type=date]').first().fill('2026-08-12');
+      await page.locator('.modal input:not([type=date])').first().fill(actTitle);
+      await page.locator('.modal textarea').first().fill('ZZ_UITEST notes');
+      await page.locator('.modal button:has-text("Save")').first().click();
+      const actRows = await pollUntil(
+        () => apiGet(`/happiness/groups/${happyGroupId}/activities`).catch(() => []),
+        (rows) => (rows || []).some((r) => r.title === actTitle),
+      );
+      const actRow = (actRows || []).find((r) => r.title === actTitle) ?? null;
+      check('creating an activity stores its date, title and notes',
+        actRow?.happened_on === '2026-08-12' && actRow?.notes === 'ZZ_UITEST notes',
+        JSON.stringify(actRow));
+      check('…and it starts with no photos rather than a null the page has to guard',
+        Array.isArray(actRow?.photo_urls) && actRow.photo_urls.length === 0,
+        JSON.stringify(actRow?.photo_urls));
+      check('the record is drawn on the page it was created from',
+        (await page.locator('.card', { hasText: actTitle }).count()) === 1);
+      if (actRow?.id) {
+        await apiDelete(`/happiness/groups/${happyGroupId}/activities/${actRow.id}`);
+        check('deleting an activity removes it', true);
+      }
+      await page.goBack({ waitUntil: 'domcontentloaded' });
+      await rosterCard.waitFor({ timeout: 15000 });
+
       // 0122: the actual point of 幸福小组 — a leader meeting someone new can
       // create them AND land them on the roster without leaving this page.
       const happyVisitorName = fixtureName('VISITOR');

@@ -20,6 +20,7 @@ import {
   PageBar,
   RoleRestricted,
   RowChevron,
+  Skeleton,
   SkeletonCard,
   SkeletonScreen,
   SkeletonTable,
@@ -56,7 +57,9 @@ export default function HappinessTermGroupsPage() {
   const [q, setQ] = useState('');
 
   usePageChrome(
-    { title: term.data ? t('happy.term.pageTitle', { no: term.data.term_no }) : t('happy.title') },
+    // A term IS its name (church feedback): 第几期 is server-assigned bookkeeping
+    // that still orders the list, but nobody reads a term by its number.
+    { title: term.data?.name || t('happy.title') },
     [term.data, t],
   );
 
@@ -110,7 +113,18 @@ export default function HappinessTermGroupsPage() {
       <>
         <BackButton fallbackHref="/happiness" />
         <SkeletonScreen>
-          <SkeletonCard lines={3} />
+          {/* Mirrors what actually renders below: the facts card with its own
+              mb-16, then the page bar, then the list. Without the margin and
+              the bar the table sat ~70px higher than the real one and the whole
+              page jumped when the fetch landed. */}
+          <SkeletonCard lines={2} className="mb-16" />
+          <div className="page-bar">
+            <div className="page-bar-filters"><Skeleton width={150} height={36} /></div>
+            <div className="page-bar-actions">
+              <Skeleton width={40} height={36} />
+              <Skeleton width={110} height={36} />
+            </div>
+          </div>
           <SkeletonTable rows={5} columns={6} />
         </SkeletonScreen>
       </>
@@ -208,20 +222,28 @@ export default function HappinessTermGroupsPage() {
               <div key={g.id} className="mtile" onClick={() => router.push(`/happiness/group/${g.id}`)}>
                 {/* The canonical tile, same as /groups' own (rule G4): name
                     and its tag on the first row, one fact per row below. */}
+                {/* The life-group tile's shape exactly (rule G4) — name, then
+                    leader, then the count — but with NO tag on the first row: a
+                    life group's tag is its health status, and a 幸福小组 has no
+                    equivalent worth pinning there. The roster count reads as a
+                    fact on its own line instead, where the member count sits on
+                    a life-group tile. */}
                 <div className="mtile-row1">
                   <strong style={{ minWidth: 0 }}>{g.name}</strong>
-                  <div className="flex items-center gap-8" style={{ flexShrink: 0 }}>
-                    <span className="badge b-accent">{t('happy.group.rosterCount', { n: g.roster_count })}</span>
-                    <span className="mtile-cta"><ChevronRightIcon /></span>
-                  </div>
+                  <span className="mtile-cta"><ChevronRightIcon /></span>
                 </div>
                 <div className="mtile-line">
                   {t('groups.leaderInline', { name: g.leader ? g.leader.full_name : t('common.vacant') })}
                 </div>
                 <div className="mtile-line">
-                  {[g.meeting_day ? t(weekdayKey(g.meeting_day)) : '', g.meeting_time?.slice(0, 5), g.location]
+                  {[
+                    t('happy.group.rosterCount', { n: g.roster_count }),
+                    [g.meeting_day ? t(weekdayKey(g.meeting_day)) : '', g.meeting_time?.slice(0, 5), g.location]
+                      .filter(Boolean)
+                      .join(' · '),
+                  ]
                     .filter(Boolean)
-                    .join(' · ') || t('common.unset')}
+                    .join(' · ')}
                 </div>
               </div>
             ))}

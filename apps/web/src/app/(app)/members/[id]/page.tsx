@@ -327,7 +327,7 @@ export default function MemberDetailPage() {
               onClick={() => router.push(`/happiness/group/${row.group.id}`)}
             >
               <span style={{ fontSize: 13.5 }}>
-                {row.group.term ? tr('happy.term.pageTitle', { no: row.group.term.term_no }) : ''} · {row.group.name}
+                {[row.group.term?.name, row.group.name].filter(Boolean).join(' · ')}
               </span>
               <div className="grow" />
               {row.role && <span className="badge b-gray">{row.role}</span>}

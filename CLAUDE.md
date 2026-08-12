@@ -467,7 +467,26 @@ blanket 1–52; the API additionally refuses a week beyond the TERM's own
 a silent accept. The sheet on `/happiness/group/[groupId]` reuses the exact
 same shared `SheetTick`/`SheetTickAll`/`SheetTotals` components the Sunday and
 life-group sheets use — one column per week NUMBER instead of per date, same
-check-all/clear-confirms-first rules, same totals `<tfoot>`. Like 守望, it is a
+check-all/clear-confirms-first rules, same totals `<tfoot>`. **活动记录 is the other half of the roll call** (migration 0029). The sheet
+answers "who came in week 5"; nothing answered "what did we do", which is the
+half a leader wants back at the end of a term — so `happiness_activities` is one
+dated record per occasion (`happened_on`, an optional title, free-text notes)
+with `photo_urls text[]` on it, reached from a **活动** button at the top right
+of the group's own page. Dated rather than week-numbered on purpose: a group
+that met twice in one week, or gathered outside the term, would have nowhere to
+put the second record, and a photo is remembered by when it was taken. The list
+is one column rather than a photos table — the same call `serving_roles` and
+`groups.tags` already make, since the app only ever reads and writes the whole
+list, and NOT NULL DEFAULT `'{}'` so no reader needs `?? []`. Photos upload to
+a `photos` bucket (the fourth of exactly the same kind as `avatars`/`branding`/
+`payments`), compressed in the browser first like every other image (G4), and
+only ever onto a record that already exists — nothing reaches storage attached
+to a row that was never saved. Every route is gated by the GROUP
+(`assertRowReadable`/`assertOwnsRow` on `happiness_groups`) because an activity
+has no hall of its own, and `group_id` is taken from the PATH on both insert and
+update so a payload can never file a record past its own permission check.
+
+Like 守望, it is a
 toggleable add-on module (`church_modules`, `MODULE_HAPPINESS` in
 `OPTIONAL_MODULES`, 404 when off) — but unlike 守望's `/d/[token]` mentor form,
 it has **no public-facing page at all**: roster and roll call are staff/leader
@@ -476,10 +495,17 @@ only.
 **期号 is server-assigned, not typed** (church feedback: a term just needs a
 name). The term form (`happiness/page.tsx`) asks only for 名称 (now required)
 and 周数; `POST /happiness/terms` fills `term_no` itself — one past the
-highest on record — when the client sends none, so it still sorts and reads
-the way `happy.term.pageTitle` ("第 {no} 期") always has. The term detail
-card dropped 期号 as a fact (it is the page's own title already) and no
-longer collapses 起止日期 into one string — 开始/结束 are their own rows.
+highest on record — when the client sends none, so it still sorts the list and
+still tells two same-named terms apart. **It is no longer DRAWN anywhere**
+(church feedback: 直接按照名称就可以了) — not the catalog card's badge, not the
+term detail page's title, which is the term's NAME now, and not a member's own
+幸福小组 history. `happy.term.pageTitle` survives for the dictionaries' sake;
+nothing renders it. The term detail card dropped 期号 as a fact and no longer
+collapses 起止日期 into one string — 开始/结束 are their own rows. Its group
+list tile follows the life-group tile exactly (G4/G7) except that it carries NO
+tag: a life group's tag is its health status, and a 幸福小组 has no equivalent
+worth pinning to the first row, so the roster count reads as a fact on its own
+line where the member count sits on a life-group tile.
 **Editing and deleting a 幸福小组 now live on the GROUP's own detail page**
 (`/happiness/group/[groupId]`), not on the term's list: that list (both the
 desktop table and the mobile tile) is nav-only now, matching `/groups`'s own

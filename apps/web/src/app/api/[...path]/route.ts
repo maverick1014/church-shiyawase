@@ -158,7 +158,7 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
     }
   };
 
-  const [r0, r1, r2, r3, r4] = p;
+  const [r0, r1, r2, r3, r4, r5] = p;
 
   // ---- Auth + access control ------------------------------------------------
   if (r0 === 'auth') return authRoute(method, req, p, db);
@@ -1660,6 +1660,107 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
               .single(),
           );
           return json({ group_id: r2, member_id: r4 });
+        }
+      } else if (r3 === 'activities') {
+        /*
+         * 活动记录 (0029): what the group DID on a date, with photos and a
+         * note. Every read and write is gated by the GROUP, exactly like its
+         * roster and its roll call — an activity has no hall of its own,
+         * it belongs to a group that has one (rule G2).
+         */
+        if (!r4) {
+          if (method === 'GET') {
+            await assertRowReadable('happiness_groups', r2);
+            return json(
+              unwrap(
+                await db
+                  .from('happiness_activities')
+                  .select('*')
+                  .eq('group_id', r2)
+                  .order('happened_on', { ascending: false })
+                  .order('created_at', { ascending: false }),
+              ),
+            );
+          }
+          if (method === 'POST') {
+            await assertOwnsRow('happiness_groups', r2);
+            const dto = await body();
+            if (!tidy(String(dto.happened_on ?? ''))) throw new HttpError(400, 'happened_on is required');
+            // `group_id` comes from the PATH, never the payload: the gate above
+            // just checked THAT group, so letting the body name a different one
+            // would file the record past its own permission check.
+            return json(
+              unwrap(
+                await db
+                  .from('happiness_activities')
+                  .insert({ ...dto, group_id: r2 })
+                  .select()
+                  .single(),
+              ),
+            );
+          }
+        } else if (r5 === 'photos' && method === 'POST') {
+          // The photo travels as multipart to the activity that already
+          // exists, like a training's payment QR (rule G4): same bucket
+          // helper, same size/type rule, and the URL is appended to the row's
+          // own list rather than replacing it, because a record collects
+          // several over an evening.
+          await assertOwnsRow('happiness_groups', r2);
+          const form = await req.formData();
+          const file = checkedFile(form.get('file'), IMAGE_UPLOAD);
+          const url = await storeFile(
+            db,
+            'photos',
+            `happiness/${r2}/${r4}/${Date.now()}.${fileExt(file, 'jpg')}`,
+            file,
+          );
+          const current = unwrap<{ photo_urls: string[] | null }>(
+            await db.from('happiness_activities').select('photo_urls').eq('id', r4).single(),
+          );
+          return json(
+            unwrap(
+              await db
+                .from('happiness_activities')
+                .update({ photo_urls: [...(current.photo_urls ?? []), url] })
+                .eq('id', r4)
+                .eq('group_id', r2)
+                .select()
+                .single(),
+            ),
+          );
+        } else if (r4 && !r5) {
+          if (method === 'PATCH') {
+            await assertOwnsRow('happiness_groups', r2);
+            const dto = await body();
+            // Same reason as the insert: the path owns `group_id`, so a PATCH
+            // can never move a record into a group this session never passed
+            // the gate for.
+            delete dto.group_id;
+            return json(
+              unwrap(
+                await db
+                  .from('happiness_activities')
+                  .update(dto)
+                  .eq('id', r4)
+                  .eq('group_id', r2)
+                  .select()
+                  .single(),
+              ),
+            );
+          }
+          if (method === 'DELETE') {
+            await assertOwnsRow('happiness_groups', r2);
+            unwrap(
+              await db
+                .from('happiness_activities')
+                .delete()
+                .eq('id', r4)
+                .eq('group_id', r2)
+                .select()
+                .single(),
+            );
+            return json({ id: r4 });
+          }
         }
       } else if (r3 === 'attendance' && !r4) {
         if (method === 'GET') {
