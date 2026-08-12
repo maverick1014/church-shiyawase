@@ -2731,6 +2731,50 @@ async function main() {
     await shot('09-language');
 
     /* -- write cycle: create + delete a member (self-cleaning) ------------- */
+    /* -- unsaved changes: ✕ asks before it throws an edit away ------------ */
+    // The in-app half of the guard. (The other half — a refresh or a closed
+    // tab — is the browser's own prompt, which Playwright cannot see and no
+    // app code can style; there is nothing to assert there.)
+    mod('unsaved changes · closing a dirty form asks first');
+    await page.goto(`${BASE}/members`, { waitUntil: 'domcontentloaded' });
+    await page.locator('button:visible:has-text("Add member")').first().waitFor({ timeout: 20000 });
+    await page.locator('button:visible:has-text("Add member")').first().click();
+    await page.locator('.modal').waitFor({ timeout: 8000 });
+    // Clean so far: ✕ closes without a word.
+    await page.locator('.modal .icon-btn').first().click();
+    await w(500);
+    check('closing an untouched form just closes it, no question asked',
+      (await page.locator('.modal').count()) === 0);
+
+    await page.locator('button:visible:has-text("Add member")').first().click();
+    await page.locator('.modal').waitFor({ timeout: 8000 });
+    await page.locator('.modal input').first().fill('ZZ_UITEST_DIRTY');
+    // Let React commit the keystroke before clicking ✕: the close handler
+    // closes over the freshly-computed dirty flag, and Playwright can click
+    // faster than a render (no human can, which is why this is a test-timing
+    // wait and not a product bug). Same `w()` settle the combobox checks use.
+    await w(400);
+    await page.locator('.modal .icon-btn').first().click();
+    await page.locator('.modal-backdrop').nth(1).waitFor({ timeout: 8000 }).catch(() => {});
+    const askedBody = await page.locator('.modal-backdrop').last().innerText();
+    check('…but closing a half-filled one asks before discarding it',
+      /Unsaved changes/i.test(askedBody), askedBody.replace(/\s+/g, ' ').slice(0, 120));
+    check('…offering Keep editing beside Discard',
+      /Discard/i.test(askedBody) && /Keep editing/i.test(askedBody));
+
+    // Keep editing → the form is still there, still carrying what was typed.
+    await page.locator('.modal-backdrop').last().locator('button:has-text("Keep editing")').click();
+    await w(400);
+    check('choosing “Keep editing” leaves the form open and untouched',
+      (await page.locator('.modal input').first().inputValue()) === 'ZZ_UITEST_DIRTY');
+
+    // Discard → gone.
+    await page.locator('.modal .icon-btn').first().click();
+    await page.locator('.modal-backdrop').nth(1).waitFor({ timeout: 8000 });
+    await page.locator('.modal-backdrop').last().locator('button:has-text("Discard")').click();
+    await w(600);
+    check('choosing “Discard” closes the form', (await page.locator('.modal').count()) === 0);
+
     mod('write cycle · create / delete a member');
     const testName = 'ZZ_UITEST_' + String(Date.now()).slice(-7);
     await page.goto(`${BASE}/members`, { waitUntil: 'domcontentloaded' });

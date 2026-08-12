@@ -4,7 +4,7 @@ import { useParams } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '@/lib/api';
 import { BrandLogo } from '@/components/BrandLogo';
-import { Field, MemberName } from '@/components/ui';
+import { Field, MemberName, useUnsavedWarning } from '@/components/ui';
 import { useChurchProfile } from '@/lib/church';
 import { useT } from '@/lib/i18n';
 
@@ -31,6 +31,12 @@ export default function DailyFormPage() {
 
   const [day, setDay] = useState<number>(1);
   const [notes, setNotes] = useState('');
+  // A mentor typing up the day's notes on a phone: a refresh loses the lot,
+  // and this page has no session to recover them from. Browser prompt only —
+  // a shell-less page has nowhere in-app to navigate away to. Off once the
+  // entry is filed.
+  useUnsavedWarning(step === 'form' && notes.trim() !== '');
+
   const [saving, setSaving] = useState(false);
 
   const load = () => {

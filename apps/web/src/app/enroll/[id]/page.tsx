@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { compressImage } from '@/lib/imageCompress';
 import { BrandLogo } from '@/components/BrandLogo';
-import { Field } from '@/components/ui';
+import { Field, useUnsavedWarning } from '@/components/ui';
 import { useChurchProfile } from '@/lib/church';
 import { formatMoney, hasFee, trainingKindKey, trainingMeta } from '@/lib/labels';
 import { useT } from '@/lib/i18n';
@@ -76,6 +76,12 @@ export default function EnrollFormPage() {
    * question the submit does, debounced, and the button waits for a 'ok'.
    * `checking` is the in-flight state; `check` is the last verdict.
    */
+  // A paid sign-up means a name typed AND a receipt picked; losing either to
+  // a refresh means finding the receipt again. Nothing to navigate away to on
+  // a shell-less page, so the browser's own prompt is the whole guard. Off
+  // once the answer is showing — the work is on the server by then.
+  useUnsavedWarning(!result && (fullName.trim() !== '' || slip !== null));
+
   const [checking, setChecking] = useState(false);
   const [check, setCheck] = useState<{ status: EnrollStatus; name?: string } | null>(null);
 

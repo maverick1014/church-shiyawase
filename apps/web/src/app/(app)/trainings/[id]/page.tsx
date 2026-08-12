@@ -6,7 +6,7 @@ import { useFetch } from '@/lib/hooks';
 import { useSortableRows } from '@/lib/sort';
 import { api } from '@/lib/api';
 import { usePageChrome, useMe } from '@/components/AppShell';
-import { BackButton, Combobox, ErrorBanner, ExportButton, Field, LinkIcon, MemberName, Modal, RoleRestricted, SheetTotals, SkeletonCard, SkeletonScreen, SortTh, useConfirm, useToast } from '@/components/ui';
+import { BackButton, Combobox, ErrorBanner, ExportButton, Field, LinkIcon, MemberName, Modal, RoleRestricted, SheetTotals, SkeletonCard, SkeletonScreen, SortTh, useConfirm, useFormGuard, useToast } from '@/components/ui';
 import { can } from '@/lib/perms';
 import { exportMatrix } from '@/lib/export';
 import { EnrollmentRow, MemberRow, NamelistResponse, SessionRow, TrainingDetail } from '@/lib/types';
@@ -594,6 +594,9 @@ function SessionModal({
   });
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // Asks before ✕ or Cancel discards this, and arms the browser's own prompt
+  // for a refresh (rule G4 — one guard, every form).
+  const { close } = useFormGuard({ form }, onClose);
 
   const save = async () => {
     setSaving(true);
@@ -617,7 +620,7 @@ function SessionModal({
   };
 
   return (
-    <Modal title={session ? t('training.session.edit') : t('training.session.new')} onClose={onClose}>
+    <Modal title={session ? t('training.session.edit') : t('training.session.new')} onClose={close}>
       {err && <ErrorBanner message={err} />}
       {/* Title is the primary field (full width); the shorter session-number +
           time share one row; location gets its own — a tidy 1 / 2 / 1 layout. */}
@@ -636,7 +639,7 @@ function SessionModal({
         <input value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} placeholder={t('training.session.locationPlaceholder')} />
       </Field>
       <div className="modal-actions">
-        <button className="btn ghost" onClick={onClose}>{t('common.cancel')}</button>
+        <button className="btn ghost" onClick={close}>{t('common.cancel')}</button>
         <button className="btn" onClick={save} disabled={saving}>{saving ? t('common.saving') : t('common.save')}</button>
       </div>
     </Modal>

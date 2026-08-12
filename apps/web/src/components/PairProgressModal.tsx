@@ -7,7 +7,7 @@ import { PairDetail, PairRow, ProgressRow } from '@/lib/types';
 import { memberRole, pairStatusClass, pairStatusKey, roleKey } from '@/lib/labels';
 import { copyText } from '@/lib/clipboard';
 import { useT } from '@/lib/i18n';
-import { ErrorBanner, Field, MemberName, Modal, Skeleton, SkeletonScreen, useConfirm, useToast } from './ui';
+import { ErrorBanner, Field, MemberName, Modal, Skeleton, SkeletonScreen, useConfirm, useFormGuard, useToast } from './ui';
 
 /** The dialog's own shape while `pair` is still loading — same header /
  *  progress-bar / day-grid layout the real content lands in, so the modal
@@ -133,6 +133,11 @@ export function PairProgressModal({
     !!p &&
     JSON.stringify(dayForm) !== JSON.stringify(dayFormOf(originalDay));
 
+  // This modal already knows exactly what is unsaved, so the guard reuses
+  // those two flags rather than snapshotting the same state a second time —
+  // `useFormGuard` takes any value, and a pair of booleans is a fine one.
+  const { close } = useFormGuard({ remarkDirty, dayDirty }, onClose);
+
   const link = p && typeof window !== 'undefined' ? `${window.location.origin}/d/${p.form_token}` : '';
   // Same copy path as the sign-up link on 培训&活动 — one helper, and a
   // message whether or not the browser could do it (rule G4).
@@ -200,7 +205,7 @@ export function PairProgressModal({
   }
 
   return (
-    <Modal onClose={onClose} size="wide">
+    <Modal onClose={close} size="wide">
       {pair.loading || !p ? (
         pair.error ? <ErrorBanner message={pair.error} /> : <SkeletonPairProgress />
       ) : (
@@ -222,7 +227,7 @@ export function PairProgressModal({
                 </span>
               </div>
             </div>
-            <button className="icon-btn" style={{ flexShrink: 0 }} onClick={onClose} title={t('common.close')}>✕</button>
+            <button className="icon-btn" style={{ flexShrink: 0 }} onClick={close} title={t('common.close')}>✕</button>
           </div>
 
           {/* Staff's own note about the pair — editable here, saved with the

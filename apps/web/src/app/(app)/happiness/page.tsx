@@ -16,6 +16,7 @@ import {
   SkeletonCards,
   SkeletonScreen,
   useConfirm,
+  useFormGuard,
   useToast,
 } from '@/components/ui';
 import { can } from '@/lib/perms';
@@ -230,6 +231,9 @@ function TermModal({
   const [endsOn, setEndsOn] = useState(term?.ends_on ?? '');
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // Asks before ✕ or Cancel discards this, and arms the browser's own prompt
+  // for a refresh (rule G4 — one guard, every form).
+  const { close } = useFormGuard({ name, weeks, startsOn, endsOn }, onClose);
 
   const save = async () => {
     if (!name.trim()) {
@@ -266,7 +270,7 @@ function TermModal({
   };
 
   return (
-    <Modal title={term ? t('happy.term.edit.title') : t('happy.term.new.title')} onClose={onClose}>
+    <Modal title={term ? t('happy.term.edit.title') : t('happy.term.new.title')} onClose={close}>
       {err && <ErrorBanner message={err} />}
       <div className="form-row">
         <Field label={t('happy.term.field.name')}>
@@ -285,7 +289,7 @@ function TermModal({
         </Field>
       </div>
       <div className="modal-actions">
-        <button className="btn ghost" onClick={onClose}>{t('common.cancel')}</button>
+        <button className="btn ghost" onClick={close}>{t('common.cancel')}</button>
         <button className="btn" onClick={save} disabled={saving}>{saving ? t('common.saving') : t('common.save')}</button>
       </div>
     </Modal>

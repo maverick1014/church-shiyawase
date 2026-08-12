@@ -27,6 +27,7 @@ import {
   SortTh,
   Switch,
   useConfirm,
+  useFormGuard,
   useToast,
 } from '@/components/ui';
 import { AccountRow, MemberRow } from '@/lib/types';
@@ -272,6 +273,10 @@ function AccountDetail({
   const [language, setLanguage] = useState(account.language);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // A full-page form, not a modal: there is no ✕ to intercept, so the guard
+  // here is the browser's own prompt for a refresh, re-baselined on save so a
+  // form that saved and stayed open stops claiming it has unsaved work.
+  const { markClean } = useFormGuard({ email, role, hall, status, language });
   const [pw, setPw] = useState('');
   const [pwBusy, setPwBusy] = useState(false);
   const toast = useToast();
@@ -347,6 +352,9 @@ function AccountDetail({
         language,
       });
       saved = true;
+      // Saved and still on screen — re-baseline, or the browser would go on
+      // warning about work that is already filed.
+      markClean();
       onSaved();
     } catch (e) {
       setErr((e as Error).message);
@@ -495,6 +503,9 @@ function AddAccountModal({
   const [password, setPassword] = useState('');
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // Asks before ✕ or Cancel discards this, and arms the browser's prompt for
+  // a refresh. The typed password especially: it is shown once and never again.
+  const { close } = useFormGuard({ memberId, email, role, hall, password }, onClose);
 
   const selectedMember = members.find((m) => m.id === memberId) ?? null;
 
@@ -541,7 +552,7 @@ function AddAccountModal({
   };
 
   return (
-    <Modal title={t('settings.new.title')} onClose={onClose}>
+    <Modal title={t('settings.new.title')} onClose={close}>
       {err && <ErrorBanner message={err} />}
       <Field label={t('settings.linkMember')}>
         {/* Type-to-search, like every other member field (rule G4) — members
@@ -580,7 +591,7 @@ function AddAccountModal({
         <PasswordInput value={password} onChange={setPassword} placeholder={t('settings.initialPasswordHint')} autoComplete="new-password" />
       </Field>
       <div className="modal-actions">
-        <button className="btn ghost" onClick={onClose}>{t('common.cancel')}</button>
+        <button className="btn ghost" onClick={close}>{t('common.cancel')}</button>
         <button className="btn" onClick={save} disabled={saving || !memberId || !email.trim()}>{saving ? t('common.saving') : t('settings.create')}</button>
       </div>
     </Modal>

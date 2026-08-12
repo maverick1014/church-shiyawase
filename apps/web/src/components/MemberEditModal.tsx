@@ -17,7 +17,7 @@ import {
   referrerOptions,
 } from '@/lib/labels';
 import { useT } from '@/lib/i18n';
-import { Combobox, ErrorBanner, Field, HallSelect, Modal, TagsInput, useToast } from './ui';
+import { Combobox, ErrorBanner, Field, HallSelect, Modal, TagsInput, useFormGuard, useToast } from './ui';
 
 /**
  * The shared member-edit form (rule G4) — extracted out of the member-detail
@@ -71,6 +71,9 @@ export function MemberEditModal({
   });
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // Asks before ✕ or Cancel throws an edit away, and arms the browser's own
+  // prompt for a refresh (rule G4 — every form in the app guards the same way).
+  const { close } = useFormGuard({ form, serving }, onClose);
   const t = useT();
   const toast = useToast();
 
@@ -161,7 +164,7 @@ export function MemberEditModal({
   };
 
   return (
-    <Modal title={t('member.edit.title')} onClose={onClose}>
+    <Modal title={t('member.edit.title')} onClose={close}>
       {err && <ErrorBanner message={err} />}
       <div className="form-row">
         <Field label={t('members.field.chineseName')}>
@@ -281,7 +284,7 @@ export function MemberEditModal({
         {form.group_id ? t('member.hint.leadership') : t('member.hint.noGroup')}
       </div>
       <div className="modal-actions">
-        <button className="btn ghost" onClick={onClose}>{t('common.cancel')}</button>
+        <button className="btn ghost" onClick={close}>{t('common.cancel')}</button>
         <button className="btn" onClick={save} disabled={saving}>{saving ? t('common.saving') : t('common.save')}</button>
       </div>
     </Modal>

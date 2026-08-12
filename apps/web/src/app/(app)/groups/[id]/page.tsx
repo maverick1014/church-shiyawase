@@ -6,7 +6,7 @@ import { useFetch } from '@/lib/hooks';
 import { useSortableRows } from '@/lib/sort';
 import { api } from '@/lib/api';
 import { usePageChrome, useMe } from '@/components/AppShell';
-import { BackButton, Combobox, ErrorBanner, ExportButton, Field, HallSelect, MemberName, MonthPicker, RoleBadge, SheetTick, SheetTickAll, SheetTotals, SkeletonCard, SkeletonScreen, SkeletonTable, SortTh, TagsInput, useConfirm, useToast } from '@/components/ui';
+import { BackButton, Combobox, ErrorBanner, ExportButton, Field, HallSelect, MemberName, MonthPicker, RoleBadge, SheetTick, SheetTickAll, SheetTotals, SkeletonCard, SkeletonScreen, SkeletonTable, SortTh, TagsInput, useConfirm, useFormGuard, useToast } from '@/components/ui';
 import { useLeaderAccountEvent } from '@/components/LeaderAccountEvent';
 import { can } from '@/lib/perms';
 import { exportMatrix } from '@/lib/export';
@@ -128,6 +128,10 @@ function GroupPanel({
   const [addSel, setAddSel] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // A full-page form: no ✕ to intercept, so the guard is the browser's own
+  // prompt for a refresh, re-baselined on save so a form that saved and stayed
+  // open stops claiming unsaved work (rule G4).
+  const { markClean } = useFormGuard({ name, desc, meetingDay, meetingTime, location, tags, hall });
 
   const groupMembers = group.members;
 
@@ -165,6 +169,7 @@ function GroupPanel({
         tags,
         hall_id: hall,
       });
+      markClean();
       toast(t('group.toast.saved'));
       onChanged();
     } catch (e) {

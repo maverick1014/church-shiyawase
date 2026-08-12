@@ -20,6 +20,7 @@ import {
   SkeletonTable,
   SortTh,
   TagsInput,
+  useFormGuard,
   useToast,
 } from '@/components/ui';
 import { can } from '@/lib/perms';
@@ -361,6 +362,9 @@ function AddGroupModal({
   const [hall, setHall] = useState<string | null>(hallId || null);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // Asks before ✕ or Cancel discards this, and arms the browser's own prompt
+  // for a refresh (rule G4 — one guard, every form).
+  const { close } = useFormGuard({ name, desc, meetingDay, meetingTime, location, tags, hall }, onClose);
 
   // A group always belongs to exactly one hall (DB NOT NULL).
   const effectiveHallId = hall ?? (halls.length === 1 ? halls[0].id : null);
@@ -396,7 +400,7 @@ function AddGroupModal({
   };
 
   return (
-    <Modal title={t('groups.new.title')} onClose={onClose}>
+    <Modal title={t('groups.new.title')} onClose={close}>
       {err && <ErrorBanner message={err} />}
       <div className="form-row">
         <Field label={t('groups.field.name')}>
@@ -429,7 +433,7 @@ function AddGroupModal({
         <TagsInput value={tags} onChange={setTags} suggestions={allTags} placeholder={t('groups.tagsPlaceholder')} />
       </Field>
       <div className="modal-actions">
-        <button className="btn ghost" onClick={onClose}>{t('common.cancel')}</button>
+        <button className="btn ghost" onClick={close}>{t('common.cancel')}</button>
         <button className="btn" onClick={save} disabled={saving}>{saving ? t('common.saving') : t('common.save')}</button>
       </div>
     </Modal>

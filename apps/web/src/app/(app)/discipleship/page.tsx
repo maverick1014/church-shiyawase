@@ -5,7 +5,7 @@ import { useFetch } from '@/lib/hooks';
 import { useSortableRows } from '@/lib/sort';
 import { api } from '@/lib/api';
 import { usePageChrome, useMe } from '@/components/AppShell';
-import { Combobox, ErrorBanner, ExportButton, Field, MemberName, Modal, ModuleDisabled, PageBar, RoleRestricted, Skeleton, SkeletonScreen, SkeletonTable, SkeletonText, SortTh, useConfirm, useToast } from '@/components/ui';
+import { Combobox, ErrorBanner, ExportButton, Field, MemberName, Modal, ModuleDisabled, PageBar, RoleRestricted, Skeleton, SkeletonScreen, SkeletonTable, SkeletonText, SortTh, useConfirm, useFormGuard, useToast } from '@/components/ui';
 import { PairProgressModal } from '@/components/PairProgressModal';
 import { can } from '@/lib/perms';
 import { useModuleEnabled } from '@/lib/church';
@@ -678,6 +678,9 @@ function ModuleFormModal({
   });
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // Asks before ✕ or Cancel discards this, and arms the browser's own prompt
+  // for a refresh (rule G4 — one guard, every form).
+  const { close } = useFormGuard({ form }, onClose);
 
   const save = async () => {
     const name = form.name.trim();
@@ -712,7 +715,7 @@ function ModuleFormModal({
   };
 
   return (
-    <Modal title={t('disc.module.new.title')} onClose={onClose}>
+    <Modal title={t('disc.module.new.title')} onClose={close}>
       {err && <ErrorBanner message={err} />}
       <Field label={t('disc.module.field.name')}>
         <input
@@ -739,7 +742,7 @@ function ModuleFormModal({
       </Field>
       <div className="hint" style={{ marginBottom: 6 }}>{t('disc.module.daysHint')}</div>
       <div className="modal-actions">
-        <button className="btn ghost" onClick={onClose}>{t('common.cancel')}</button>
+        <button className="btn ghost" onClick={close}>{t('common.cancel')}</button>
         <button className="btn" onClick={save} disabled={saving}>
           {saving ? t('common.saving') : t('common.save')}
         </button>
@@ -935,6 +938,9 @@ function AddPairModal({
   const [remark, setRemark] = useState('');
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // Asks before ✕ or Cancel discards the pair being set up, and arms the
+  // browser's prompt for a refresh (rule G4 — one guard, every form).
+  const { close } = useFormGuard({ mentorId, traineeId, backfillDays, remark }, onClose);
 
   const takenTrainees = new Set(existing.map((p) => p.trainee_id));
 
@@ -970,7 +976,7 @@ function AddPairModal({
   };
 
   return (
-    <Modal title={t('disc.new.title')} onClose={onClose} size="wide">
+    <Modal title={t('disc.new.title')} onClose={close} size="wide">
       {err && <ErrorBanner message={err} />}
       <p className="muted" style={{ margin: '0 0 14px', fontSize: 12.5, lineHeight: 1.6 }}>
         {t('disc.new.intro')}
@@ -1035,7 +1041,7 @@ function AddPairModal({
         />
       </Field>
       <div className="modal-actions">
-        <button className="btn ghost" onClick={onClose}>{t('common.cancel')}</button>
+        <button className="btn ghost" onClick={close}>{t('common.cancel')}</button>
         <button className="btn" onClick={save} disabled={saving}>{saving ? t('common.saving') : t('disc.create')}</button>
       </div>
     </Modal>

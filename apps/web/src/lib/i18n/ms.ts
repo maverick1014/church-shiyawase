@@ -14,6 +14,11 @@ export const ms: Messages = {
   'common.remove': 'Buang',
   'common.add': 'Tambah',
   'common.confirm': 'Sahkan',
+
+  'unsaved.title': 'Perubahan belum disimpan',
+  'unsaved.message': 'Ada perubahan di sini yang belum disimpan. Tinggalkan tanpa menyimpannya?',
+  'unsaved.discard': 'Buang',
+  'unsaved.keep': 'Terus sunting',
   'common.search': 'Cari',
   'common.export': 'Eksport Excel',
   'common.copyFailed': 'Tidak dapat menyalin secara automatik — pautannya ialah {link}',

@@ -25,6 +25,7 @@ import {
   SkeletonTable,
   SortTh,
   TagsInput,
+  useFormGuard,
   useToast,
 } from '@/components/ui';
 import { ImportMembersModal } from '@/components/ImportMembersModal';
@@ -445,6 +446,10 @@ function AddMemberModal({
   const [photo, setPhoto] = useState<File | null>(null);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // Asks before ✕ or Cancel discards this, and arms the browser's own prompt
+  // for a refresh (rule G4 — one guard, every form).
+  // A picked photo counts too — by name, since a File has no JSON form.
+  const { close } = useFormGuard({ form, serving, photo: photo?.name ?? null }, onClose);
 
   // Only fetched to auto-demote an incumbent if this new member is placed
   // straight into a leadership slot (one holder per leadership position
@@ -526,7 +531,7 @@ function AddMemberModal({
   };
 
   return (
-    <Modal title={t('members.new.title')} onClose={onClose}>
+    <Modal title={t('members.new.title')} onClose={close}>
       {err && <ErrorBanner message={err} />}
       <div className="form-row">
         <Field label={t('members.field.name')}>
@@ -635,7 +640,7 @@ function AddMemberModal({
       </Field>
       <div className="hint" style={{ marginBottom: 6 }}>{t('photo.hint')}</div>
       <div className="modal-actions">
-        <button className="btn ghost" onClick={onClose}>{t('common.cancel')}</button>
+        <button className="btn ghost" onClick={close}>{t('common.cancel')}</button>
         <button className="btn" onClick={save} disabled={saving}>
           {saving ? t('common.saving') : t('common.save')}
         </button>

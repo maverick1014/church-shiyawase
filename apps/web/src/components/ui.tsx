@@ -585,6 +585,106 @@ export function Switch({
  * Modal
  * ---------------------------------------------------------------------- */
 
+/* -------------------------------------------------------------------------
+ * Unsaved changes — one mechanism for every form in the app (rule G4)
+ *
+ * There are two ways out of a half-filled form, and they are NOT the same
+ * problem:
+ *
+ *   1. Leaving the PAGE — refresh, close the tab, browser Back, typing a new
+ *      URL. Only the browser can stop that, and only through `beforeunload`,
+ *      which shows ITS OWN generic dialog: the text and the buttons are the
+ *      browser's, not ours, and nothing can change them. `useUnsavedWarning`
+ *      is that half. It touches no context, so the shell-less PUBLIC pages
+ *      (/join, /enroll/[id], /d/[token]) — which have no ConfirmProvider —
+ *      can use it exactly like the rest of the app.
+ *   2. Leaving the FORM while staying on the page — closing a modal. That one
+ *      is ours to draw, so it goes through the shared confirm dialog with
+ *      「放弃 / 继续编辑」 (rule G3's dialog, rule G4's single mechanism).
+ *
+ * A form wires both by handing `Modal` a `dirty` flag; a full-page form calls
+ * `useUnsavedWarning` itself.
+ * ---------------------------------------------------------------------- */
+
+/**
+ * Arm the browser's own "leave site?" prompt while `dirty` is true.
+ *
+ * This is the ONLY thing that can catch a refresh or a closed tab. The prompt
+ * is the browser's — every modern one ignores a custom message — so there is
+ * deliberately no copy here to translate. Exported on its own for the rare
+ * form whose dirtiness is already known and which needs nothing else.
+ */
+export function useUnsavedWarning(dirty: boolean): void {
+  useEffect(() => {
+    if (!dirty) return;
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      // Chrome still wants the legacy assignment; the string is never shown.
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [dirty]);
+}
+
+/**
+ * THE form guard — what every form in this app uses (rule G4).
+ *
+ * Hand it the form's whole value and, for a modal, its `onClose`. It gives
+ * back a `close` that asks before throwing work away, and quietly arms the
+ * browser prompt for a refresh. One call covers all three exits — ✕, Cancel
+ * and the address bar — which is why the close is returned rather than the
+ * `Modal` guarding its own ✕: a modal's Cancel button is the caller's, and a
+ * guard the caller had to remember to also put on Cancel is a guard that gets
+ * forgotten.
+ *
+ * Dirtiness is the first value it saw versus the current one, compared by
+ * serialising — so typing a character and deleting it again leaves the form
+ * clean, which is what a person expects. Pass plain data: a `File` has no
+ * useful JSON form, so hand it something stable like `photo?.name ?? null`.
+ *
+ * `markClean()` re-baselines to what is on screen now. A form that SAVES and
+ * stays open (the church record, a profile, a group's own panel) must call it
+ * on success, or it would go on insisting there is unsaved work after the
+ * work was saved.
+ */
+export function useFormGuard(
+  value: unknown,
+  onClose?: () => void,
+): { dirty: boolean; close: () => void | Promise<void>; markClean: () => void } {
+  const now = JSON.stringify(value ?? null);
+  // The latest serialisation, readable by `markClean` without making it a
+  // dependency of every caller's callback.
+  const latest = useRef(now);
+  latest.current = now;
+  // Initialised from the FIRST render — that snapshot is the baseline.
+  const [baseline, setBaseline] = useState(now);
+  const dirty = baseline !== now;
+
+  useUnsavedWarning(dirty);
+  const confirm = useConfirm();
+  const t = useT();
+
+  const close = useCallback(async () => {
+    if (
+      dirty &&
+      !(await confirm({
+        title: t('unsaved.title'),
+        message: t('unsaved.message'),
+        confirmText: t('unsaved.discard'),
+        cancelText: t('unsaved.keep'),
+        danger: true,
+      }))
+    )
+      return;
+    onClose?.();
+  }, [dirty, confirm, t, onClose]);
+
+  const markClean = useCallback(() => setBaseline(latest.current), []);
+
+  return { dirty, close, markClean };
+}
+
 export function Modal({
   title,
   onClose,
@@ -592,7 +692,11 @@ export function Modal({
   size,
 }: {
   title?: string;
-  onClose: () => void;
+  /**
+   * For a modal holding a form this is `useFormGuard`'s own `close`, so ✕ and
+   * the caller's Cancel button go through exactly the same question.
+   */
+  onClose: () => void | Promise<void>;
   children: ReactNode;
   size?: 'wide' | 'narrow';
 }) {
@@ -607,7 +711,7 @@ export function Modal({
         {title && (
           <div className="flex-between" style={{ alignItems: 'flex-start', marginBottom: 16 }}>
             <h3 style={{ margin: 0 }}>{title}</h3>
-            <button className="icon-btn" style={{ flexShrink: 0 }} onClick={onClose} title={t('common.close')}>✕</button>
+            <button className="icon-btn" style={{ flexShrink: 0 }} onClick={() => void onClose()} title={t('common.close')}>✕</button>
           </div>
         )}
         {children}

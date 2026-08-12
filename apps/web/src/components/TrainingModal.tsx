@@ -9,6 +9,7 @@ import {
   HallSelect,
   Modal,
   useConfirm,
+  useFormGuard,
   useToast,
 } from '@/components/ui';
 import { useHallScope } from '@/lib/hall';
@@ -98,6 +99,9 @@ export function TrainingModal({
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // A picked QR file is part of the edit, so it counts towards dirtiness —
+  // by name, since a File has no useful JSON form (rule G4).
+  const { close } = useFormGuard({ form, qrUrl, qrFile: qrFile?.name ?? null }, onClose);
   const toast = useToast();
   const qrRef = useRef<HTMLInputElement>(null);
   // A fee turns the payment block on. Typed rather than stored, so clearing
@@ -234,7 +238,7 @@ export function TrainingModal({
     : activity ? t('trainings.new.activityTitle') : t('trainings.new.title');
 
   return (
-    <Modal title={title} onClose={onClose}>
+    <Modal title={title} onClose={close}>
       {err && <ErrorBanner message={err} />}
       <Field label={activity ? t('trainings.field.activityName') : t('trainings.field.name')}>
         <input
@@ -432,7 +436,7 @@ export function TrainingModal({
             {activity ? t('trainings.deleteActivity') : t('trainings.delete')}
           </button>
         )}
-        <button className="btn ghost" onClick={onClose}>{t('common.cancel')}</button>
+        <button className="btn ghost" onClick={close}>{t('common.cancel')}</button>
         <button className="btn" onClick={save} disabled={saving}>{saving ? t('common.saving') : t('common.save')}</button>
       </div>
     </Modal>

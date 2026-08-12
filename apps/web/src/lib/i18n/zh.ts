@@ -14,6 +14,11 @@ export const zh: Messages = {
   'common.remove': '移除',
   'common.add': '添加',
   'common.confirm': '确定',
+
+  'unsaved.title': '尚未保存',
+  'unsaved.message': '这里有尚未保存的内容。要放弃这些更改并离开吗？',
+  'unsaved.discard': '放弃',
+  'unsaved.keep': '继续编辑',
   'common.search': '搜索',
   'common.export': '导出 Excel',
   'common.copyFailed': '无法自动复制 — 链接是 {link}',

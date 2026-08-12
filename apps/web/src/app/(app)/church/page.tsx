@@ -16,6 +16,7 @@ import {
   Switch,
   ThemeSwatch,
   useConfirm,
+  useFormGuard,
   useToast,
 } from '@/components/ui';
 import { BrandLogo } from '@/components/BrandLogo';
@@ -114,6 +115,10 @@ function ChurchProfileCard({
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // A full-page form: no ✕ to intercept, so the guard is the browser's own
+  // prompt for a refresh, re-baselined on save so a form that saved and stayed
+  // open stops claiming unsaved work (rule G4).
+  const { markClean } = useFormGuard({ name, shortName, description });
   const fileRef = useRef<HTMLInputElement>(null);
 
   const save = async () => {
@@ -130,6 +135,7 @@ function ChurchProfileCard({
         description: description.trim(),
       });
       onSaved();
+      markClean();
       toast(t('church.toast.saved'));
     } catch (e) {
       setErr((e as Error).message);

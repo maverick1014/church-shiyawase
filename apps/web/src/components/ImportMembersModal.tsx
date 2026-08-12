@@ -23,6 +23,7 @@ import {
   MemberName,
   Modal,
   useConfirm,
+  useFormGuard,
   useToast,
 } from '@/components/ui';
 
@@ -91,6 +92,10 @@ export function ImportMembersModal({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ImportResult | null>(null);
+  // A parsed-but-not-yet-imported file is the unsaved work here: the church
+  // picked a spreadsheet and reviewed the preview, and closing throws that
+  // away. Once `result` exists the import has run, so closing is free again.
+  const { close } = useFormGuard({ pending: rows !== null && !result }, onClose);
 
   /**
    * Deliberately NOT `useFetch`: that hook appends the congregation switcher's
@@ -259,7 +264,7 @@ export function ImportMembersModal({
   };
 
   return (
-    <Modal title={t('import.title')} onClose={onClose} size="wide">
+    <Modal title={t('import.title')} onClose={close} size="wide">
       <ErrorBanner message={error} />
 
       {result ? (
@@ -319,7 +324,7 @@ export function ImportMembersModal({
           )}
           <div className="modal-actions">
             <button className="btn ghost" onClick={reset}>{t('import.another')}</button>
-            <button className="btn" onClick={onClose}>{t('common.close')}</button>
+            <button className="btn" onClick={close}>{t('common.close')}</button>
           </div>
         </>
       ) : !plan ? (
@@ -341,7 +346,7 @@ export function ImportMembersModal({
           {reading && <div className="loading">{t('import.reading')}</div>}
           <div className="hint">{t('import.hint')}</div>
           <div className="modal-actions">
-            <button className="btn ghost" onClick={onClose}>{t('common.cancel')}</button>
+            <button className="btn ghost" onClick={close}>{t('common.cancel')}</button>
           </div>
         </>
       ) : (

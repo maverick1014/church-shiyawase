@@ -16,6 +16,7 @@ import {
   SkeletonDetail,
   SkeletonScreen,
   useConfirm,
+  useFormGuard,
   useToast,
 } from '@/components/ui';
 import { ChangePasswordModal } from '@/components/ChangePasswordModal';
@@ -204,6 +205,9 @@ function EditMyProfileModal({
   });
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // Asks before ✕ or Cancel discards this, and arms the browser's own prompt
+  // for a refresh (rule G4 — one guard, every form).
+  const { close } = useFormGuard({ form }, onClose);
 
   const save = async () => {
     if (!form.full_name.trim()) return setErr(t('members.err.name'));
@@ -247,7 +251,7 @@ function EditMyProfileModal({
   };
 
   return (
-    <Modal title={t('profile.edit.title')} onClose={onClose}>
+    <Modal title={t('profile.edit.title')} onClose={close}>
       {err && <ErrorBanner message={err} />}
       <div className="form-row">
         <Field label={t('members.field.name')}>
@@ -303,7 +307,7 @@ function EditMyProfileModal({
         </select>
       </Field>
       <div className="modal-actions">
-        <button className="btn ghost" onClick={onClose}>{t('common.cancel')}</button>
+        <button className="btn ghost" onClick={close}>{t('common.cancel')}</button>
         <button className="btn" onClick={save} disabled={saving}>{saving ? t('common.saving') : t('common.save')}</button>
       </div>
     </Modal>

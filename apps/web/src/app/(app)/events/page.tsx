@@ -20,6 +20,7 @@ import {
   SkeletonScreen,
   SkeletonTable,
   useConfirm,
+  useFormGuard,
   useToast,
 } from '@/components/ui';
 import { can } from '@/lib/perms';
@@ -436,6 +437,9 @@ function MeetingModal({
   });
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // Asks before ✕ or Cancel discards this, and arms the browser's own prompt
+  // for a refresh (rule G4 — one guard, every form).
+  const { close } = useFormGuard({ form }, onClose);
   const timeOfDay = stored.slice(11, 16) || '00:00';
 
   const save = async () => {
@@ -469,7 +473,7 @@ function MeetingModal({
   };
 
   return (
-    <Modal title={meeting ? t('events.edit.title') : t('events.new.title')} onClose={onClose}>
+    <Modal title={meeting ? t('events.edit.title') : t('events.new.title')} onClose={close}>
       {err && <ErrorBanner message={err} />}
       <Field label={t('events.field.title')}>
         <input
@@ -509,7 +513,7 @@ function MeetingModal({
             {t('events.delete')}
           </button>
         )}
-        <button className="btn ghost" onClick={onClose}>{t('common.cancel')}</button>
+        <button className="btn ghost" onClick={close}>{t('common.cancel')}</button>
         <button className="btn" onClick={save} disabled={saving}>{saving ? t('common.saving') : t('common.save')}</button>
       </div>
     </Modal>

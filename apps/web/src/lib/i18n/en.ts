@@ -15,6 +15,13 @@ export const en = {
   'common.remove': 'Remove',
   'common.add': 'Add',
   'common.confirm': 'Confirm',
+
+  /* Unsaved changes — the in-app half of the guard (the browser draws its own
+     dialog for a refresh, and no wording of ours can reach it). */
+  'unsaved.title': 'Unsaved changes',
+  'unsaved.message': 'You have changes here that have not been saved yet. Leave without saving them?',
+  'unsaved.discard': 'Discard',
+  'unsaved.keep': 'Keep editing',
   'common.search': 'Search',
   'common.export': 'Export Excel',
   'common.copyFailed': 'Could not copy automatically — the link is {link}',

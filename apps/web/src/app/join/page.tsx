@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '@/lib/api';
 import { BrandLogo } from '@/components/BrandLogo';
-import { Combobox, Field, PhotoPicker, TagsInput } from '@/components/ui';
+import { Combobox, Field, PhotoPicker, TagsInput, useUnsavedWarning } from '@/components/ui';
 import { useChurchProfile } from '@/lib/church';
 import { GENDER_OPTIONS, genderKey } from '@/lib/labels';
 import type { ComboOption } from '@/lib/combobox';
@@ -89,6 +89,17 @@ export default function JoinPage() {
   const { halls, groups, members } = options;
   // One congregation is not a question worth asking; several is.
   const hallId = form.hall_id || (halls.length === 1 ? halls[0].id : '');
+
+  // Somebody standing at the door filling this in on a phone has no session
+  // and no way to recover a half-typed registration — a stray refresh or a
+  // swiped-away tab is the whole form gone. There is nothing to navigate away
+  // to on a shell-less page, so the browser's own prompt is the entire guard
+  // here (a custom dialog cannot reach a refresh). Cleared once the answer is
+  // showing: by then the work is on the server and the fields are stale.
+  useUnsavedWarning(
+    !result &&
+      (Object.values(form).some((v) => v !== '') || serving.length > 0 || photo !== null),
+  );
 
   // A member picker, never a `<select>` (rule G4) — 无推荐人 first, the same
   // shape `referrerOptions` builds for the staff-facing form, over the

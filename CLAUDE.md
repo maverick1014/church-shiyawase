@@ -687,11 +687,24 @@ the live database), a test still driving a flow the same commit had changed,
 and a suite that had been dead at its first check for two days. All three were
 reproducible locally in three minutes.
 
-`test:ui-e2e` runs against the SHARED deployment, so run it only when nothing
-else is (`deploy.yml`'s own API E2E included) — two runs at once fight over the
-same live-database fixtures. It restores everything it touches, including the
-church's interface language; if it ever reports residue it did not clean, that
-is a FAILED run whatever its assertions said.
+**`test:ui-e2e` drives the DEPLOYED site, not your working tree.** There is no
+local server in this workflow, so the browser suite can only ever see what is
+live. That splits its job in two, and conflating them wastes a run:
+
+- **Existing behaviour** — run it BEFORE pushing. That is the regression check,
+  and the one this rule is really about: your change is about to become the
+  deployed build, so anything the suite catches now is something you were about
+  to ship.
+- **A NEW page or interaction** — the suite cannot see it until it is deployed.
+  Write the check with the change, push once `tsc`/`npm test`/`npm run build`
+  are green, then run the suite again against the new build and fix forward.
+  A run against the old build "passing" your new check is impossible; a run
+  that fails only on the new check, before the deploy, means nothing at all.
+
+Run it only when nothing else is (`deploy.yml`'s own API E2E included) — two
+runs at once fight over the same live-database fixtures. It restores everything
+it touches, including the church's interface language; if it ever reports
+residue it did not clean, that is a FAILED run whatever its assertions said.
 
 ### G1 — CRUD completeness on every management page
 Every entity page (成员、小组、聚会（点名表上的一列）、培训&活动（培训与活动两种形态）、四十天守望模块与配对、幸福小组的期与小组、账户) must offer

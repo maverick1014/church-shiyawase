@@ -23,6 +23,7 @@ import {
   SkeletonTable,
   SortTh,
   useConfirm,
+  useFormGuard,
   useToast,
 } from '@/components/ui';
 import { can, Perms } from '@/lib/perms';
@@ -123,6 +124,10 @@ function GroupPanel({
   const [vEnglishName, setVEnglishName] = useState('');
   const [vPhone, setVPhone] = useState('');
   const [vSaving, setVSaving] = useState(false);
+  // A full-page form: no ✕ to intercept, so the guard is the browser's own
+  // prompt for a refresh, re-baselined on save so a form that saved and stayed
+  // open stops claiming unsaved work (rule G4).
+  const { markClean } = useFormGuard({ name, hall, leaderId, meetingDay, meetingTime, location });
 
   const roster = group.members;
   const weeks = attendance.data?.weeks ?? group.term?.weeks ?? 8;
@@ -189,6 +194,7 @@ function GroupPanel({
         meeting_time: meetingTime || null,
         location: location.trim() || null,
       });
+      markClean();
       toast(t('happy.group.toast.saved'));
       onChanged();
     } catch (e) {
