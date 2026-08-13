@@ -8,7 +8,12 @@ import {
   signSession,
   verifyPassword,
 } from '@/lib/server/auth';
-import { churchInstant, churchParts, isSundayDate } from '@/lib/time';
+import { addChurchDays, churchInstant, churchParts, isSundayDate } from '@/lib/time';
+// Pure, and safe in the Worker: `lib/dashboard` and `lib/labels` pull only
+// `@tog/shared` and `lib/time` at runtime — every other import in them is a
+// type, erased at compile.
+import { recentSundays } from '@/lib/dashboard';
+import { groupHealthStatus } from '@/lib/labels';
 import {
   meetingColumnKey,
   parseColumnKey,
@@ -38,6 +43,7 @@ import {
   Gender,
   GroupPosition,
   isOptionalModule,
+  MemberStatus,
   isTrainingCategory,
   isTrainingKind,
   isUsableBrand,
@@ -447,6 +453,18 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
   // Deliberately `hallScope`, never `hallFilter`: this list IS the congregation
   // switcher's options. Narrowing it by the switcher's own selection would
   // leave a single option and strand the user with no way back to 全部堂会.
+  // ---- Dashboard --------------------------------------------------------
+  // ONE aggregate read for the home page. The page used to pull the whole
+  // roster and every event into the browser and count there; adding attendance
+  // that way would have meant either a request per Sunday or shipping the
+  // attendance table down. Everything here is counted server-side and only the
+  // numbers the page draws come back — which also means a `group_leader` gets
+  // the same page scoped to its own group for free, rather than the special
+  // casing the old page needed to hide a section it could not read.
+  if (r0 === 'dashboard' && !r1 && method === 'GET') {
+    return json(await dashboard(db, hallFilter, groupFilter, Number(q.get('sundays')) || 8));
+  }
+
   if (r0 === 'halls' && !r1 && method === 'GET') {
     // `*` rather than a column list, deliberately: `name_display` (0028) is
     // read from here, and naming it explicitly would make this endpoint — which
@@ -2535,6 +2553,182 @@ async function upsertProgress(
       .select()
       .single(),
   );
+}
+
+/**
+ * The home page, counted server-side (0130).
+ *
+ * Four questions, one request: how many came the last few Sundays, who has
+ * stopped coming, what is on this week, and how do the life groups look.
+ *
+ * The whole thing walks the SAME gate every other read does — `hallFilter` for
+ * the congregation and `groupFilter` for a `group_leader`'s one group — so no
+ * section can answer for people this session cannot otherwise see. Nothing
+ * here is a second source of truth: the Sunday counts come from
+ * `sunday_attendance`, the same table the services sheet writes.
+ */
+async function dashboard(
+  db: ReturnType<typeof getDb>,
+  hallFilter: string | null,
+  groupFilter: string | null,
+  sundayCount: number,
+) {
+  // Bounded so a hand-crafted `?sundays=9999` cannot ask for a decade of
+  // attendance in one query.
+  const weeks = Math.min(Math.max(sundayCount, 1), 26);
+  const sundays = recentSundays(new Date(), weeks);
+  const first = sundays[0];
+  const last = sundays[sundays.length - 1];
+
+  const memberQuery = () => {
+    let query = db
+      .from('members')
+      .select('id,full_name,english_name,hall_id,group_id,group_position,church_role,status')
+      .eq('status', MemberStatus.Active)
+      .neq('church_role', ChurchRole.Visitor);
+    if (hallFilter) query = query.eq('hall_id', hallFilter);
+    if (groupFilter) query = query.eq('group_id', groupFilter);
+    return query;
+  };
+
+  const marksQuery = () => {
+    let query = db
+      .from('sunday_attendance')
+      .select('service_date,member_id,pre_service,service')
+      .gte('service_date', first)
+      .lte('service_date', last);
+    if (hallFilter) query = query.eq('hall_id', hallFilter);
+    return query;
+  };
+
+  // The next seven days of hand-added meetings. A `group_leader` has no reach
+  // for `events` at all, so it is not even asked for — the section simply is
+  // not part of that account's dashboard.
+  const eventsQuery = () => {
+    if (groupFilter) return null;
+    let query = db
+      .from('events')
+      .select('id,title,starts_at,location,hall_id')
+      .gte('starts_at', new Date().toISOString())
+      .lte('starts_at', addChurchDays(new Date(), 8).toISOString())
+      .order('starts_at');
+    if (hallFilter) query = query.or(`hall_id.eq.${hallFilter},hall_id.is.null`);
+    return query;
+  };
+
+  const groupsQuery = () => {
+    let query = db.from('groups').select('id,name,hall_id');
+    if (hallFilter) query = query.eq('hall_id', hallFilter);
+    if (groupFilter) query = query.eq('id', groupFilter);
+    return query;
+  };
+
+  // Independent reads, together (rule G6).
+  const ev = eventsQuery();
+  const [memberRes, markRes, eventRes, groupRes] = await Promise.all([
+    memberQuery(),
+    marksQuery(),
+    ev ? ev : Promise.resolve(null),
+    groupsQuery(),
+  ]);
+
+  const members = unwrap<
+    Array<{
+      id: string;
+      full_name: string;
+      english_name: string | null;
+      hall_id: string;
+      group_id: string | null;
+      group_position: string | null;
+      church_role: string;
+      status: string;
+    }>
+  >(memberRes);
+  const marks = unwrap<
+    Array<{ service_date: string; member_id: string; pre_service: boolean; service: boolean }>
+  >(markRes);
+  const groups = unwrap<Array<{ id: string; name: string; hall_id: string }>>(groupRes);
+  const events = eventRes
+    ? unwrap<Array<{ id: string; title: string; starts_at: string; location: string | null }>>(eventRes)
+    : [];
+
+  // A member's ticks only count toward THIS dashboard's numbers if that member
+  // is in scope — the marks query is narrowed by hall, but a group-scoped
+  // session must not see the congregation's whole turnout.
+  const inScope = new Set(members.map((m) => m.id));
+  const scoped = marks.filter((m) => inScope.has(m.member_id));
+
+  const points = sundays.map((date: string) => {
+    const onThatDay = scoped.filter((m) => m.service_date === date);
+    return {
+      date,
+      preService: onThatDay.filter((m) => m.pre_service).length,
+      service: onThatDay.filter((m) => m.service).length,
+    };
+  });
+
+  /*
+   * 需要关怀 — active, non-visitor members with no 主日 tick across the last
+   * four Sundays.
+   *
+   * Four is "about a month away": long enough that a holiday or a bout of flu
+   * does not flag somebody, short enough to still catch them early. It is
+   * counted over the last four Sundays specifically, NOT the whole window the
+   * chart draws, so widening the chart never widens who gets chased.
+   *
+   * `last_seen` is their most recent 主日 inside the window, or null for
+   * "not in this window at all" — which is deliberately not the same claim as
+   * "never came", since the window only reaches back so far.
+   */
+  const followUpWindow = sundays.slice(-4);
+  const seenIn = new Set(
+    scoped.filter((m) => m.service && followUpWindow.includes(m.service_date)).map((m) => m.member_id),
+  );
+  const lastSeenBy = new Map<string, string>();
+  for (const m of scoped) {
+    if (!m.service) continue;
+    const prev = lastSeenBy.get(m.member_id);
+    if (!prev || m.service_date > prev) lastSeenBy.set(m.member_id, m.service_date);
+  }
+  const groupNameById = new Map(groups.map((g) => [g.id, g.name]));
+  const followUp = members
+    .filter((m) => !seenIn.has(m.id))
+    .map((m) => ({
+      id: m.id,
+      full_name: m.full_name,
+      english_name: m.english_name,
+      hall_id: m.hall_id,
+      group_name: m.group_id ? (groupNameById.get(m.group_id) ?? null) : null,
+      last_seen: lastSeenBy.get(m.id) ?? null,
+    }))
+    // Longest-absent first: never seen in the window, then oldest last_seen.
+    .sort((a, b) => (a.last_seen ?? '').localeCompare(b.last_seen ?? ''));
+
+  // 小组概况 — the health each group's own list already derives, counted here
+  // so the page draws chips rather than re-deriving a roster count per group.
+  const membersByGroup = new Map<string, { total: number; fresh: number }>();
+  for (const m of members) {
+    if (!m.group_id) continue;
+    const bucket = membersByGroup.get(m.group_id) ?? { total: 0, fresh: 0 };
+    bucket.total += 1;
+    // A group's "new" member is its group POSITION, exactly as /groups' own
+    // list counts it — never the church-wide role, which means something else.
+    if (m.group_position === GroupPosition.NewMember) bucket.fresh += 1;
+    membersByGroup.set(m.group_id, bucket);
+  }
+  const groupHealth = groups.map((g) => {
+    const bucket = membersByGroup.get(g.id) ?? { total: 0, fresh: 0 };
+    return { id: g.id, name: g.name, status: groupHealthStatus(bucket.total, bucket.fresh) };
+  });
+
+  return {
+    sundays: points,
+    follow_up: followUp,
+    follow_up_sundays: followUpWindow,
+    events,
+    groups: groupHealth,
+    active_members: members.length,
+  };
 }
 
 /**

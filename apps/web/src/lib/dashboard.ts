@@ -15,7 +15,8 @@
 
 import { ChurchRole, MemberStatus } from '@tog/shared';
 import type { MemberRow } from './types';
-import { churchParts } from './time';
+import { addChurchDays, churchDateKey, churchDayOfWeek, churchParts } from './time';
+import type { GroupHealthStatus } from './labels';
 
 const pad2 = (n: number) => String(n).padStart(2, '0');
 
@@ -77,4 +78,98 @@ export function monthlyVisitAndActiveTrend(
     }
     return { month: key, visits, active };
   });
+}
+
+
+/* -------------------------------------------------------------------------
+ * The pastoral dashboard (0130)
+ *
+ * The page's four sections are: last Sunday's turnout, who has stopped
+ * coming, what is on this week, and how the life groups look. Everything here
+ * is the pure half — the API hands down already-counted numbers, and these
+ * turn them into what the page draws.
+ * ---------------------------------------------------------------------- */
+
+/** One Sunday's two ticks, as the API counts them. */
+export interface SundayPoint {
+  /** `YYYY-MM-DD`, always a Sunday. */
+  date: string;
+  /** 会前 — how many were marked before the service. */
+  preService: number;
+  /** 主日 — how many were marked at it. This is "the attendance". */
+  service: number;
+}
+
+/**
+ * The last `count` Sundays up to and including the most recent one, oldest
+ * first.
+ *
+ * Built by walking back from the Sunday on or before `today` rather than by
+ * listing a month, because the run this feeds crosses month boundaries — eight
+ * Sundays from mid-January reaches back into November. Every step goes through
+ * `addChurchDays` (rule G6a): a bare `Date` arithmetic here would drift by a
+ * day for any viewer west of Malaysia.
+ */
+export function recentSundays(today: Date, count: number): string[] {
+  if (count <= 0) return [];
+  // 0 = Sunday, so this many days back lands on the Sunday on or before today
+  // (today itself when today IS Sunday).
+  const back = churchDayOfWeek(today);
+  const out: string[] = [];
+  for (let i = count - 1; i >= 0; i--) {
+    out.push(churchDateKey(addChurchDays(today, -back - i * 7)));
+  }
+  return out;
+}
+
+export interface SundayPulse {
+  /** The most recent Sunday on record, or null when there is none at all. */
+  latest: SundayPoint | null;
+  /**
+   * Mean 主日 attendance over the Sundays BEFORE the latest one — the bar the
+   * latest is being compared against. Null when there is nothing to compare
+   * to, which is a different statement from "the average is zero" and is why
+   * the page draws no delta at all in that case.
+   */
+  average: number | null;
+  /** `latest.service - average`, rounded; null whenever `average` is. */
+  delta: number | null;
+}
+
+/**
+ * Last Sunday against the Sundays before it.
+ *
+ * The comparison deliberately EXCLUDES the latest Sunday from its own average
+ * — comparing a number against a mean it is part of always understates the
+ * change, and on a small church with four points it understates it badly.
+ *
+ * A Sunday nobody marked is a real zero here, not a gap: the sheet stores no
+ * rows for an unmarked Sunday, so the API sends 0, and a church that forgot to
+ * take the roll call should see the flat line that follows from that rather
+ * than have it quietly smoothed away.
+ */
+export function sundayPulse(points: readonly SundayPoint[]): SundayPulse {
+  if (points.length === 0) return { latest: null, average: null, delta: null };
+  const latest = points[points.length - 1];
+  const before = points.slice(0, -1);
+  if (before.length === 0) return { latest, average: null, delta: null };
+  const mean = before.reduce((sum, p) => sum + p.service, 0) / before.length;
+  return { latest, average: mean, delta: Math.round(latest.service - mean) };
+}
+
+/**
+ * How many groups sit in each health bucket, in the order the page draws them.
+ *
+ * Keyed by the STORED status code, never by a translated label (rule G8) —
+ * the chips this feeds are language-independent and link into `/groups`'s own
+ * filter, which reads the same codes.
+ */
+export function groupHealthRollup(
+  groups: readonly { status: GroupHealthStatus }[],
+): { status: GroupHealthStatus; count: number }[] {
+  const order: GroupHealthStatus[] = ['splittable', 'balanced', 'need_members'];
+  return order.map((status) => ({
+    status,
+    count: groups.filter((g) => g.status === status).length,
+  }));
 }

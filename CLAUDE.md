@@ -535,28 +535,46 @@ gates it — it matches on the FIRST path segment) returns every group/term the
 member has served in, drawn on `/members/[id]` as its own section
 (`happy.title`, same list-row shape the 四十天守望 pairs list already uses).
 
-**The dashboard (`/`) is three sections, not four KPI tiles and two cards.**
-The first is a hand-rolled SVG line chart — this app has no charting library
-and does not gain one, the same convention every other "chart" here follows —
-plotting **New Visits** (members whose 来访日期/`joined_at` falls in a given
-month, visitor and member alike: a visit is when someone first came, not what
-they are today) against **Active Members** (members active and non-visitor
-TODAY whose `joined_at` falls on or before that month — a defensible
-cumulative growth curve, and said so in a code comment, since it is NOT a real
-historical reconstruction: status and role are only known as of now, never as
-of each past month) over the trailing six months. Both series are one pure,
-unit-tested function, `monthlyVisitAndActiveTrend` in `lib/dashboard.ts`,
-built on `churchParts` per rule G6a rather than the runtime's own clock. Two
-independent toggle `chip`s — the same pattern `/discipleship`'s own state
-filter already uses (rule G4), not new toggle markup — show or hide each
-series, both on by default; toggling both off reads as a small empty state
-rather than a blank chart box. Below it, the old card-list-of-5 upcoming
-events is now an actual table, desktop table + mobile tile pair like every
-other list in this app (rule G7). Below THAT is a single KPI tile, **Total
-Active Members** — active and non-visitor, the SAME headline definition of
-"active" the chart's own line uses, so the page never states "active member"
-two different ways on one screen. The old KPI row (成员总数/在册/即将聚会/**门训
-进行中**), the 身份分布 bar chart and the 守望进度 card are gone entirely.
+**The dashboard (`/`) is four cards about ATTENDANCE, and it is pastoral
+rather than analytical** (0130). It used to plot a member-growth curve whose
+own code comment admitted it was not a real historical reconstruction (status
+and role are only known as of *now*), beside a KPI counting member ROWS — while
+ignoring the roll call the whole rest of the app is built on. It now answers
+the four questions a church actually asks, in that order:
+
+- **上主日** — last Sunday's 主日 and 会前 counts, how they compare, and the
+  Sundays behind them as a sparkline. The comparison deliberately EXCLUDES the
+  latest Sunday from its own average (`sundayPulse`): comparing a number
+  against a mean it is part of always understates the change, badly so on four
+  points. A Sunday nobody marked is a real **0**, not a gap — the sheet stores
+  no rows for one, and a church that forgot to take the roll call should see
+  that rather than have it smoothed away. Drawn as BARS, not a line: these are
+  counts of separate occasions, and a line between two Sundays implies values
+  in between that do not exist.
+- **需要关怀** — active, non-visitor members with no 主日 tick across the last
+  **four** Sundays (church's own choice: about a month, long enough that a
+  holiday does not flag somebody). Longest-absent first, capped, each row
+  opening that member. The one section here that is a to-do rather than a
+  report, and the reason the redesign was worth doing. The window is always the
+  last four Sundays and NOT the window the chart draws, so widening the chart
+  never widens who gets chased; `last_seen` being null means "not in the window
+  at all", which is deliberately not the claim "never came".
+- **本周** — hand-added meetings in the next seven days.
+- **小组概况** — the health buckets as chips, keyed by the STORED status code
+  (G8) so they are language-independent and land on `/groups`'s own filter.
+
+All four are fed by **one** `GET /api/dashboard`, counted server-side past the
+same hall/group gate as every other read. The old page pulled the entire roster
+and every event into the browser and counted there; adding attendance that way
+would have meant a request per Sunday or shipping the attendance table down.
+It also means a `group_leader` gets this same page narrowed to its own group
+for free, instead of the special-casing the old one needed to hide a section it
+had no reach for. `recentSundays` / `sundayPulse` / `groupHealthRollup` in
+`lib/dashboard.ts` are pure and unit-tested (under Malaysia, New York AND
+Auckland — a Sunday-walking helper is exactly what breaks either side of the
+date line), and `recentSundays` walks days via `addChurchDays` rather than
+listing a month's Sundays, because eight Sundays crosses a month boundary.
+`monthlyVisitAndActiveTrend` survives in the same file, now unused by any page.
 
 **Member detail is several small `FactGrid`s under section headers, not one
 long undifferentiated one.** `FactGrid` itself is unchanged (rule G4) — the

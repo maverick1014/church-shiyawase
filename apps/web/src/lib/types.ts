@@ -15,6 +15,7 @@ import {
   TrainingKind,
   Weekday,
 } from '@tog/shared';
+import type { GroupHealthStatus } from './labels';
 
 /**
  * The church itself, as `GET /api/church` returns it — the public fields only
@@ -520,4 +521,34 @@ export interface OverviewRow {
   status: PairStatus;
   days_completed: number;
   percent_complete: number;
+}
+
+
+/**
+ * `GET /api/dashboard` — the home page, counted server-side (0130).
+ *
+ * The page used to pull the whole roster and every event down and count in the
+ * browser; attendance made that untenable, so the numbers arrive already
+ * counted and the client stays a renderer. Everything in it is scoped by the
+ * same hall/group gate as the rest of the API.
+ */
+export interface DashboardResponse {
+  /** Oldest first, one entry per Sunday in the window — an unmarked Sunday is a real 0. */
+  sundays: { date: string; preService: number; service: number }[];
+  /** Active non-visitors with no 主日 tick across `follow_up_sundays`, longest-absent first. */
+  follow_up: {
+    id: string;
+    full_name: string;
+    english_name: string | null;
+    hall_id: string;
+    group_name: string | null;
+    /** Their most recent 主日 inside the whole window, or null for "not in it at all". */
+    last_seen: string | null;
+  }[];
+  /** The Sundays the follow-up list was judged over — always the last four. */
+  follow_up_sundays: string[];
+  /** Hand-added meetings in the next seven days. Empty for a group_leader, who has no reach for them. */
+  events: { id: string; title: string; starts_at: string; location: string | null }[];
+  groups: { id: string; name: string; status: GroupHealthStatus }[];
+  active_members: number;
 }

@@ -683,38 +683,46 @@ async function main() {
       sidebar.includes(churchRecord.short_name || churchRecord.name),
       churchRecord.short_name || churchRecord.name);
 
-    /* -- dashboard: trend chart · upcoming-events table · one KPI tile ----- */
-    // The dashboard was rebuilt around three sections; the old 4-tile KPI row,
-    // the "Identity distribution" bar chart and the "Discipleship progress"
-    // card are gone entirely.
-    // The `<h1>` above is the page shell, not the data — the trend card,
-    // upcoming-events table and KPI tile all populate from their own
-    // client-side fetch, which lands after the shell's first paint. Reading
-    // `.content` before that fetch settles is a real race (not just here —
-    // it read as an app bug the first few times it flaked), so wait on the
-    // trend card's own heading, not just the page having loaded at all.
-    await page.locator('.card:has-text("New Visits & Active Members")').first().waitFor({ timeout: 20000 });
+    /* -- dashboard: 上主日 · 需要关怀 · 本周 · 小组概况 ------------------- */
+    // Rebuilt again (0130), this time around ATTENDANCE — the thing the rest of
+    // the app is built on and the old home page ignored entirely. The trend
+    // chart of member rows, its two toggle chips and the lone KPI tile are
+    // gone; four cards fed by one aggregate `GET /api/dashboard` replace them.
+    //
+    // The `<h1>` above is the page shell, not the data: every card populates
+    // from that one fetch, which lands after the shell's first paint. Reading
+    // `.content` before it settles is a real race (it read as an app bug the
+    // first few times it flaked), so wait on a card's own heading first.
+    await page.locator('.card:has-text("Last Sunday")').first().waitFor({ timeout: 20000 });
     const dashBody = await page.locator('.content').innerText();
-    check('the dashboard shows the New Visits / Active Members trend card',
-      dashBody.includes('New Visits & Active Members'));
-    check('…the upcoming-events section…', dashBody.includes('Upcoming events'));
-    check('…and a single "Total Active Members" KPI tile',
-      dashBody.includes('Total Active Members') && (await page.locator('.stat').count()) === 1);
-    check('the retired KPI row / identity chart / discipleship-progress card are gone',
+    check('the dashboard leads with last Sunday’s turnout',
+      dashBody.includes('Last Sunday') && dashBody.includes('At the service'));
+    check('…with the follow-up list beside it…',
+      dashBody.includes('Needs follow-up'));
+    check('…and the week ahead and the life groups under them',
+      dashBody.includes('This week') && dashBody.includes('Life groups at a glance'));
+    check('the retired member-growth chart and its toggle chips are gone',
+      !dashBody.includes('New Visits & Active Members') &&
+        (await page.locator('.card:has-text("Last Sunday") .chip').count()) === 0);
+    check('the retired KPI row / identity chart / discipleship-progress card are still gone',
       !dashBody.includes('Identity distribution') && !dashBody.includes('Discipleship progress'));
-    // Two independent toggle chips, both on by default — each hides its own
-    // line without touching the other.
-    const trendChips = page.locator('.card:has-text("New Visits & Active Members") .chip');
-    const chipsOnByDefault = await trendChips.evaluateAll((els) => els.every((el) => el.classList.contains('on')));
-    check('the trend card offers two toggle chips, both on by default',
-      (await trendChips.count()) === 2 && chipsOnByDefault);
-    const linesBefore = await page.locator('.card:has-text("New Visits & Active Members") svg polyline').count();
-    await trendChips.first().click();
-    await w(200);
-    const linesAfter = await page.locator('.card:has-text("New Visits & Active Members") svg polyline').count();
-    check('toggling a chip off removes its own line from the chart', linesAfter === linesBefore - 1, `${linesBefore} → ${linesAfter}`);
-    await trendChips.first().click();
-    await w(200);
+
+    // The pulse is drawn as BARS, one per Sunday in the window — a line
+    // between two Sundays would imply values in between that do not exist.
+    const sparkBars = page.locator('.card:has-text("Last Sunday") .spark-bar');
+    check('last Sunday sits at the end of a sparkline of the Sundays behind it',
+      (await sparkBars.count()) === 8, `${await sparkBars.count()} bars`);
+
+    // One request, not one per Sunday: the whole point of aggregating this
+    // server-side. Counted by watching the network on a reload.
+    let dashCalls = 0;
+    const countDash = (r) => { if (r.url().includes('/api/dashboard')) dashCalls++; };
+    page.on('request', countDash);
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.locator('.card:has-text("Last Sunday")').first().waitFor({ timeout: 20000 });
+    page.off('request', countDash);
+    check('the whole page is fed by ONE aggregate request', dashCalls === 1, `${dashCalls} call(s)`);
+
     await shot('01-dashboard');
 
     /* -- member directory ------------------------------------------------- */

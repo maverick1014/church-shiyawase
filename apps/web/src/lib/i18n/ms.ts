@@ -725,6 +725,28 @@ export const ms: Messages = {
 
   /* ---- dashboard ------------------------------------------------------- */
   'dash.title': 'Papan Pemuka',
+
+  /* The pastoral dashboard (0130). */
+  'dash.sunday.title': 'Ahad lepas',
+  'dash.sunday.service': 'Hadir kebaktian',
+  'dash.sunday.preService': 'Sebelum kebaktian',
+  'dash.sunday.up': '{n} lebih daripada purata {w} Ahad',
+  'dash.sunday.down': '{n} kurang daripada purata {w} Ahad',
+  'dash.sunday.same': 'Sama dengan purata {w} Ahad',
+  'dash.sunday.noAverage': 'Belum cukup Ahad untuk dibandingkan.',
+  'dash.sunday.none': 'Belum ada kehadiran direkodkan.',
+  'dash.sunday.trend': '{n} Ahad terakhir',
+  'dash.followUp.title': 'Perlu dihubungi',
+  'dash.followUp.sub': 'Tidak hadir kebaktian selama {w} Ahad',
+  'dash.followUp.none': 'Semua orang hadir baru-baru ini.',
+  'dash.followUp.lastSeen': 'Kali terakhir {date}',
+  'dash.followUp.notInWindow': 'Tiada dalam {w} Ahad terakhir',
+  'dash.followUp.more': '＋{n} lagi',
+  'dash.followUp.viewAll': 'Lihat semua ahli',
+  'dash.week.title': 'Minggu ini',
+  'dash.week.none': 'Tiada apa-apa dalam tujuh hari akan datang.',
+  'dash.groups.title': 'Kumpulan sel sepintas lalu',
+  'dash.groups.none': 'Belum ada kumpulan sel.',
   'dash.kpi.totalActive': 'Jumlah Ahli Aktif',
   'dash.trend.title': 'Pelawat Baharu & Ahli Aktif',
   'dash.trend.visits': 'Pelawat Baharu',

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { monthlyVisitAndActiveTrend } from '../dashboard';
+import { groupHealthRollup, monthlyVisitAndActiveTrend, recentSundays, sundayPulse } from '../dashboard';
 import { churchInstant } from '../time';
 import { ChurchRole, Gender, MemberStatus } from '@tog/shared';
 import type { MemberRow } from '../types';
@@ -94,5 +94,93 @@ describe('monthlyVisitAndActiveTrend', () => {
     const trend = monthlyVisitAndActiveTrend([], 6, now);
     expect(trend).toHaveLength(6);
     expect(trend.every((p) => p.visits === 0 && p.active === 0)).toBe(true);
+  });
+});
+
+/* -------------------------------------------------------------------------
+ * The pastoral dashboard (0130)
+ * ---------------------------------------------------------------------- */
+
+describe('recentSundays', () => {
+  // 2026-08-13 is a Thursday; the Sunday on or before it is 2026-08-09.
+  const thursday = new Date('2026-08-13T04:00:00Z');
+
+  it('walks back from the Sunday on or before today, oldest first', () => {
+    expect(recentSundays(thursday, 4)).toEqual([
+      '2026-07-19',
+      '2026-07-26',
+      '2026-08-02',
+      '2026-08-09',
+    ]);
+  });
+
+  it('counts today itself when today IS a Sunday', () => {
+    const sunday = new Date('2026-08-09T04:00:00Z');
+    expect(recentSundays(sunday, 2)).toEqual(['2026-08-02', '2026-08-09']);
+  });
+
+  it('crosses a month boundary, because eight Sundays is two months', () => {
+    // The reason this walks days rather than listing a month's Sundays.
+    const out = recentSundays(thursday, 8);
+    expect(out).toHaveLength(8);
+    expect(out[0]).toBe('2026-06-21');
+    expect(new Set(out.map((d) => d.slice(0, 7))).size).toBeGreaterThan(1);
+  });
+
+  it('answers nothing for a non-positive count rather than looping', () => {
+    expect(recentSundays(thursday, 0)).toEqual([]);
+    expect(recentSundays(thursday, -3)).toEqual([]);
+  });
+});
+
+describe('sundayPulse', () => {
+  const pts = (...service: number[]) =>
+    service.map((s, i) => ({ date: `2026-08-0${i + 1}`, preService: 0, service: s }));
+
+  it('compares the latest Sunday against the ones BEFORE it, not including itself', () => {
+    // Mean of 10/20/30 is 20, so 40 is +20. Including itself would say +15.
+    const out = sundayPulse(pts(10, 20, 30, 40));
+    expect(out.latest?.service).toBe(40);
+    expect(out.average).toBe(20);
+    expect(out.delta).toBe(20);
+  });
+
+  it('reports a fall as a negative delta', () => {
+    expect(sundayPulse(pts(30, 30, 30, 24)).delta).toBe(-6);
+  });
+
+  it('treats an unmarked Sunday as a real zero rather than a gap', () => {
+    expect(sundayPulse(pts(20, 0, 20, 20)).average).toBeCloseTo(13.333, 2);
+  });
+
+  it('has no average to give from a single Sunday, which is not the same as zero', () => {
+    const out = sundayPulse(pts(42));
+    expect(out.latest?.service).toBe(42);
+    expect(out.average).toBeNull();
+    expect(out.delta).toBeNull();
+  });
+
+  it('answers empty for no Sundays at all', () => {
+    expect(sundayPulse([])).toEqual({ latest: null, average: null, delta: null });
+  });
+});
+
+describe('groupHealthRollup', () => {
+  it('counts each bucket, in the order the page draws them', () => {
+    expect(
+      groupHealthRollup([
+        { status: 'balanced' },
+        { status: 'splittable' },
+        { status: 'balanced' },
+      ]),
+    ).toEqual([
+      { status: 'splittable', count: 1 },
+      { status: 'balanced', count: 2 },
+      { status: 'need_members', count: 0 },
+    ]);
+  });
+
+  it('keeps every bucket even when nothing is in it, so the row never reflows', () => {
+    expect(groupHealthRollup([]).map((b) => b.count)).toEqual([0, 0, 0]);
   });
 });

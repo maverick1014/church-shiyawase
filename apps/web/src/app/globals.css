@@ -2175,6 +2175,36 @@ td.empty-inline {
   flex-wrap: wrap;
 }
 
+/* The dashboard's Sunday sparkline (0130).
+
+   Bars, not a line: these are counts of separate occasions, and a line between
+   two Sundays would imply values in between that do not exist. Fixed height so
+   the card does not resize as the numbers change week to week. */
+.spark {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  height: 72px;
+}
+.spark-col {
+  flex: 1;
+  height: 100%;
+  display: flex;
+  align-items: flex-end;
+  min-width: 6px;
+}
+.spark-bar {
+  width: 100%;
+  border-radius: 4px 4px 0 0;
+  background: var(--brand-soft);
+  border-bottom: 2px solid var(--brand);
+  min-height: 2px;
+}
+/* The most recent Sunday is the one the headline is about. */
+.spark-col:last-child .spark-bar {
+  background: var(--brand);
+}
+
 /* 幸福小组活动记录 photos (0029).
 
    A bounded strip rather than a free-flowing grid: a record can collect a
