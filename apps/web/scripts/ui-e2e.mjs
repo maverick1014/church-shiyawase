@@ -2242,18 +2242,30 @@ async function main() {
       // Week 1 is the first tick box in the row — the member-name cell carries
       // no checkbox of its own.
       const week1Tick = sheetRow.locator('input[type=checkbox]').first();
+      // Both halves waited on, exactly as on the services sheet: the SERVER is
+      // polled for the record, and the checkbox is polled into the confirmed
+      // state before it is clicked a second time. A flat 1500ms covered for
+      // both until the 活动 block above shifted the timing, and then the untick
+      // landed mid-re-render and was swallowed — the same failure, in the same
+      // shape, on the one sheet that had not been converted yet.
+      const attRecords = () =>
+        happyGroupId
+          ? apiGet(`/happiness/groups/${happyGroupId}/attendance`).catch(() => ({ records: [] }))
+          : Promise.resolve({ records: [] });
+      const week1Present = (att) =>
+        (att.records || []).some((r) => r.week_number === 1 && r.member_id === fxHappyMember.id);
+      const settledTick = (loc, want) =>
+        pollUntil(() => loc.isChecked().catch(() => null), (v) => v === want, 8000, 150);
+
       await week1Tick.click();
-      await w(1500);
-      const attAfterTick = happyGroupId ? await apiGet(`/happiness/groups/${happyGroupId}/attendance`) : { records: [] };
+      const attAfterTick = await pollUntil(attRecords, week1Present);
       check('ticking week 1 records that member present that week',
-        (attAfterTick.records || []).some((r) => r.week_number === 1 && r.member_id === fxHappyMember.id),
-        JSON.stringify(attAfterTick.records));
+        week1Present(attAfterTick), JSON.stringify(attAfterTick.records));
+      await settledTick(week1Tick, true);
       await week1Tick.click();
-      await w(1500);
-      const attAfterUntick = happyGroupId ? await apiGet(`/happiness/groups/${happyGroupId}/attendance`) : { records: [] };
+      const attAfterUntick = await pollUntil(attRecords, (att) => !week1Present(att));
       check('unticking it DELETES the row — a presence-only table, no absence to store',
-        !(attAfterUntick.records || []).some((r) => r.week_number === 1 && r.member_id === fxHappyMember.id),
-        JSON.stringify(attAfterUntick.records));
+        !week1Present(attAfterUntick), JSON.stringify(attAfterUntick.records));
 
       // 0123: a member's own page reads their 幸福小组 history now too.
       await page.goto(`${BASE}/members/${fxHappyMember.id}`, { waitUntil: 'domcontentloaded' });
