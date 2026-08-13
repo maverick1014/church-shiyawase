@@ -13,11 +13,12 @@ import {
   GROUP_POSITION_OPTIONS,
   MEMBER_STATUS_OPTIONS,
   memberStatusKey,
+  memberRole,
   positionKey,
-  referrerOptions,
+  roleKey,
 } from '@/lib/labels';
 import { useT } from '@/lib/i18n';
-import { Combobox, ErrorBanner, Field, HallSelect, Modal, TagsInput, useFormGuard, useToast } from './ui';
+import { Combobox, ErrorBanner, Field, HallSelect, Modal, TagsInput, useFormGuard, useMemberOptions, useToast } from './ui';
 
 /**
  * The shared member-edit form (rule G4) — extracted out of the member-detail
@@ -77,7 +78,10 @@ export function MemberEditModal({
   const t = useT();
   const toast = useToast();
 
-  const allGroups = useFetch<GroupRow[]>('/groups');
+  // Every life group, not just the congregation currently being viewed: a
+  // member belongs to one congregation while the group they attend may
+  // belong to another. A hall-pinned account is still narrowed server-side.
+  const allGroups = useFetch<GroupRow[]>('/groups', { allHalls: true });
   // The whole roll, only to autocomplete 服侍岗位 from the ministries the church
   // already uses — free text drifts into 敬拜 / 敬拜团 / 敬拜组 otherwise. Same
   // derivation as /groups' tag suggestions (rule G4).
@@ -91,9 +95,15 @@ export function MemberEditModal({
   // The 推荐人 picker draws on the same roll — and never offers this person,
   // because the database refuses a self-referral and a user must not be able
   // to walk into that error.
+  const memberOptions = useMemberOptions();
   const referrerOpts = useMemo(
-    () => referrerOptions(allMembers.data ?? [], t, member.id),
-    [allMembers.data, t, member.id],
+    () =>
+      memberOptions(allMembers.data ?? [], {
+        lead: { value: '', label: t('members.noReferrer') },
+        exclude: member.id,
+        hint: (m) => t(roleKey(memberRole(m as MemberRow))),
+      }),
+    [allMembers.data, memberOptions, t, member.id],
   );
   // Sibling members of whichever group is currently SELECTED (not necessarily
   // the member's original group) — used to auto-demote whoever currently

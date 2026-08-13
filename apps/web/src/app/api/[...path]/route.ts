@@ -93,24 +93,30 @@ const MEMBER_SELECT = '*, group:groups(id,name), hall:halls(id,name)';
 async function withReferrers<T extends { referred_by?: string | null }>(
   db: ReturnType<typeof getDb>,
   rows: T[],
-): Promise<Array<T & { referrer: { id: string; full_name: string; english_name: string | null } | null }>> {
+): Promise<Array<T & { referrer: { id: string; full_name: string; english_name: string | null; hall_id: string } | null }>> {
   const ids = Array.from(new Set(rows.map((r) => r.referred_by).filter((id): id is string => !!id)));
   const referrers = ids.length
-    ? unwrap<Array<{ id: string; full_name: string; english_name: string | null }>>(
-        await db.from('members').select('id,full_name,english_name').in('id', ids),
+    ? unwrap<Array<{ id: string; full_name: string; english_name: string | null; hall_id: string }>>(
+        await db.from('members').select('id,full_name,english_name,hall_id').in('id', ids),
       )
     : [];
   const byId = new Map(referrers.map((r) => [r.id, r]));
   return rows.map((r) => ({ ...r, referrer: r.referred_by ? (byId.get(r.referred_by) ?? null) : null }));
 }
 /**
- * A person, everywhere a name is only shown: the CHINESE name and the English
- * one under it (0018). Both travel together in every brief, because every list,
- * tile and roll-call row draws them as one thing (`<MemberName />`) — a payload
- * that carried only `full_name` would silently render half a person.
+ * A person, everywhere a name is only shown: BOTH names (0018) and the hall
+ * that decides which of them is drawn (0028).
+ *
+ * All three travel together in every brief because `<MemberName />` needs all
+ * three to draw one person: the pair is still the identity and still what a
+ * search matches, while the congregation picks which half is on screen. A
+ * payload carrying only `full_name` would render half a person; one carrying
+ * both names but no `hall_id` would quietly fall back to the Chinese name on
+ * that screen alone, so the same person would read differently from page to
+ * page — which is exactly what one shared component exists to prevent.
  */
-const MEMBER_BRIEF = 'id,full_name,english_name,church_role,group_position';
-const ACCOUNT_MEMBER_BRIEF = 'id,full_name,english_name,email,church_role,group_position';
+const MEMBER_BRIEF = 'id,full_name,english_name,hall_id,church_role,group_position';
+const ACCOUNT_MEMBER_BRIEF = 'id,full_name,english_name,hall_id,email,church_role,group_position';
 const PAIR_SELECT =
   `*, mentor:members!discipleship_pairs_mentor_id_fkey(${MEMBER_BRIEF}), trainee:members!discipleship_pairs_trainee_id_fkey(${MEMBER_BRIEF})`;
 /** Same shape, but an !inner mentor join so a hall filter can be pushed down. */
@@ -123,7 +129,7 @@ const ACCOUNT_SELECT = `*, member:members(${ACCOUNT_MEMBER_BRIEF}), hall:halls(i
  * comes back missing the piece the page needs (rule G6: guard every join).
  */
 const HAPPINESS_GROUP_SELECT =
-  '*, hall:halls(id,name), leader:members(id,full_name,english_name), term:happiness_terms(id,term_no,name,weeks)';
+  '*, hall:halls(id,name), leader:members(id,full_name,english_name,hall_id), term:happiness_terms(id,term_no,name,weeks)';
 
 /**
  * One value inside a PostgREST `or(…)` filter, quoted.
@@ -152,7 +158,7 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
     }
   };
 
-  const [r0, r1, r2, r3, r4] = p;
+  const [r0, r1, r2, r3, r4, r5] = p;
 
   // ---- Auth + access control ------------------------------------------------
   if (r0 === 'auth') return authRoute(method, req, p, db);
@@ -442,7 +448,14 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
   // switcher's options. Narrowing it by the switcher's own selection would
   // leave a single option and strand the user with no way back to 全部堂会.
   if (r0 === 'halls' && !r1 && method === 'GET') {
-    let query = db.from('halls').select('id,name,sort_order').order('sort_order');
+    // `*` rather than a column list, deliberately: `name_display` (0028) is
+    // read from here, and naming it explicitly would make this endpoint — which
+    // the whole shell waits on — a 500 on any deployment whose database has not
+    // had that migration applied yet. With `*` the column simply isn't in the
+    // payload until it exists, and a hall that doesn't say reads by the Chinese
+    // name, which is what every congregation did before 0028. Nothing on this
+    // table is sensitive.
+    let query = db.from('halls').select('*').order('sort_order');
     if (hallScope) query = query.eq('id', hallScope);
     return json(unwrap(await query));
   }
@@ -816,7 +829,7 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
         const members = unwrap(
           await db
             .from('members')
-            .select('id,full_name,english_name,group_position,status')
+            .select('id,full_name,english_name,hall_id,group_position,status')
             .eq('group_id', r1)
             .order('full_name'),
         );
@@ -1518,7 +1531,7 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
             // reading this form knows their trainee by whichever one they use.
             // Nothing else about either member is handed out — this path
             // answers with no session at all.
-            '*, mentor:members!discipleship_pairs_mentor_id_fkey(id,full_name,english_name), trainee:members!discipleship_pairs_trainee_id_fkey(id,full_name,english_name), program:discipleship_programs(id,name,total_days)',
+            '*, mentor:members!discipleship_pairs_mentor_id_fkey(id,full_name,english_name,hall_id), trainee:members!discipleship_pairs_trainee_id_fkey(id,full_name,english_name,hall_id), program:discipleship_programs(id,name,total_days)',
           )
           .eq('form_token', r2)
           .single(),
@@ -1632,24 +1645,6 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
           );
           return json({ group_id: r2, member_ids: memberIds, count: memberIds.length });
         }
-        if (r4 && method === 'PATCH') {
-          // The roster row's OWN role (0027) — e.g. 组长/组员 within THIS
-          // happiness group, never the person's church_role or their life
-          // group's group_position. A raw passthrough of `{ role }` only:
-          // nothing else on a roster row is writable here.
-          await assertOwnsRow('happiness_groups', r2);
-          const dto = await body();
-          unwrap(
-            await db
-              .from('happiness_group_members')
-              .update({ role: dto.role ?? null })
-              .eq('group_id', r2)
-              .eq('member_id', r4)
-              .select()
-              .single(),
-          );
-          return json({ group_id: r2, member_id: r4, role: dto.role ?? null });
-        }
         if (r4 && method === 'DELETE') {
           // Deletes the ROSTER row only — `happiness_attendance` carries no FK
           // to `happiness_group_members`, so a week they attended stays on the
@@ -1665,6 +1660,107 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
               .single(),
           );
           return json({ group_id: r2, member_id: r4 });
+        }
+      } else if (r3 === 'activities') {
+        /*
+         * 活动记录 (0029): what the group DID on a date, with photos and a
+         * note. Every read and write is gated by the GROUP, exactly like its
+         * roster and its roll call — an activity has no hall of its own,
+         * it belongs to a group that has one (rule G2).
+         */
+        if (!r4) {
+          if (method === 'GET') {
+            await assertRowReadable('happiness_groups', r2);
+            return json(
+              unwrap(
+                await db
+                  .from('happiness_activities')
+                  .select('*')
+                  .eq('group_id', r2)
+                  .order('happened_on', { ascending: false })
+                  .order('created_at', { ascending: false }),
+              ),
+            );
+          }
+          if (method === 'POST') {
+            await assertOwnsRow('happiness_groups', r2);
+            const dto = await body();
+            if (!tidy(String(dto.happened_on ?? ''))) throw new HttpError(400, 'happened_on is required');
+            // `group_id` comes from the PATH, never the payload: the gate above
+            // just checked THAT group, so letting the body name a different one
+            // would file the record past its own permission check.
+            return json(
+              unwrap(
+                await db
+                  .from('happiness_activities')
+                  .insert({ ...dto, group_id: r2 })
+                  .select()
+                  .single(),
+              ),
+            );
+          }
+        } else if (r5 === 'photos' && method === 'POST') {
+          // The photo travels as multipart to the activity that already
+          // exists, like a training's payment QR (rule G4): same bucket
+          // helper, same size/type rule, and the URL is appended to the row's
+          // own list rather than replacing it, because a record collects
+          // several over an evening.
+          await assertOwnsRow('happiness_groups', r2);
+          const form = await req.formData();
+          const file = checkedFile(form.get('file'), IMAGE_UPLOAD);
+          const url = await storeFile(
+            db,
+            'photos',
+            `happiness/${r2}/${r4}/${Date.now()}.${fileExt(file, 'jpg')}`,
+            file,
+          );
+          const current = unwrap<{ photo_urls: string[] | null }>(
+            await db.from('happiness_activities').select('photo_urls').eq('id', r4).single(),
+          );
+          return json(
+            unwrap(
+              await db
+                .from('happiness_activities')
+                .update({ photo_urls: [...(current.photo_urls ?? []), url] })
+                .eq('id', r4)
+                .eq('group_id', r2)
+                .select()
+                .single(),
+            ),
+          );
+        } else if (r4 && !r5) {
+          if (method === 'PATCH') {
+            await assertOwnsRow('happiness_groups', r2);
+            const dto = await body();
+            // Same reason as the insert: the path owns `group_id`, so a PATCH
+            // can never move a record into a group this session never passed
+            // the gate for.
+            delete dto.group_id;
+            return json(
+              unwrap(
+                await db
+                  .from('happiness_activities')
+                  .update(dto)
+                  .eq('id', r4)
+                  .eq('group_id', r2)
+                  .select()
+                  .single(),
+              ),
+            );
+          }
+          if (method === 'DELETE') {
+            await assertOwnsRow('happiness_groups', r2);
+            unwrap(
+              await db
+                .from('happiness_activities')
+                .delete()
+                .eq('id', r4)
+                .eq('group_id', r2)
+                .select()
+                .single(),
+            );
+            return json({ id: r4 });
+          }
         }
       } else if (r3 === 'attendance' && !r4) {
         if (method === 'GET') {
@@ -2506,7 +2602,7 @@ async function rollCallSheet(
 
   // Independent reads, so they go together (rule G6).
   const [memberRes, meetings] = await Promise.all([memberQuery, readMeetings()]);
-  const members = unwrap(memberRes) as Array<{ id: string; full_name: string; english_name: string | null }>;
+  const members = unwrap(memberRes) as Array<{ id: string; full_name: string; english_name: string | null; hall_id: string }>;
 
   const columns = sheetColumns(year, month, meetings);
   const sundays = columns.filter((c) => c.kind === 'sunday').map((c) => c.date);
@@ -2581,7 +2677,7 @@ async function groupAttendance(db: ReturnType<typeof getDb>, groupId: string) {
       .select(MEMBER_BRIEF)
       .eq('group_id', groupId)
       .order('full_name'),
-  ) as Array<{ id: string; full_name: string; english_name: string | null }>;
+  ) as Array<{ id: string; full_name: string; english_name: string | null; hall_id: string }>;
 
   const meetingIds = meetings.map((m) => m.id);
   const att = meetingIds.length
@@ -2664,9 +2760,12 @@ async function happinessGroupDetail(db: ReturnType<typeof getDb>, groupId: strin
   }>;
   // Guarded (rule G6): a roster row whose member was somehow left dangling
   // would otherwise crash the page instead of just being one fewer name.
-  // `happiness_role` carries the ROSTER row's own role (0027) — never
-  // `member.church_role`/`group_position`, which belong to a different
-  // membership entirely.
+  // `happiness_group_members.role` (0027) is still SELECTED and still stored,
+  // but nothing draws it any more: the church asked for the roster's own role
+  // column back out, since who is a 福友 is answered by `church_role` being
+  // 访客 (0021) and everyone else needed no label at all. The column is left in
+  // the database rather than dropped, because whatever a leader already typed
+  // into it is theirs and a migration would throw it away.
   const members = rosterRows
     .filter((r): r is { role: string | null; member: Record<string, unknown> } => !!r.member)
     .map((r) => ({ ...r.member, happiness_role: r.role }));

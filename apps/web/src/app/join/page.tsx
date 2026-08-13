@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '@/lib/api';
 import { BrandLogo } from '@/components/BrandLogo';
-import { Combobox, Field, PhotoPicker, TagsInput, useUnsavedWarning } from '@/components/ui';
+import { Combobox, Field, PhotoPicker, TagsInput, useMemberOptions, useUnsavedWarning } from '@/components/ui';
 import { useChurchProfile } from '@/lib/church';
 import { GENDER_OPTIONS, genderKey } from '@/lib/labels';
 import type { ComboOption } from '@/lib/combobox';
@@ -101,20 +101,20 @@ export default function JoinPage() {
       (Object.values(form).some((v) => v !== '') || serving.length > 0 || photo !== null),
   );
 
-  // A member picker, never a `<select>` (rule G4) — 无推荐人 first, the same
-  // shape `referrerOptions` builds for the staff-facing form, over the
+  // A member picker, never a `<select>` (rule G4) — 无推荐人 first, over the
   // narrower (names-only) list this public page is handed.
+  // No session here, so there is no congregation to read a preference from —
+  // `useMemberOptions` falls back to the Chinese name, which is the documented
+  // fallback everywhere the hall is unknown (0028).
+  const memberOptions = useMemberOptions();
   const referrerOpts: ComboOption[] = useMemo(
-    () => [
-      { value: '', label: t('members.noReferrer') },
-      ...members.map((m) => ({ value: m.id, label: m.full_name, sub: m.english_name })),
-    ],
-    [members, t],
+    () => memberOptions(members, { lead: { value: '', label: t('members.noReferrer') } }),
+    [members, memberOptions, t],
   );
-  // Only this congregation's own groups — the server refuses a group from a
-  // different one anyway, and offering it here would just be a guaranteed
-  // error after the rest of the form was filled in.
-  const hallGroups = useMemo(() => groups.filter((g) => g.hall_id === hallId), [groups, hallId]);
+  // EVERY life group, not only this congregation's own: a person belongs to one
+  // congregation while the group they attend may belong to another, and nothing
+  // server-side refuses that pairing. (This used to filter by the chosen hall
+  // and said the server would refuse otherwise — it never did.)
 
   const submit = async () => {
     const name = form.full_name.trim();
@@ -296,7 +296,7 @@ export default function JoinPage() {
                     church with one congregation files everyone in it anyway. */}
                 {halls.length > 1 && (
                   <Field label={t('join.field.hall')}>
-                    <select value={hallId} onChange={(e) => setForm({ ...form, hall_id: e.target.value, group_id: '' })}>
+                    <select value={hallId} onChange={(e) => setForm({ ...form, hall_id: e.target.value })}>
                       <option value="">{t('hall.choose')}</option>
                       {halls.map((h) => (
                         <option key={h.id} value={h.id}>{h.name}</option>
@@ -307,7 +307,7 @@ export default function JoinPage() {
                 <Field label={t('members.field.group')}>
                   <select value={form.group_id} onChange={(e) => setForm({ ...form, group_id: e.target.value })}>
                     <option value="">{t('members.filter.ungrouped')}</option>
-                    {hallGroups.map((g) => (
+                    {groups.map((g) => (
                       <option key={g.id} value={g.id}>{g.name}</option>
                     ))}
                   </select>

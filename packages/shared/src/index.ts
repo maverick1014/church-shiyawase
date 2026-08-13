@@ -280,10 +280,29 @@ export function isUsableBrand(hex: unknown): boolean {
  * null to mean "open to every hall"; an account with a null hall has
  * full (all-hall) access.
  */
+/**
+ * Which of a member's TWO names (0018) a congregation reads them by.
+ *
+ * A property of the HALL, not of the member and not of the viewer: 张伟 filed
+ * in 中文堂 reads 张伟 on every screen, including one somebody in 英文堂 is
+ * looking at. Only two values exist because there are only two name columns —
+ * 马来文堂 reads the English name too (migration 0028).
+ */
+export enum HallNameDisplay {
+  Chinese = 'chinese',
+  English = 'english',
+}
+
 export interface Hall {
   id: string;
   name: string;
   sort_order: number;
+  /**
+   * Optional on the wire on purpose: migration 0028 may not have reached a
+   * given deployment's database yet, and a hall that does not say reads by the
+   * Chinese name — which is what every congregation did before this existed.
+   */
+  name_display?: HallNameDisplay | null;
   created_at: string;
 }
 

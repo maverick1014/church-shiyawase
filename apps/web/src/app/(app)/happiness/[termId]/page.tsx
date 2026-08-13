@@ -20,11 +20,13 @@ import {
   PageBar,
   RoleRestricted,
   RowChevron,
+  Skeleton,
   SkeletonCard,
   SkeletonScreen,
   SkeletonTable,
   SortTh,
   useFormGuard,
+  useMemberOptions,
   useToast,
 } from '@/components/ui';
 import { can } from '@/lib/perms';
@@ -55,7 +57,9 @@ export default function HappinessTermGroupsPage() {
   const [q, setQ] = useState('');
 
   usePageChrome(
-    { title: term.data ? t('happy.term.pageTitle', { no: term.data.term_no }) : t('happy.title') },
+    // A term IS its name (church feedback): 第几期 is server-assigned bookkeeping
+    // that still orders the list, but nobody reads a term by its number.
+    { title: term.data?.name || t('happy.title') },
     [term.data, t],
   );
 
@@ -109,7 +113,18 @@ export default function HappinessTermGroupsPage() {
       <>
         <BackButton fallbackHref="/happiness" />
         <SkeletonScreen>
-          <SkeletonCard lines={3} />
+          {/* Mirrors what actually renders below: the facts card with its own
+              mb-16, then the page bar, then the list. Without the margin and
+              the bar the table sat ~70px higher than the real one and the whole
+              page jumped when the fetch landed. */}
+          <SkeletonCard lines={2} className="mb-16" />
+          <div className="page-bar">
+            <div className="page-bar-filters"><Skeleton width={150} height={36} /></div>
+            <div className="page-bar-actions">
+              <Skeleton width={40} height={36} />
+              <Skeleton width={110} height={36} />
+            </div>
+          </div>
           <SkeletonTable rows={5} columns={6} />
         </SkeletonScreen>
       </>
@@ -205,24 +220,30 @@ export default function HappinessTermGroupsPage() {
           <div className="only-mobile">
             {sorted.map((g) => (
               <div key={g.id} className="mtile" onClick={() => router.push(`/happiness/group/${g.id}`)}>
+                {/* The canonical tile, same as /groups' own (rule G4): name
+                    and its tag on the first row, one fact per row below. */}
+                {/* The life-group tile's shape exactly (rule G4) — name, then
+                    leader, then the count — but with NO tag on the first row: a
+                    life group's tag is its health status, and a 幸福小组 has no
+                    equivalent worth pinning there. The roster count reads as a
+                    fact on its own line instead, where the member count sits on
+                    a life-group tile. */}
                 <div className="mtile-row1">
-                  <div style={{ minWidth: 0 }}>
-                    <strong>{g.name}</strong>
-                    <span className="muted" style={{ fontSize: 12.5 }}>
-                      {' '}
-                      {t('groups.leaderInline', { name: g.leader ? g.leader.full_name : t('common.vacant') })}
-                    </span>
-                  </div>
+                  <strong style={{ minWidth: 0 }}>{g.name}</strong>
                   <span className="mtile-cta"><ChevronRightIcon /></span>
                 </div>
-                <div className="mtile-line flex items-center gap-8 flex-wrap">
-                  <span>
-                    {[g.meeting_day ? t(weekdayKey(g.meeting_day)) : '', g.meeting_time?.slice(0, 5), g.location]
+                <div className="mtile-line">
+                  {t('groups.leaderInline', { name: g.leader ? g.leader.full_name : t('common.vacant') })}
+                </div>
+                <div className="mtile-line">
+                  {[
+                    t('happy.group.rosterCount', { n: g.roster_count }),
+                    [g.meeting_day ? t(weekdayKey(g.meeting_day)) : '', g.meeting_time?.slice(0, 5), g.location]
                       .filter(Boolean)
-                      .join(' · ') || t('common.unset')}
-                    {' · '}
-                    {t('happy.group.rosterCount', { n: g.roster_count })}
-                  </span>
+                      .join(' · '),
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')}
                 </div>
               </div>
             ))}
@@ -263,6 +284,8 @@ function AddGroupModal({
   onSaved: (id: string) => void;
 }) {
   const t = useT();
+  /** Every member picker's options come from one builder (rule G4). */
+  const memberOptions = useMemberOptions();
   const toast = useToast();
   const { halls, hallId } = useHallScope();
   const [name, setName] = useState('');
@@ -324,7 +347,7 @@ function AddGroupModal({
         <Combobox
           value={leaderId}
           onChange={setLeaderId}
-          options={members.map((m) => ({ value: m.id, label: m.full_name, sub: m.english_name }))}
+          options={memberOptions(members)}
           placeholder={t('happy.group.leaderPlaceholder')}
           ariaLabel={t('happy.group.field.leader')}
         />

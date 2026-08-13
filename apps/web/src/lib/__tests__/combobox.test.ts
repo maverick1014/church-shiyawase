@@ -64,6 +64,24 @@ describe('comboboxFilter', () => {
     expect(comboboxFilter([{ value: 'x', label: '林恩', sub: null }], '林').map((o) => o.value)).toEqual(['x']);
   });
 
+  /**
+   * `search` is matched but never drawn. It carries the name a member picker
+   * does NOT show (0028): every list now draws the one name that person's own
+   * congregation reads them by, so the other one has to stay findable without
+   * coming back on screen.
+   */
+  it('matches a field that is searched but never shown', () => {
+    const enHallMember = [{ value: 'm', label: 'David', search: '张伟' }];
+    expect(comboboxFilter(enHallMember, '张伟').map((o) => o.value)).toEqual(['m']);
+    expect(comboboxFilter(enHallMember, 'david').map((o) => o.value)).toEqual(['m']);
+    expect(comboboxFilter(enHallMember, '李').map((o) => o.value)).toEqual([]);
+  });
+
+  it('ignores a null or absent search field rather than matching everything', () => {
+    expect(comboboxFilter([{ value: 'x', label: '林恩', search: null }], '张').map((o) => o.value)).toEqual([]);
+    expect(comboboxFilter([{ value: 'x', label: '林恩' }], '林').map((o) => o.value)).toEqual(['x']);
+  });
+
   it('requires every word, in any order', () => {
     expect(comboboxFilter(PEOPLE, '陈 elder').map((o) => o.value)).toEqual(['a']);
     expect(comboboxFilter(PEOPLE, 'elder 陈').map((o) => o.value)).toEqual(['a']);

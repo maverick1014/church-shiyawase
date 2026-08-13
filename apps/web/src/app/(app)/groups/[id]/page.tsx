@@ -6,7 +6,7 @@ import { useFetch } from '@/lib/hooks';
 import { useSortableRows } from '@/lib/sort';
 import { api } from '@/lib/api';
 import { usePageChrome, useMe } from '@/components/AppShell';
-import { BackButton, Combobox, ErrorBanner, ExportButton, Field, HallSelect, MemberName, MonthPicker, RoleBadge, SheetTick, SheetTickAll, SheetTotals, SkeletonCard, SkeletonScreen, SkeletonTable, SortTh, TagsInput, useConfirm, useFormGuard, useToast } from '@/components/ui';
+import { BackButton, Combobox, ErrorBanner, ExportButton, Field, HallSelect, MemberName, MonthPicker, RoleBadge, SheetTick, SheetTickAll, SheetTotals, SkeletonCard, SkeletonScreen, SkeletonTable, SortTh, TagsInput, useConfirm, useFormGuard, useMemberOptions, useToast } from '@/components/ui';
 import { useLeaderAccountEvent } from '@/components/LeaderAccountEvent';
 import { can } from '@/lib/perms';
 import { exportMatrix } from '@/lib/export';
@@ -113,6 +113,8 @@ function GroupPanel({
   onDeleted: () => void;
 }) {
   const t = useT();
+  /** Every member picker's options come from one builder (rule G4). */
+  const memberOptions = useMemberOptions();
   const router = useRouter();
   const confirm = useConfirm();
   const toast = useToast();
@@ -289,11 +291,7 @@ function GroupPanel({
             className="trio-pick"
             value={holder?.id ?? ''}
             onChange={(id) => assignLeadership(pos, id)}
-            options={groupMembers.map((m) => ({
-              value: m.id,
-              label: m.full_name,
-              sub: m.english_name,
-            }))}
+            options={memberOptions(groupMembers)}
             placeholder={t('common.vacant')}
             ariaLabel={t(positionKey(pos))}
           />
@@ -405,12 +403,9 @@ function GroupPanel({
               <Combobox
                 value={addSel}
                 onChange={setAddSel}
-                options={unassigned.map((m) => ({
-                  value: m.id,
-                  label: m.full_name,
-                  sub: m.english_name,
-                  hint: m.group?.name,
-                }))}
+                options={memberOptions(unassigned, {
+                  hint: (m) => (m as MemberRow).group?.name,
+                })}
                 placeholder={t('group.addMemberPlaceholder')}
                 ariaLabel={t('group.addMember')}
                 style={{ flex: 1 }}

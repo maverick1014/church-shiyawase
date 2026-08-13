@@ -112,7 +112,9 @@ export default function TrainingsPage() {
           {/* The same "who and when" line the detail page shows, built once in
               lib/labels.ts so the two can never drift (rule G4). */}
           <div className="muted" style={{ fontSize: 12.5, lineHeight: 1.7 }}>
-            {trainingMeta(course, t).join(' · ')}
+            {trainingMeta(course, t).map((line) => (
+              <div key={line.join('|')}>{line.join(' · ')}</div>
+            ))}
           </div>
           <div className="grow" />
           <div className="flex gap-8 mt-14">

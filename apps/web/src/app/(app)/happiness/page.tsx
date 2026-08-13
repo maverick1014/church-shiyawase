@@ -118,15 +118,12 @@ export default function HappinessTermsPage() {
     <div className="grid g3">
       {items.map((term) => (
         <div className="card" key={term.id} style={{ display: 'flex', flexDirection: 'column', opacity: faded ? 0.86 : 1 }}>
-          <span className="badge b-accent" style={{ alignSelf: 'flex-start' }}>
-            {t('happy.term.pageTitle', { no: term.term_no })}
-          </span>
           <h3
-            style={{ margin: '12px 0 2px', fontSize: 16, cursor: 'pointer' }}
+            style={{ margin: '0 0 2px', fontSize: 16, cursor: 'pointer' }}
             className="serif"
             onClick={() => router.push(`/happiness/${term.id}`)}
           >
-            {term.name || t('happy.term.pageTitle', { no: term.term_no })}
+            {term.name}
           </h3>
           <div className="muted" style={{ fontSize: 12.5, lineHeight: 1.7 }}>
             {formatDateRange(term.starts_on, term.ends_on)} · {t('happy.term.weeksLabel', { n: term.weeks })} · {t('happy.term.groupCount', { n: term.group_count })}

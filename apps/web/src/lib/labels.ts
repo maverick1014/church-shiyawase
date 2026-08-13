@@ -93,38 +93,6 @@ export const MEMBER_ROLE_FILTERS: DisplayRole[] = [...ROLE_ORDER, DisplayRole.Un
  * dropdown and the member-profile edit modal so both offer the same options
  * with the same leadership rule (see `canPromoteToLeadership`).
  */
-/**
- * The options of a 推荐人 picker, built once for both member forms (rule G4).
- *
- * 无推荐人 comes FIRST and carries the empty value the column stores as NULL:
- * "nobody brought them" is the ordinary case and an explicit choice, not an
- * empty field somebody forgot. `exclude` drops the person being edited — the
- * database refuses a self-referral outright, so it must never be on offer.
- */
-export function referrerOptions(
-  members: readonly {
-    id: string;
-    full_name: string;
-    english_name: string | null;
-    church_role: ChurchRole;
-    group_position: GroupPosition | null;
-  }[],
-  t: (key: MessageKey) => string,
-  exclude?: string | null,
-): ComboOption[] {
-  return [
-    { value: '', label: t('members.noReferrer') },
-    ...members
-      .filter((m) => m.id !== exclude)
-      .map((m) => ({
-        value: m.id,
-        label: m.full_name,
-        sub: m.english_name,
-        hint: t(roleKey(memberRole(m))),
-      })),
-  ];
-}
-
 export const GROUP_POSITION_OPTIONS: GroupPosition[] = [
   GroupPosition.Leader,
   GroupPosition.AssistantLeader,
@@ -391,28 +359,34 @@ export function trainingMeta(
     category?: string | null;
   },
   t: (key: MessageKey, vars?: Record<string, string | number>) => string,
-): string[] {
-  const parts: string[] = [];
-  parts.push(t('trainings.pic', { name: row.pic || t('common.pending') }));
-  if (row.pic_contact) parts.push(t('trainings.picContact', { contact: row.pic_contact }));
+): string[][] {
+  // TWO lines, not one long one. On a phone the single joined line wrapped
+  // mid-date — "日期：2026-" on one row and "09-13 14:30" on the next — which
+  // is the one part of it nobody can read broken in half. Who runs the thing
+  // and when it happens are separate questions anyway, so they get separate
+  // rows and each stays whole. Callers join each group with ' · ' and render
+  // one element per row; a group that comes back empty draws nothing.
+  const who: string[] = [];
+  const when: string[] = [];
+  who.push(t('trainings.pic', { name: row.pic || t('common.pending') }));
+  if (row.pic_contact) who.push(t('trainings.picContact', { contact: row.pic_contact }));
   // A gender restriction is a hard eligibility rule, so it rides along with
-  // who to contact rather than getting a whole line of its own (rule G5: one
-  // "who and when" line, not a second inconsistent way to show it).
-  if (row.gender) parts.push(t('trainings.genderOnly', { gender: t(genderKey(row.gender)) }));
+  // who to contact rather than getting a whole line of its own (rule G5).
+  if (row.gender) who.push(t('trainings.genderOnly', { gender: t(genderKey(row.gender)) }));
   if (row.kind === TrainingKind.Activity) {
-    if (row.category) parts.push(t(trainingCategoryKey(row.category)));
+    if (row.category) who.push(t(trainingCategoryKey(row.category)));
     // Date and time are one fact about one occasion, so they read as one:
     // "2026-09-12 09:00". A bare `time` is a Malaysian wall-clock reading.
-    const when = [formatDate(row.starts_on), formatMeetingTime(row.start_time)]
+    const at = [formatDate(row.starts_on), formatMeetingTime(row.start_time)]
       .filter((s) => s && s !== '—')
       .join(' ');
-    if (when) parts.push(t('trainings.activityWhen', { when }));
-    if (row.location) parts.push(t('trainings.atPlace', { place: row.location }));
+    if (at) when.push(t('trainings.activityWhen', { when: at }));
+    if (row.location) when.push(t('trainings.atPlace', { place: row.location }));
   } else {
-    parts.push(t('trainings.sessions', { n: row.total_sessions }));
-    parts.push(t('trainings.dateRange', { from: formatDate(row.starts_on), to: formatDate(row.ends_on) }));
+    who.push(t('trainings.sessions', { n: row.total_sessions }));
+    when.push(t('trainings.dateRange', { from: formatDate(row.starts_on), to: formatDate(row.ends_on) }));
   }
-  return parts;
+  return [who, when].filter((line) => line.length > 0);
 }
 
 /**

@@ -26,6 +26,7 @@ import {
   SortTh,
   TagsInput,
   useFormGuard,
+  useMemberOptions,
   useToast,
 } from '@/components/ui';
 import { ImportMembersModal } from '@/components/ImportMembersModal';
@@ -45,7 +46,6 @@ import {
   memberStatusClass,
   memberStatusKey,
   positionKey,
-  referrerOptions,
   roleKey,
 } from '@/lib/labels';
 import { useT } from '@/lib/i18n';
@@ -425,7 +425,10 @@ function AddMemberModal({
 }) {
   const t = useT();
   const toast = useToast();
-  const allGroups = useFetch<GroupRow[]>('/groups');
+  // Every life group, not just the congregation currently being viewed: a
+  // member belongs to one congregation while the group they attend may
+  // belong to another. A hall-pinned account is still narrowed server-side.
+  const allGroups = useFetch<GroupRow[]>('/groups', { allHalls: true });
   const { halls, hallId } = useHallScope();
   const [form, setForm] = useState({
     full_name: '',
@@ -467,7 +470,15 @@ function AddMemberModal({
 
   // Nobody to exclude: the person does not exist yet, so they cannot be their
   // own referrer.
-  const referrerOpts = useMemo(() => referrerOptions(members, t), [members, t]);
+  const memberOptions = useMemberOptions();
+  const referrerOpts = useMemo(
+    () =>
+      memberOptions(members, {
+        lead: { value: '', label: t('members.noReferrer') },
+        hint: (m) => t(roleKey(memberRole(m as MemberRow))),
+      }),
+    [members, memberOptions, t],
+  );
 
   const save = async () => {
     if (!form.full_name.trim()) {

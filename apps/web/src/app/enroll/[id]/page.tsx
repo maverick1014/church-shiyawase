@@ -227,7 +227,9 @@ export default function EnrollFormPage() {
                   here on purpose: people ask about the detail before they
                   commit, and the PIC is who they ask. */}
               <div className="muted" style={{ fontSize: 12.5, lineHeight: 1.8, marginBottom: 4 }}>
-                {training ? trainingMeta(training, t).join(' · ') : ''}
+                {(training ? trainingMeta(training, t) : []).map((line) => (
+                  <div key={line.join('|')}>{line.join(' · ')}</div>
+                ))}
               </div>
               <div className="faint" style={{ fontSize: 12, marginBottom: 4 }}>{t('enroll.reviewLine')}</div>
 

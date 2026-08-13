@@ -67,20 +67,49 @@ be told apart before either can be saved, which is exactly what lets an import
 say "same person, update" instead of quietly inserting a twin that then holds
 half of somebody's attendance. The violation is a **409 naming the conflict**,
 mapped once in `unwrap` (`lib/server/db.ts`) rather than at each call site,
-because a duplicate pair is a real user-facing outcome and not a bug. On screen
-the two names are ONE component — `<MemberName />` — the Chinese name with the
-English one under it, smaller and muted, and nothing extra when there is none:
-every table, every mobile tile, every roll-call row, every namelist, the
-account list and the member `Combobox` (whose options carry the English name as
-their `sub`, searched as well as shown) go through it, so a person looks the
-same everywhere. A search matches EITHER name, case-insensitively — the
-members list, `comboboxFilter`, and `GET /api/members?q=`. Neither roll-call
-sheet has a search box of its own: 全员到齐 and the totals row cover everybody
-on screen, and narrowing what is DRAWN while those two still act on everybody
-reads as a contradiction, so both sheets simply list the whole roster, always.
-The three places a name stays on one line are a relay-chart
-node, the lineage badges and a 铁三角 seat, each a fixed box whose geometry the
-second line would break; each says so in a comment.
+because a duplicate pair is a real user-facing outcome and not a bug.
+
+**But only ONE of the two is ever DRAWN, and the congregation picks which**
+(migration 0028). Every list used to render both, the Chinese name with the
+English one stacked under it; the church's own feedback is that the second line
+is noise on every screen at once. `halls.name_display` (`'chinese'` |
+`'english'`) says which name that congregation reads its people by — 中文堂
+reads 张伟, 英文堂 and 马来文堂 read David (there is no Malay name column, so a
+third value nobody could act on was not invented). It is the HALL's property,
+read off the MEMBER's own hall, so 张伟 filed in 中文堂 reads 张伟 on every
+screen in the app including one somebody in 英文堂 is looking at — a person
+looks the same everywhere, which is the entire reason one component draws them.
+A stored code rather than a match on the hall's NAME, per rule G8: renaming
+英文堂 must not silently change which name it reads by. **"Either one alone"
+beats the preference every time** — an English congregation still shows 张伟 for
+the member who has no English name, and that is the ordinary case rather than an
+edge. When the hall is unknown (a public page with no session, a payload with no
+`hall_id`, a database still waiting on 0028) it falls back to the Chinese name,
+which is what every congregation showed before any of this existed.
+
+The rule is `memberDisplayName` / `memberAltName` / `hallNameDisplay`
+(`lib/names.ts`, unit-tested), reached through `<MemberName />` and the
+`useMemberName` / `useMemberOptions` hooks, which read the halls already in
+`HallContext` — so a payload only has to carry `hall_id` for it to work, which
+is why `MEMBER_BRIEF` carries it beside both names. **Every** member picker's
+options come from `useMemberOptions` now (ten pages used to hand-roll `{ label:
+full_name, sub: english_name }`, i.e. ten copies of the naming rule sitting
+next to the component that owns it); `referrerOptions` is gone, expressed
+through the same hook with a `lead` option.
+
+The pair is still the IDENTITY, and the name NOT shown is still matched: a
+search finds EITHER name, case-insensitively — the members list, `GET
+/api/members?q=`, and `comboboxFilter` via `ComboOption.search`, a field that is
+searched but deliberately **never rendered** (putting the other name in `sub`
+would put both names back on screen, which is the thing 0028 removed). Both are
+still stored, edited, imported and exported. Only the drawing narrowed — the
+same shape as the 来访日期 rename (G8), a display decision that stops at the API
+boundary.
+
+Neither roll-call sheet has a search box of its own: 全员到齐 and the totals row
+cover everybody on screen, and narrowing what is DRAWN while those two still act
+on everybody reads as a contradiction, so both sheets simply list the whole
+roster, always.
 
 **教会身份 is FIVE values, and the fifth is 访客** (migration 0021). `church_role`
 runs 牧师 → 执事 → 同工 → 一般成员 → **访客**, in reading order. A visitor is a
@@ -438,7 +467,26 @@ blanket 1–52; the API additionally refuses a week beyond the TERM's own
 a silent accept. The sheet on `/happiness/group/[groupId]` reuses the exact
 same shared `SheetTick`/`SheetTickAll`/`SheetTotals` components the Sunday and
 life-group sheets use — one column per week NUMBER instead of per date, same
-check-all/clear-confirms-first rules, same totals `<tfoot>`. Like 守望, it is a
+check-all/clear-confirms-first rules, same totals `<tfoot>`. **活动记录 is the other half of the roll call** (migration 0029). The sheet
+answers "who came in week 5"; nothing answered "what did we do", which is the
+half a leader wants back at the end of a term — so `happiness_activities` is one
+dated record per occasion (`happened_on`, an optional title, free-text notes)
+with `photo_urls text[]` on it, reached from a **活动** button at the top right
+of the group's own page. Dated rather than week-numbered on purpose: a group
+that met twice in one week, or gathered outside the term, would have nowhere to
+put the second record, and a photo is remembered by when it was taken. The list
+is one column rather than a photos table — the same call `serving_roles` and
+`groups.tags` already make, since the app only ever reads and writes the whole
+list, and NOT NULL DEFAULT `'{}'` so no reader needs `?? []`. Photos upload to
+a `photos` bucket (the fourth of exactly the same kind as `avatars`/`branding`/
+`payments`), compressed in the browser first like every other image (G4), and
+only ever onto a record that already exists — nothing reaches storage attached
+to a row that was never saved. Every route is gated by the GROUP
+(`assertRowReadable`/`assertOwnsRow` on `happiness_groups`) because an activity
+has no hall of its own, and `group_id` is taken from the PATH on both insert and
+update so a payload can never file a record past its own permission check.
+
+Like 守望, it is a
 toggleable add-on module (`church_modules`, `MODULE_HAPPINESS` in
 `OPTIONAL_MODULES`, 404 when off) — but unlike 守望's `/d/[token]` mentor form,
 it has **no public-facing page at all**: roster and roll call are staff/leader
@@ -447,10 +495,17 @@ only.
 **期号 is server-assigned, not typed** (church feedback: a term just needs a
 name). The term form (`happiness/page.tsx`) asks only for 名称 (now required)
 and 周数; `POST /happiness/terms` fills `term_no` itself — one past the
-highest on record — when the client sends none, so it still sorts and reads
-the way `happy.term.pageTitle` ("第 {no} 期") always has. The term detail
-card dropped 期号 as a fact (it is the page's own title already) and no
-longer collapses 起止日期 into one string — 开始/结束 are their own rows.
+highest on record — when the client sends none, so it still sorts the list and
+still tells two same-named terms apart. **It is no longer DRAWN anywhere**
+(church feedback: 直接按照名称就可以了) — not the catalog card's badge, not the
+term detail page's title, which is the term's NAME now, and not a member's own
+幸福小组 history. `happy.term.pageTitle` survives for the dictionaries' sake;
+nothing renders it. The term detail card dropped 期号 as a fact and no longer
+collapses 起止日期 into one string — 开始/结束 are their own rows. Its group
+list tile follows the life-group tile exactly (G4/G7) except that it carries NO
+tag: a life group's tag is its health status, and a 幸福小组 has no equivalent
+worth pinning to the first row, so the roster count reads as a fact on its own
+line where the member count sits on a life-group tile.
 **Editing and deleting a 幸福小组 now live on the GROUP's own detail page**
 (`/happiness/group/[groupId]`), not on the term's list: that list (both the
 desktop table and the mobile tile) is nav-only now, matching `/groups`'s own
@@ -458,12 +513,16 @@ list exactly (rule G4) — a row/tile opens the group, full stop. The group
 page's own top-left card is an editable form (名称/hall/组长/星期/时间/地点)
 with its own Save/Delete, replacing the read-only 期号+聚会安排 text it used
 to show; the roll-call card moved above it, roll-call-first, the same order
-`/groups/[id]` already uses. **A roster row's role is its own fact**
-(`happiness_group_members.role`, migration 0027) — free text (组长/组员/…),
-editable inline, committed on blur — and is deliberately NOT
-`members.church_role`/`group_position`: those belong to the church-wide
-membership and the life-group membership respectively, neither of which this
-church's own use of 幸福小组 role means the same thing. **Adding a roster
+`/groups/[id]` already uses. **A roster row shows one thing about a person: whether they are the 福友**
+— `church_role` being 访客 (0021) draws a visitor tag, and everybody else
+carries no label at all, because a column of 组员 badges says nothing the roster
+does not already say by listing them. The row's own free-text role
+(`happiness_group_members.role`, migration 0027) was taken back OUT on church
+feedback: the column is still selected and still stored, so whatever a leader
+already typed survives, but nothing draws it and nothing writes it (its PATCH
+endpoint is gone). A dropped column would have thrown that typing away, which is
+why the migration stands. The row instead offers **View beside Remove**, the
+same pair — in the same order — that the life-group roster offers (rule G4). **Adding a roster
 member can create them on the spot** (church feedback: this — reaching people
 who have no record yet — is the actual point of 幸福小组): the roster panel's
 "＋ New visitor" form takes just 中文名/英文名/电话, `POST /members` with
@@ -537,7 +596,11 @@ that is what you want.
 
 Testing layers (in `apps/web`):
 - `npm test` — Vitest unit tests (labels, rules, perms, i18n dictionaries, the
-  theme catalogue + its colour validation, the **role drift guard** — every
+  theme catalogue + its colour validation, **which of a member's two names is
+  drawn** (`names.test.ts`: the congregation's own preference, "either one
+  alone" beating it, and every unknown-hall path falling back to Chinese) and
+  the searched-but-never-drawn `ComboOption.search` beside it, the **role drift
+  guard** — every
   `ChurchRole` / `DisplayRole` value named in all three dictionaries, coloured in
   `ROLE_TAG`, offered by the form and by the members filter — its own analogue
   for `AccountRole` (every value named in all three dictionaries with both a
@@ -595,7 +658,13 @@ Testing layers (in `apps/web`):
   Enter**, which is the path that silently lost it — onto the member page's
   badges and the members page's ministry filter, the member form offering 访客
   and a 推荐人 combobox defaulting to 无推荐人, a 聚会's 地点 typed into its form and stored on the
-  row, a member row showing BOTH of a person's names, the members page's import modal opening on a file field and a
+  row, a member row showing exactly ONE name — the one that
+  congregation reads them by — with no second line under it while a search
+  still finds them by the name it does not show, the canonical mobile tile
+  (one tag on the first row beside the name, the leader and the member count
+  each on a line of their own), a 幸福小组 roster row with no editable role,
+  a 访客 tag on the 福友 and none on anybody else, and View beside Remove,
+  the members page's import modal opening on a file field and a
   template with nothing written yet, `/join` rendering with no session at
   all, its photo field taking camera OR gallery, the dashboard's New
   Visits/Active Members trend card (its two toggle chips, each hiding its own
@@ -740,6 +809,14 @@ one role — its **group**.
   全堂开放 (`hall_id is null`) rows to every hall. `members`/`groups` always
   carry a hall. A pair (守望配对) has no hall column — its hall is its
   **mentor's** hall (`discipleship_pair_summary.hall_id`).
+  **A member's hall and their life group's hall are independent**: a 马来文堂
+  member sitting in a 中文堂 小组 is a case this church actually has, and
+  nothing server-side has ever refused that pairing. So the life-group picker on
+  both member forms and on `/join` lists EVERY group, not the congregation
+  currently being viewed — `useFetch(path, { allHalls: true })`, which opts a
+  single read out of the **switcher only**. A hall-PINNED account is still
+  narrowed server-side, because that is the permission gate rather than a view
+  preference, and the session's own hall still always wins.
   New hall-scoped queries must go through the same gate helpers rather than
   re-rolling the check: `hallFilter` (which hall a **list** read is narrowed
   to), `withHall` / `assertHallWritable` / `assertOwnsRow` (writes), and
@@ -847,8 +924,12 @@ like 移除/清空/重置 that discards data) MUST go through the shared
 Reuse the shared primitives instead of re-rolling them per page:
 `Modal`, `Field`, `PasswordInput`, `useConfirm`, `useToast`, `RoleBadge`,
 `Avatar`, `MemberName` (**every** rendering of a person's name — one component
-draws the Chinese name and the English one under it, so no page invents its own
-two-line shape or forgets the second name), `PairProgressModal`,
+draws the ONE name that person's own congregation reads them by (0028), so no
+page invents its own shape or re-derives which of the two names to show),
+`useMemberOptions` (**every** member picker's options — the same rule as
+`MemberName` plus the other name in a searched-but-never-drawn `search` field;
+ten pages used to hand-roll `{ label: full_name, sub: english_name }`),
+`PairProgressModal`,
 `MemberEditModal` (the member-edit form — `/members/[id]` and the roster
 `Edit` button on `/groups/[id]` both open the same one), `MonthPicker`/`SheetTick`/`SheetTickAll`/
 `SheetTotals` (the pieces the 聚会, 小组 and 培训&活动 namelists share — the
@@ -944,8 +1025,19 @@ or it expires at 08:00 that morning. Unit tests must pass under a non-Malaysia
 
 ### G7 — Mobile-first & theme
 Tables become list tiles on small screens (`.only-desktop` / `.only-mobile`
-helpers). Two-column layouts collapse to a single full-width column on tablet
-and below. **Light theme only** — no dark-mode branches, no `data-theme` code,
+helpers), and **every list tile has the SAME shape** — the members list's, made
+canonical: `.mtile-row1` carries what the row *is* (the name) on the left with
+its **one** identifying tag pinned right beside the chevron, and every other
+fact gets its own `.mtile-line` underneath, one per line. A life group reads
+名称 + 健康标签 / 组长 / 组员数; an account reads 姓名 + 账户角色 / 邮箱 / the
+rest; a 守望配对 reads the pair + its status / its progress bar. Pages used to
+each invent their own: the leader crammed inside the group tile's title, the
+health badge halfway down beside the member count, the church-role badge next to
+the name on an ACCOUNT list — so the tag a reader scans for sat somewhere
+different on every page and a long name pushed the title onto two lines. One
+tag, top right, always. Two-column layouts collapse to a single full-width
+column on tablet and below. **Light theme only** — no dark-mode branches, no
+`data-theme` code,
 no `prefers-color-scheme`. The church's 主题颜色 is not a counter-example: it
 changes the two colours the light theme is built from (`--rail` / `--brand`),
 never the light/dark question, which is why a pale rail is refused rather than

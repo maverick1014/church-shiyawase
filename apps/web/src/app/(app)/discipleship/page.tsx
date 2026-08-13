@@ -5,7 +5,7 @@ import { useFetch } from '@/lib/hooks';
 import { useSortableRows } from '@/lib/sort';
 import { api } from '@/lib/api';
 import { usePageChrome, useMe } from '@/components/AppShell';
-import { Combobox, ErrorBanner, ExportButton, Field, MemberName, Modal, ModuleDisabled, PageBar, RoleRestricted, Skeleton, SkeletonScreen, SkeletonTable, SkeletonText, SortTh, useConfirm, useFormGuard, useToast } from '@/components/ui';
+import { Combobox, ErrorBanner, ExportButton, Field, MemberName, Modal, ModuleDisabled, PageBar, RoleRestricted, Skeleton, SkeletonScreen, SkeletonTable, SkeletonText, SortTh, useConfirm, useFormGuard, useMemberOptions, useToast } from '@/components/ui';
 import { PairProgressModal } from '@/components/PairProgressModal';
 import { can } from '@/lib/perms';
 import { useModuleEnabled } from '@/lib/church';
@@ -67,14 +67,13 @@ export default function DiscipleshipPage() {
   const members = useFetch<MemberRow[]>(discipleshipOn && !isGroupLeader ? '/members' : null);
   // Same option shape AddPairModal's own two pickers already build (rule G4)
   // — reused here for the relay chart's own member-search scope.
+  const buildMemberOptions = useMemberOptions();
   const memberOptions = useMemo(
-    () => (members.data ?? []).map((m) => ({
-      value: m.id,
-      label: m.full_name,
-      sub: m.english_name,
-      hint: t(roleKey(memberRole(m))),
-    })),
-    [members.data, t],
+    () =>
+      buildMemberOptions(members.data ?? [], {
+        hint: (m) => t(roleKey(memberRole(m as MemberRow))),
+      }),
+    [members.data, buildMemberOptions, t],
   );
 
   const [filter, setFilter] = useState<Filter>('active');
@@ -555,17 +554,22 @@ export default function DiscipleshipPage() {
           <div className="only-mobile" style={{ marginTop: 4 }}>
             {sortedNodes.map((n) => (
               <div key={n.pair.id} className="mtile" onClick={() => setPopup(n)}>
+                {/* Canonical tile (rule G4): who the row is about on the first
+                    row with its one tag pinned right — here the pair's status —
+                    and the progress bar on its own row below. */}
                 <div className="mtile-row1">
                   <div className="flex items-baseline gap-6 flex-wrap" style={{ minWidth: 0 }}>
                     <MemberName member={n.pair.trainee} fallback="" />
                     <span className="faint">←</span>
                     <span className="faint"><MemberName member={n.pair.mentor} fallback="" /></span>
                   </div>
+                  <span className={`badge ${pairStatusClass(n.pair.status)}`} style={{ flexShrink: 0 }}>
+                    {t(pairStatusKey(n.pair.status))}
+                  </span>
                 </div>
                 <div className="mtile-line" style={{ marginTop: 9 }}>
                   <div className="bar" style={{ flex: 1 }}><span style={{ width: `${n.pct}%` }} /></div>
                   <span className="pct" style={{ whiteSpace: 'nowrap' }}>{n.days}/{n.total}</span>
-                  <span className={`badge ${pairStatusClass(n.pair.status)}`}>{t(pairStatusKey(n.pair.status))}</span>
                 </div>
                 {n.pair.remark && (
                   <div className="mtile-line cell-remark" title={n.pair.remark}>
@@ -931,6 +935,8 @@ function AddPairModal({
   onSaved: () => void;
 }) {
   const t = useT();
+  /** Every member picker's options come from one builder (rule G4). */
+  const memberOptions = useMemberOptions();
   const toast = useToast();
   const [mentorId, setMentorId] = useState('');
   const [traineeId, setTraineeId] = useState('');
@@ -992,12 +998,9 @@ function AddPairModal({
             <Combobox
               value={mentorId}
               onChange={setMentorId}
-              options={members.map((m) => ({
-                value: m.id,
-                label: m.full_name,
-                sub: m.english_name,
-                hint: t(roleKey(memberRole(m))),
-              }))}
+              options={memberOptions(members, {
+                hint: (m) => t(roleKey(memberRole(m as MemberRow))),
+              })}
               placeholder={t('disc.chooseMember')}
               ariaLabel={t('disc.field.mentor')}
             />
@@ -1009,14 +1012,10 @@ function AddPairModal({
             <Combobox
               value={traineeId}
               onChange={setTraineeId}
-              options={members
-                .filter((m) => !takenTrainees.has(m.id) && m.id !== mentorId)
-                .map((m) => ({
-                  value: m.id,
-                  label: m.full_name,
-                  sub: m.english_name,
-                  hint: t(roleKey(memberRole(m))),
-                }))}
+              options={memberOptions(
+                members.filter((m) => !takenTrainees.has(m.id) && m.id !== mentorId),
+                { hint: (m) => t(roleKey(memberRole(m as MemberRow))) },
+              )}
               placeholder={t('disc.chooseMember')}
               ariaLabel={t('disc.field.traineeHint')}
             />
