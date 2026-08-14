@@ -692,6 +692,24 @@ tbody tr:last-child td {
   z-index: 2;
   background: var(--surface);
 }
+/* On a phone the name column has to be BOUNDED, not just floored.
+   `nowrap` + `auto` table layout sizes it to the longest name in the roster,
+   so one "Desmond Loh Wen Hai" pushed it to nearly half the screen and left
+   the ticks — the thing the sheet exists for — squeezed into what was left.
+   Capping it and letting it wrap keeps the balance; the cap stays comfortably
+   wider than four CJK glyphs, so a Chinese name still sits on one line and the
+   G7a rule this column exists for (never break a name one glyph per line) is
+   unaffected. Desktop is untouched: there the width is not the scarce thing. */
+@media (max-width: 640px) {
+  .sheet-table thead tr:first-child > th:first-child,
+  .sheet-table tbody td:first-child {
+    min-width: 96px;
+    max-width: 124px;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+}
+
 /* An empty-state row's one `colSpan` cell is also its row's first child, so
    it inherited the name column's nowrap above and clipped instead of
    wrapping its own sentence — this is the one first-child cell that is not
@@ -2173,6 +2191,36 @@ td.empty-inline {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+/* The dashboard's Sunday sparkline (0130).
+
+   Bars, not a line: these are counts of separate occasions, and a line between
+   two Sundays would imply values in between that do not exist. Fixed height so
+   the card does not resize as the numbers change week to week. */
+.spark {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  height: 72px;
+}
+.spark-col {
+  flex: 1;
+  height: 100%;
+  display: flex;
+  align-items: flex-end;
+  min-width: 6px;
+}
+.spark-bar {
+  width: 100%;
+  border-radius: 4px 4px 0 0;
+  background: var(--brand-soft);
+  border-bottom: 2px solid var(--brand);
+  min-height: 2px;
+}
+/* The most recent Sunday is the one the headline is about. */
+.spark-col:last-child .spark-bar {
+  background: var(--brand);
 }
 
 /* 幸福小组活动记录 photos (0029).
