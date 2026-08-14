@@ -14,9 +14,10 @@ import {
   SkeletonTable,
 } from '@/components/ui';
 import { sundayPulse, groupHealthRollup, type SundayPoint } from '@/lib/dashboard';
-import { formatDate, formatDateTime, groupHealthClass, groupHealthKey } from '@/lib/labels';
+import { formatDate, formatDateTime, groupHealthClass, groupHealthKey, trainingKindKey } from '@/lib/labels';
 import { DashboardResponse } from '@/lib/types';
 import { useT } from '@/lib/i18n';
+import type { MessageKey } from '@/lib/i18n/en';
 
 /** Sundays the pulse chart covers. The follow-up window is always four. */
 const TREND_SUNDAYS = 8;
@@ -75,7 +76,7 @@ export default function DashboardPage() {
       </div>
 
       <div className="grid g2-wide mt-16">
-        <ThisWeekCard events={d?.events ?? []} />
+        <UpcomingCard rows={d?.upcoming ?? []} />
         <GroupHealthCard health={health} total={(d?.groups ?? []).length} />
       </div>
     </>
@@ -118,18 +119,18 @@ function SundayPulseCard({
         <div className="empty">{t('dash.sunday.none')}</div>
       ) : (
         <>
-          <div className="flex items-baseline gap-14 flex-wrap">
-            <div>
+          <div className="pulse-stats">
+            <div className="pulse-stat lead">
               <div className="label">{t('dash.sunday.service')}</div>
-              <div className="value" style={{ fontSize: 34 }}>{latest.service}</div>
+              <div className="value">{latest.service}</div>
             </div>
-            <div>
+            <div className="pulse-stat">
               <div className="label">{t('dash.sunday.preService')}</div>
-              <div className="value" style={{ fontSize: 22 }}>{latest.preService}</div>
+              <div className="value">{latest.preService}</div>
             </div>
-            <div>
+            <div className="pulse-stat">
               <div className="label">{t('dash.kpi.totalActive')}</div>
-              <div className="value" style={{ fontSize: 22 }}>{activeMembers}</div>
+              <div className="value">{activeMembers}</div>
             </div>
           </div>
 
@@ -164,13 +165,31 @@ function Sparkline({ points }: { points: SundayPoint[] }) {
   if (points.length === 0) return null;
   const peak = Math.max(...points.map((p) => p.service), 1);
   return (
-    <div className="spark" style={{ marginTop: 14 }}>
-      {points.map((p) => (
-        <div key={p.date} className="spark-col" title={`${formatDate(p.date)} · ${p.service}`}>
-          <div className="spark-bar" style={{ height: `${Math.round((p.service / peak) * 100)}%` }} />
-        </div>
-      ))}
-    </div>
+    <>
+      <div className="spark" style={{ marginTop: 14 }}>
+        {points.map((p) => (
+          <div key={p.date} className="spark-col">
+            {/* Every bar carries its own count. A bare shape answers "up or
+                down" but not "up or down from WHAT", and a phone has no hover
+                to fall back on — which is exactly what the church asked. */}
+            <span className="spark-n">{p.service}</span>
+            <div
+              className="spark-bar"
+              style={{ height: `${Math.round((p.service / peak) * 100)}%` }}
+            />
+          </div>
+        ))}
+      </div>
+      {/* MM-DD under each bar, so the run of empty weeks is dated rather than
+          mysterious. The year is the same across the window and adds nothing. */}
+      <div className="spark" style={{ height: 'auto', alignItems: 'flex-start' }}>
+        {points.map((p) => (
+          <div key={p.date} className="spark-col" style={{ height: 'auto' }}>
+            <span className="spark-d">{p.date.slice(5)}</span>
+          </div>
+        ))}
+      </div>
+    </>
   );
 }
 
@@ -231,33 +250,61 @@ function FollowUpCard({
   );
 }
 
-/** 本周 — the next seven days. */
-function ThisWeekCard({ events }: { events: DashboardResponse['events'] }) {
+/**
+ * 即将举行 — the next three months, not the next seven days.
+ *
+ * The church prepares an event about three months ahead (their words), so a
+ * seven-day window showed an empty card almost every week and hid the thing
+ * they were actually working on. 聚会 and 培训/活动 share the list: to somebody
+ * reading this card they answer the same question, and split into two they
+ * would just be two short cards that are usually empty.
+ */
+function UpcomingCard({ rows }: { rows: DashboardResponse['upcoming'] }) {
   const t = useT();
   const router = useRouter();
+  // A meeting lives on /events; a 培训/活动 has its own page.
+  const hrefOf = (r: DashboardResponse['upcoming'][number]) =>
+    r.kind === 'meeting' ? '/events' : `/trainings/${r.id}`;
+
   return (
     <div className="card">
       <div className="card-head">
-        <h3>{t('dash.week.title')}</h3>
+        <h3>{t('dash.upcoming')}</h3>
       </div>
-      {events.length === 0 ? (
-        <div className="empty-inline">{t('dash.week.none')}</div>
+      {rows.length === 0 ? (
+        <div className="empty-inline">{t('dash.noUpcoming')}</div>
       ) : (
-        events.map((e) => (
-          <div key={e.id} className="mtile" onClick={() => router.push('/events')}>
+        rows.map((r) => (
+          <div key={`${r.kind}-${r.id}`} className="mtile" onClick={() => router.push(hrefOf(r))}>
             <div className="mtile-row1">
-              <strong style={{ minWidth: 0 }}>{e.title}</strong>
-              <span className="mtile-cta"><RowChevron title="" onClick={() => router.push('/events')} /></span>
+              <strong style={{ minWidth: 0 }}>{r.title}</strong>
+              <div className="flex items-center gap-8" style={{ flexShrink: 0 }}>
+                <span className="badge b-gray">{t(upcomingKindKey(r.kind))}</span>
+                <span className="mtile-cta"><RowChevron title="" onClick={() => router.push(hrefOf(r))} /></span>
+              </div>
             </div>
             <div className="mtile-line">
-              {formatDateTime(e.starts_at)}
-              {e.location ? ` · ${e.location}` : ''}
+              {/* A meeting carries a real timestamp; a 培训/活动 carries a bare
+                  DATE plus its own optional start time. */}
+              {r.kind === 'meeting'
+                ? formatDateTime(r.at)
+                : [formatDate(r.at), r.time?.slice(0, 5)].filter(Boolean).join(' ')}
+              {r.location ? ` · ${r.location}` : ''}
             </div>
           </div>
         ))
       )}
     </div>
   );
+}
+
+/**
+ * The one tag an upcoming row carries: what KIND of thing it is. A 培训/活动
+ * reuses `trainingKindKey` rather than restating those two labels here (G4/G8);
+ * only "meeting" is this card's own word.
+ */
+function upcomingKindKey(kind: 'meeting' | 'course' | 'activity'): MessageKey {
+  return kind === 'meeting' ? 'dash.upcoming.meeting' : trainingKindKey(kind);
 }
 
 /**

@@ -8,7 +8,7 @@ import {
   signSession,
   verifyPassword,
 } from '@/lib/server/auth';
-import { addChurchDays, churchInstant, churchParts, isSundayDate } from '@/lib/time';
+import { addChurchDays, churchDateKey, churchInstant, churchParts, isSundayDate } from '@/lib/time';
 // Pure, and safe in the Worker: `lib/dashboard` and `lib/labels` pull only
 // `@tog/shared` and `lib/time` at runtime — every other import in them is a
 // type, erased at compile.
@@ -2601,17 +2601,39 @@ async function dashboard(
     return query;
   };
 
-  // The next seven days of hand-added meetings. A `group_leader` has no reach
-  // for `events` at all, so it is not even asked for — the section simply is
-  // not part of that account's dashboard.
+  /*
+   * What is coming up, over the next THREE MONTHS rather than the next seven
+   * days — the church prepares an event about that far ahead, so a
+   * seven-day window showed an empty card almost every week and hid the
+   * thing they were actually working on.
+   *
+   * Both shapes are asked for and merged below: a hand-added 聚会 and a
+   * 培训/活动 are the same question to somebody looking at this card ("what
+   * is on"), and splitting them into two lists on a phone would just be two
+   * short cards that are usually empty. A `group_leader` has no reach for
+   * either prefix, so neither is even asked for.
+   */
+  const horizon = addChurchDays(new Date(), 92);
   const eventsQuery = () => {
     if (groupFilter) return null;
     let query = db
       .from('events')
       .select('id,title,starts_at,location,hall_id')
       .gte('starts_at', new Date().toISOString())
-      .lte('starts_at', addChurchDays(new Date(), 8).toISOString())
+      .lte('starts_at', horizon.toISOString())
       .order('starts_at');
+    if (hallFilter) query = query.or(`hall_id.eq.${hallFilter},hall_id.is.null`);
+    return query;
+  };
+  const trainingsQuery = () => {
+    if (groupFilter) return null;
+    let query = db
+      .from('trainings')
+      .select('id,name,kind,starts_on,start_time,location,hall_id')
+      // `starts_on` is a bare DATE; compare it against Malaysian day keys.
+      .gte('starts_on', churchDateKey(new Date()))
+      .lte('starts_on', churchDateKey(horizon))
+      .order('starts_on');
     if (hallFilter) query = query.or(`hall_id.eq.${hallFilter},hall_id.is.null`);
     return query;
   };
@@ -2625,10 +2647,12 @@ async function dashboard(
 
   // Independent reads, together (rule G6).
   const ev = eventsQuery();
-  const [memberRes, markRes, eventRes, groupRes] = await Promise.all([
+  const tr = trainingsQuery();
+  const [memberRes, markRes, eventRes, trainingRes, groupRes] = await Promise.all([
     memberQuery(),
     marksQuery(),
     ev ? ev : Promise.resolve(null),
+    tr ? tr : Promise.resolve(null),
     groupsQuery(),
   ]);
 
@@ -2648,9 +2672,48 @@ async function dashboard(
     Array<{ service_date: string; member_id: string; pre_service: boolean; service: boolean }>
   >(markRes);
   const groups = unwrap<Array<{ id: string; name: string; hall_id: string }>>(groupRes);
-  const events = eventRes
+  const meetings = eventRes
     ? unwrap<Array<{ id: string; title: string; starts_at: string; location: string | null }>>(eventRes)
     : [];
+  const trainings = trainingRes
+    ? unwrap<
+        Array<{
+          id: string;
+          name: string;
+          kind: string;
+          starts_on: string;
+          start_time: string | null;
+          location: string | null;
+        }>
+      >(trainingRes)
+    : [];
+  /*
+   * One list, sorted by when it happens. `at` is a bare `YYYY-MM-DD` for a
+   * training (its column is a DATE) and a full timestamp for a meeting, so the
+   * page is told which it has via `kind` rather than having to sniff the
+   * string — a meeting has a clock reading worth showing and a training's
+   * start_time is its own separate field.
+   */
+  const upcoming = [
+    ...meetings.map((e) => ({
+      id: e.id,
+      kind: 'meeting' as const,
+      title: e.title,
+      at: e.starts_at,
+      time: null as string | null,
+      location: e.location,
+    })),
+    ...trainings.map((x) => ({
+      id: x.id,
+      kind: x.kind === 'activity' ? ('activity' as const) : ('course' as const),
+      title: x.name,
+      at: x.starts_on,
+      time: x.start_time,
+      location: x.location,
+    })),
+  ]
+    .sort((a, b) => a.at.localeCompare(b.at))
+    .slice(0, 8);
 
   // A member's ticks only count toward THIS dashboard's numbers if that member
   // is in scope — the marks query is narrowed by hall, but a group-scoped
@@ -2725,7 +2788,7 @@ async function dashboard(
     sundays: points,
     follow_up: followUp,
     follow_up_sundays: followUpWindow,
-    events,
+    upcoming,
     groups: groupHealth,
     active_members: members.length,
   };

@@ -2193,23 +2193,67 @@ td.empty-inline {
   flex-wrap: wrap;
 }
 
-/* The dashboard's Sunday sparkline (0130).
+/* The dashboard's headline stats (0130).
+
+   Its own class rather than `.stat`'s internals: `.label`/`.value` are styled
+   only INSIDE `.stat`, so reusing those class names in an ordinary card left
+   them completely unstyled — and the gap between them was written as a
+   `gap-14` utility that does not exist (the scale stops at 12), so the three
+   labels ran together into one unreadable string on a phone. */
+.pulse-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 26px;
+  align-items: flex-end;
+}
+.pulse-stat .label {
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.pulse-stat .value {
+  font-family: var(--font-serif);
+  font-weight: 600;
+  margin-top: 4px;
+  letter-spacing: 0.5px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+  font-size: 22px;
+}
+/* The one the card is actually about. */
+.pulse-stat.lead .value {
+  font-size: 34px;
+}
+
+/* The Sunday sparkline (0130).
 
    Bars, not a line: these are counts of separate occasions, and a line between
-   two Sundays would imply values in between that do not exist. Fixed height so
-   the card does not resize as the numbers change week to week. */
+   two Sundays would imply values in between that do not exist. Each bar is
+   labelled with its own count — a bare shape answers "is it up or down" but
+   not "up or down from what", and on a phone there is no hover to fall back
+   on. Fixed height so the card does not resize week to week. */
 .spark {
   display: flex;
   align-items: flex-end;
   gap: 6px;
-  height: 72px;
+  height: 96px;
 }
 .spark-col {
   flex: 1;
   height: 100%;
   display: flex;
-  align-items: flex-end;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
   min-width: 6px;
+}
+.spark-n {
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  margin-bottom: 4px;
 }
 .spark-bar {
   width: 100%;
@@ -2221,6 +2265,19 @@ td.empty-inline {
 /* The most recent Sunday is the one the headline is about. */
 .spark-col:last-child .spark-bar {
   background: var(--brand);
+}
+.spark-col:last-child .spark-n {
+  color: var(--brand);
+  font-weight: 700;
+}
+/* The date under each bar — short, because eight of them share a phone's
+   width; the year is the same for all of them and says nothing here. */
+.spark-d {
+  font-size: 10px;
+  color: var(--faint);
+  margin-top: 5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 /* 幸福小组活动记录 photos (0029).
