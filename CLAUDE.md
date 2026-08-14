@@ -467,7 +467,9 @@ blanket 1–52; the API additionally refuses a week beyond the TERM's own
 a silent accept. The sheet on `/happiness/group/[groupId]` reuses the exact
 same shared `SheetTick`/`SheetTickAll`/`SheetTotals` components the Sunday and
 life-group sheets use — one column per week NUMBER instead of per date, same
-check-all/clear-confirms-first rules, same totals `<tfoot>`. **活动记录 is the other half of the roll call** (migration 0029). The sheet
+check-all/clear-confirms-first rules, same totals `<tfoot>`. **活动记录 is the other half of the roll call**, and BOTH kinds of group keep
+one (0029 幸福小组, 0030 life group — church feedback asked for the second). The
+sheet
 answers "who came in week 5"; nothing answered "what did we do", which is the
 half a leader wants back at the end of a term — so `happiness_activities` is one
 dated record per occasion (`happened_on`, an optional title, free-text notes)
@@ -482,9 +484,23 @@ a `photos` bucket (the fourth of exactly the same kind as `avatars`/`branding`/
 `payments`), compressed in the browser first like every other image (G4), and
 only ever onto a record that already exists — nothing reaches storage attached
 to a row that was never saved. Every route is gated by the GROUP
-(`assertRowReadable`/`assertOwnsRow` on `happiness_groups`) because an activity
+(`assertRowReadable`/`assertOwnsRow` on the OWNING table) because an activity
 has no hall of its own, and `group_id` is taken from the PATH on both insert and
 update so a payload can never file a record past its own permission check.
+
+**Two tables, one handler, one page.** `happiness_activities` and
+`group_activities` are separate tables because each keeps a real NOT NULL
+cascading FK to its own owner, and the app never reads both at once nor moves a
+record between them — a shared table would need a pair of nullable FKs and a
+check constraint to buy nothing. The duplication stops at the schema:
+`activityRoutes` in `route.ts` takes the owning table and the record table as
+parameters and is written once, and `<ActivityLog />` (`components/`) is ONE
+component taking the API base and the Back href, so the two route files under
+`/happiness/group/[groupId]/activities` and `/groups/[id]/activities` are four
+lines each. The dictionary keys are `act.*`, not `happy.act.*`, because the
+feature is not happiness-specific — a key must not lie about its scope (G8).
+Both pages reach it from the shared `BackBar`: Back on the left, 活动 in the
+right corner, never buried in a card's head.
 
 Like 守望, it is a
 toggleable add-on module (`church_modules`, `MODULE_HAPPINESS` in

@@ -7,6 +7,7 @@ import { useSortableRows } from '@/lib/sort';
 import { api } from '@/lib/api';
 import { usePageChrome, useMe } from '@/components/AppShell';
 import {
+  BackBar,
   BackButton,
   Combobox,
   ErrorBanner,
@@ -83,7 +84,18 @@ export default function HappinessGroupDetailPage() {
 
   return (
     <>
-      <BackButton fallbackHref={`/happiness/${detail.data.term_id}`} />
+      {/* Top right of the page, on the Back row — the shared `BackBar`, which is
+          exactly this left/right split (rule G4). The way through to this
+          group's own 活动记录 (0029): the roll call answers who came in week 5,
+          the activities page is the other half. */}
+      <BackBar
+        fallbackHref={`/happiness/${detail.data.term_id}`}
+        actions={
+          <button className="btn ghost" onClick={() => router.push(`/happiness/group/${groupId}/activities`)}>
+            {t('act.open')}
+          </button>
+        }
+      />
 
       <GroupPanel
         group={detail.data}
@@ -359,13 +371,6 @@ function GroupPanel({
             <h3>{t('happy.attendance.title')}</h3>
             <div className="muted" style={{ fontSize: 12.5, marginTop: 2 }}>{t('happy.attendance.sub', { n: weeks })}</div>
           </div>
-          {/* Top right of the page: the way through to this group's own 活动
-              记录 (0029). The roll call answers who came in week 5; the
-              activities page is the other half — what the group actually did,
-              with the photos. */}
-          <button className="btn ghost" onClick={() => router.push(`/happiness/group/${group.id}/activities`)}>
-            {t('happy.act.open')}
-          </button>
         </div>
         <div className="flex gap-8 mb-14 flex-wrap">
           <div className="grow" />

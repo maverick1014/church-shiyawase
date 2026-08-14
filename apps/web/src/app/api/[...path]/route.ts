@@ -818,6 +818,25 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
         if (groupScope) throw new HttpError(403, 'No permission to create a group');
         return json(unwrap(await db.from('groups').insert(withHall(await body())).select().single()));
       }
+    } else if (r2 === 'activities') {
+      // 小组活动记录 (0030) — the SAME handler a 幸福小组 uses, pointed at this
+      // group's own table (rule G4). `assertGroupScope` on top of the shared
+      // gate because a group_leader is narrowed to one group and an activity
+      // belongs to a group, not to a hall.
+      assertGroupScope(r1);
+      const res = await activityRoutes(db, {
+        ownerTable: 'groups',
+        activityTable: 'group_activities',
+        ownerId: r1,
+        activityId: r3,
+        leaf: r4,
+        method,
+        req,
+        body,
+        assertRowReadable,
+        assertOwnsRow,
+      });
+      if (res) return res;
     } else if (r2 === 'attendance' && method === 'GET') {
       await assertRowReadable('groups', r1);
       assertGroupScope(r1);
@@ -1680,106 +1699,21 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
           return json({ group_id: r2, member_id: r4 });
         }
       } else if (r3 === 'activities') {
-        /*
-         * 活动记录 (0029): what the group DID on a date, with photos and a
-         * note. Every read and write is gated by the GROUP, exactly like its
-         * roster and its roll call — an activity has no hall of its own,
-         * it belongs to a group that has one (rule G2).
-         */
-        if (!r4) {
-          if (method === 'GET') {
-            await assertRowReadable('happiness_groups', r2);
-            return json(
-              unwrap(
-                await db
-                  .from('happiness_activities')
-                  .select('*')
-                  .eq('group_id', r2)
-                  .order('happened_on', { ascending: false })
-                  .order('created_at', { ascending: false }),
-              ),
-            );
-          }
-          if (method === 'POST') {
-            await assertOwnsRow('happiness_groups', r2);
-            const dto = await body();
-            if (!tidy(String(dto.happened_on ?? ''))) throw new HttpError(400, 'happened_on is required');
-            // `group_id` comes from the PATH, never the payload: the gate above
-            // just checked THAT group, so letting the body name a different one
-            // would file the record past its own permission check.
-            return json(
-              unwrap(
-                await db
-                  .from('happiness_activities')
-                  .insert({ ...dto, group_id: r2 })
-                  .select()
-                  .single(),
-              ),
-            );
-          }
-        } else if (r5 === 'photos' && method === 'POST') {
-          // The photo travels as multipart to the activity that already
-          // exists, like a training's payment QR (rule G4): same bucket
-          // helper, same size/type rule, and the URL is appended to the row's
-          // own list rather than replacing it, because a record collects
-          // several over an evening.
-          await assertOwnsRow('happiness_groups', r2);
-          const form = await req.formData();
-          const file = checkedFile(form.get('file'), IMAGE_UPLOAD);
-          const url = await storeFile(
-            db,
-            'photos',
-            `happiness/${r2}/${r4}/${Date.now()}.${fileExt(file, 'jpg')}`,
-            file,
-          );
-          const current = unwrap<{ photo_urls: string[] | null }>(
-            await db.from('happiness_activities').select('photo_urls').eq('id', r4).single(),
-          );
-          return json(
-            unwrap(
-              await db
-                .from('happiness_activities')
-                .update({ photo_urls: [...(current.photo_urls ?? []), url] })
-                .eq('id', r4)
-                .eq('group_id', r2)
-                .select()
-                .single(),
-            ),
-          );
-        } else if (r4 && !r5) {
-          if (method === 'PATCH') {
-            await assertOwnsRow('happiness_groups', r2);
-            const dto = await body();
-            // Same reason as the insert: the path owns `group_id`, so a PATCH
-            // can never move a record into a group this session never passed
-            // the gate for.
-            delete dto.group_id;
-            return json(
-              unwrap(
-                await db
-                  .from('happiness_activities')
-                  .update(dto)
-                  .eq('id', r4)
-                  .eq('group_id', r2)
-                  .select()
-                  .single(),
-              ),
-            );
-          }
-          if (method === 'DELETE') {
-            await assertOwnsRow('happiness_groups', r2);
-            unwrap(
-              await db
-                .from('happiness_activities')
-                .delete()
-                .eq('id', r4)
-                .eq('group_id', r2)
-                .select()
-                .single(),
-            );
-            return json({ id: r4 });
-          }
-        }
+        // 活动记录 (0029) — the shared handler, so a 幸福小组 and a life group
+        // answer identically (rule G4). See `activityRoutes`.
+        const res = await activityRoutes(db, {
+          ownerTable: 'happiness_groups',
+          activityTable: 'happiness_activities',
+          ownerId: r2,
+          activityId: r4,
+          leaf: r5,
+          method,
+          req,
+          body,
+          assertRowReadable,
+          assertOwnsRow,
+        });
+        if (res) return res;
       } else if (r3 === 'attendance' && !r4) {
         if (method === 'GET') {
           await assertRowReadable('happiness_groups', r2);
@@ -2553,6 +2487,139 @@ async function upsertProgress(
       .select()
       .single(),
   );
+}
+
+/**
+ * 活动记录 — the routes, written ONCE for both kinds of group (0029/0030).
+ *
+ * A 幸福小组 and a life group keep the same record: dated occasions with a
+ * title, a note and photos. They differ only in which table owns them and
+ * which table the permission gate reads, so those two are parameters and
+ * everything else — the shape, the ordering, the photo append, the "group_id
+ * comes from the PATH" rule — is written here once.
+ *
+ * Returns null when nothing matched, so the caller falls through to its own
+ * 404 rather than this helper inventing one.
+ */
+async function activityRoutes(
+  db: ReturnType<typeof getDb>,
+  o: {
+    /** The table the permission gate reads — `groups` or `happiness_groups`. */
+    ownerTable: 'groups' | 'happiness_groups';
+    /** Where the records live. */
+    activityTable: 'group_activities' | 'happiness_activities';
+    ownerId: string;
+    activityId: string | undefined;
+    /** The segment after the activity id — only `photos` means anything. */
+    leaf: string | undefined;
+    method: string;
+    req: Request;
+    body: () => Promise<Record<string, unknown>>;
+    assertRowReadable: (table: string, id: string) => Promise<void>;
+    assertOwnsRow: (table: string, id: string) => Promise<void>;
+  },
+): Promise<Response | null> {
+  const { ownerTable, activityTable, ownerId, activityId, leaf, method } = o;
+
+  if (!activityId) {
+    if (method === 'GET') {
+      await o.assertRowReadable(ownerTable, ownerId);
+      return json(
+        unwrap(
+          await db
+            .from(activityTable)
+            .select('*')
+            .eq('group_id', ownerId)
+            .order('happened_on', { ascending: false })
+            .order('created_at', { ascending: false }),
+        ),
+      );
+    }
+    if (method === 'POST') {
+      await o.assertOwnsRow(ownerTable, ownerId);
+      const dto = await o.body();
+      if (!tidy(String(dto.happened_on ?? ''))) throw new HttpError(400, 'happened_on is required');
+      // `group_id` comes from the PATH, never the payload: the gate above just
+      // checked THAT group, so letting the body name a different one would
+      // file the record past its own permission check.
+      return json(
+        unwrap(
+          await db
+            .from(activityTable)
+            .insert({ ...dto, group_id: ownerId })
+            .select()
+            .single(),
+        ),
+      );
+    }
+    return null;
+  }
+
+  if (leaf === 'photos' && method === 'POST') {
+    // The photo travels as multipart to a record that already exists, like a
+    // training's payment QR (rule G4): same bucket helper, same size/type
+    // rule, and the URL is APPENDED to the row's own list rather than
+    // replacing it, because a record collects several over an evening.
+    await o.assertOwnsRow(ownerTable, ownerId);
+    const form = await o.req.formData();
+    const file = checkedFile(form.get('file'), IMAGE_UPLOAD);
+    const url = await storeFile(
+      db,
+      'photos',
+      `${activityTable}/${ownerId}/${activityId}/${Date.now()}.${fileExt(file, 'jpg')}`,
+      file,
+    );
+    const current = unwrap<{ photo_urls: string[] | null }>(
+      await db.from(activityTable).select('photo_urls').eq('id', activityId).single(),
+    );
+    return json(
+      unwrap(
+        await db
+          .from(activityTable)
+          .update({ photo_urls: [...(current.photo_urls ?? []), url] })
+          .eq('id', activityId)
+          .eq('group_id', ownerId)
+          .select()
+          .single(),
+      ),
+    );
+  }
+
+  if (!leaf) {
+    if (method === 'PATCH') {
+      await o.assertOwnsRow(ownerTable, ownerId);
+      const dto = await o.body();
+      // Same reason as the insert: the path owns `group_id`, so a PATCH can
+      // never move a record into a group this session never passed the gate for.
+      delete dto.group_id;
+      return json(
+        unwrap(
+          await db
+            .from(activityTable)
+            .update(dto)
+            .eq('id', activityId)
+            .eq('group_id', ownerId)
+            .select()
+            .single(),
+        ),
+      );
+    }
+    if (method === 'DELETE') {
+      await o.assertOwnsRow(ownerTable, ownerId);
+      unwrap(
+        await db
+          .from(activityTable)
+          .delete()
+          .eq('id', activityId)
+          .eq('group_id', ownerId)
+          .select()
+          .single(),
+      );
+      return json({ id: activityId });
+    }
+  }
+
+  return null;
 }
 
 /**
