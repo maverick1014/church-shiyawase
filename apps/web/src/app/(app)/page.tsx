@@ -34,7 +34,7 @@ const FOLLOW_UP_SHOWN = 6;
  *
  *   上主日   how many came, and is that up or down
  *   需要关怀 who has stopped coming (the one section that is a to-do, not a report)
- *   本周     what is on in the next seven days
+ *   即将举行 what is on over the next three months
  *   小组概况 how the life groups look
  *
  * One request feeds all four (`GET /api/dashboard`): the counting happens
