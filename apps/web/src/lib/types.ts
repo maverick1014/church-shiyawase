@@ -547,8 +547,23 @@ export interface DashboardResponse {
   }[];
   /** The Sundays the follow-up list was judged over — always the last four. */
   follow_up_sundays: string[];
-  /** Hand-added meetings in the next seven days. Empty for a group_leader, who has no reach for them. */
-  events: { id: string; title: string; starts_at: string; location: string | null }[];
+  /**
+   * What is on in the next THREE MONTHS — hand-added 聚会 and 培训/活动 in one
+   * list, sorted by when they happen. A church prepares an event about that far
+   * ahead, so a seven-day window showed an empty card most weeks.
+   *
+   * `at` is a full timestamp for a meeting and a bare `YYYY-MM-DD` for a
+   * training, which is why `kind` is on the row rather than left to be sniffed
+   * from the string. Empty for a group_leader, who has no reach for either.
+   */
+  upcoming: {
+    id: string;
+    kind: 'meeting' | 'course' | 'activity';
+    title: string;
+    at: string;
+    time: string | null;
+    location: string | null;
+  }[];
   groups: { id: string; name: string; status: GroupHealthStatus }[];
   active_members: number;
 }

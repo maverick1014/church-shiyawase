@@ -699,8 +699,18 @@ async function main() {
       dashBody.includes('Last Sunday') && dashBody.includes('At the service'));
     check('…with the follow-up list beside it…',
       dashBody.includes('Needs follow-up'));
-    check('…and the week ahead and the life groups under them',
-      dashBody.includes('This week') && dashBody.includes('Life groups at a glance'));
+    check('…and what is coming up, with the life groups, under them',
+      dashBody.includes('Upcoming events') && dashBody.includes('Life groups at a glance'));
+    // Three MONTHS, not seven days: a church prepares an event about that far
+    // ahead, so the seven-day window this started as showed an empty card most
+    // weeks. 聚会 and 培训/活动 share the list, each tagged with its own kind.
+    const upcomingCard = page.locator('.card', { hasText: 'Upcoming events' });
+    const upcomingRows = upcomingCard.locator('.mtile');
+    if ((await upcomingRows.count()) > 0) {
+      check('every upcoming row says what KIND of thing it is',
+        (await upcomingRows.first().locator('.badge').count()) === 1,
+        await upcomingRows.first().innerText().then((x) => x.replace(/\n/g, ' ⏎ ').slice(0, 90)));
+    }
     check('the retired member-growth chart and its toggle chips are gone',
       !dashBody.includes('New Visits & Active Members') &&
         (await page.locator('.card:has-text("Last Sunday") .chip').count()) === 0);

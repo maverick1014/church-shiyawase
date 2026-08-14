@@ -550,7 +550,15 @@ the four questions a church actually asks, in that order:
   no rows for one, and a church that forgot to take the roll call should see
   that rather than have it smoothed away. Drawn as BARS, not a line: these are
   counts of separate occasions, and a line between two Sundays implies values
-  in between that do not exist.
+  in between that do not exist. Every bar is LABELLED with its own count and
+  its date: a bare shape answers "up or down" but not "up or down from what",
+  and on a phone there is no hover to fall back on. The average also drops the
+  LEADING run of unmarked Sundays — zeroes from before the church ever took a
+  roll call are the app not being in use, not empty services, and averaging
+  against them told a church two weeks in that they were "+9 on the 7-Sunday
+  average". Zeroes in the MIDDLE still count, because those are a real missed
+  roll call. `sundayPulse` reports how many Sundays it actually averaged so the
+  label states the real number.
 - **需要关怀** — active, non-visitor members with no 主日 tick across the last
   **four** Sundays (church's own choice: about a month, long enough that a
   holiday does not flag somebody). Longest-absent first, capped, each row
@@ -559,7 +567,15 @@ the four questions a church actually asks, in that order:
   last four Sundays and NOT the window the chart draws, so widening the chart
   never widens who gets chased; `last_seen` being null means "not in the window
   at all", which is deliberately not the claim "never came".
-- **本周** — hand-added meetings in the next seven days.
+- **即将举行** — what is on over the next THREE months, not the next seven days:
+  a church prepares an event about that far ahead (their words), so a weekly
+  window showed an empty card most weeks and hid the thing they were actually
+  working on. 聚会 and 培训/活动 share one list sorted by date, each row tagged
+  with its kind — to somebody reading this card they answer the same question,
+  and split in two they would be two short cards that are usually empty. A
+  meeting carries a real timestamp and a 培训/活动 a bare DATE plus its own
+  start time, which is why `kind` rides on the row rather than being sniffed
+  from the string.
 - **小组概况** — the health buckets as chips, keyed by the STORED status code
   (G8) so they are language-independent and land on `/groups`'s own filter.
 
