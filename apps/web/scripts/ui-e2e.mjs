@@ -1131,6 +1131,32 @@ async function main() {
       check('the option list closes once something is picked',
         (await page.locator('.combo-list').count()) === 0);
 
+      /* -- 活动记录 for a LIFE group (0030) -------------------------------- */
+      // The same feature a 幸福小组 has, through the same shared component:
+      // reached from the Back row, and a record created here round-trips.
+      const groupBackBar = page.locator('.back-bar');
+      check('a life group offers 活动记录 from its Back row too',
+        (await groupBackBar.locator('button:has-text("Activities")').count()) === 1);
+      await groupBackBar.locator('button:has-text("Activities")').first().click();
+      await page.waitForURL(/\/groups\/[0-9a-f-]+\/activities$/, { timeout: 15000 });
+      await page.locator('button:has-text("Add activity")').first().waitFor({ timeout: 15000 });
+      const gActTitle = fixtureName('GACTIVITY');
+      await page.locator('button:has-text("Add activity")').first().click();
+      await page.locator('.modal').waitFor({ timeout: 8000 });
+      await page.locator('.modal input[type=date]').first().fill('2026-08-12');
+      await page.locator('.modal input:not([type=date])').first().fill(gActTitle);
+      await page.locator('.modal button:has-text("Save")').first().click();
+      const gActRows = await pollUntil(
+        () => apiGet(`/groups/${fxGroup.id}/activities`).catch(() => []),
+        (rows) => (rows || []).some((r) => r.title === gActTitle),
+      );
+      const gActRow = (gActRows || []).find((r) => r.title === gActTitle) ?? null;
+      check('a life group’s activity stores its date and title',
+        gActRow?.happened_on === '2026-08-12', JSON.stringify(gActRow));
+      if (gActRow?.id) await apiDelete(`/groups/${fxGroup.id}/activities/${gActRow.id}`);
+      await page.goBack({ waitUntil: 'domcontentloaded' });
+      await page.locator('.sheet-table').first().waitFor({ timeout: 15000 });
+
       /* -- roster row: View navigates to the member's own detail page ----- */
       // A roster row is looked at far more often than it is edited, so its
       // own button now goes straight to that member's page (which still
@@ -2192,7 +2218,12 @@ async function main() {
       // it so the run leaves nothing behind (the group itself is a fixture and
       // cascades, but a failure between here and the sweep should not rely on
       // that).
-      await page.locator('button:has-text("Activities")').first().click();
+      // The way in is on the BACK row now, right-aligned (church feedback) —
+      // not buried in the roll-call card's head.
+      const happyBackBar = page.locator('.back-bar');
+      check('the 活动 button sits on the Back row, in the right corner',
+        (await happyBackBar.locator('button:has-text("Activities")').count()) === 1);
+      await happyBackBar.locator('button:has-text("Activities")').first().click();
       await page.waitForURL(/\/happiness\/group\/[0-9a-f-]+\/activities$/, { timeout: 15000 });
       check('the group page opens its own 活动记录 page', true);
       await page.locator('button:has-text("Add activity")').first().waitFor({ timeout: 15000 });

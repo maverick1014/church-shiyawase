@@ -471,14 +471,16 @@ export interface HappinessGroupDetail extends HappinessGroupRow {
 }
 
 /**
- * 幸福小组活动记录 (0029) — what a group DID on a date, with photos and a note.
+ * 活动记录 (0029 幸福小组 / 0030 life group) — what a group DID on a date, with
+ * photos and a note. One shape for both kinds of group: they differ only in
+ * which table owns the row, which is the server's business, not a reader's.
  *
  * Dated rather than week-numbered on purpose: the roll call answers "who came
  * in week 5", and this answers "what did we do", which is how a leader
  * remembers an evening and how the photos are filed. A group that met twice in
  * one week, or gathered outside the term, has somewhere to put the second one.
  */
-export interface HappinessActivityRow {
+export interface ActivityRow {
   id: string;
   group_id: string;
   happened_on: string;
@@ -488,6 +490,9 @@ export interface HappinessActivityRow {
   photo_urls: string[];
   created_at: string;
 }
+
+/** @deprecated The record is not happiness-specific — use `ActivityRow`. */
+export type HappinessActivityRow = ActivityRow;
 
 /** `GET /api/happiness/members/:memberId` — one member's own participation
  *  history, newest first. Read by the member detail page's own experience

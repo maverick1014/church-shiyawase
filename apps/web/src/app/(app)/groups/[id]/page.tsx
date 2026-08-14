@@ -6,7 +6,7 @@ import { useFetch } from '@/lib/hooks';
 import { useSortableRows } from '@/lib/sort';
 import { api } from '@/lib/api';
 import { usePageChrome, useMe } from '@/components/AppShell';
-import { BackButton, Combobox, ErrorBanner, ExportButton, Field, HallSelect, MemberName, MonthPicker, RoleBadge, SheetTick, SheetTickAll, SheetTotals, SkeletonCard, SkeletonScreen, SkeletonTable, SortTh, TagsInput, useConfirm, useFormGuard, useMemberOptions, useToast } from '@/components/ui';
+import { BackBar, BackButton, Combobox, ErrorBanner, ExportButton, Field, HallSelect, MemberName, MonthPicker, RoleBadge, SheetTick, SheetTickAll, SheetTotals, SkeletonCard, SkeletonScreen, SkeletonTable, SortTh, TagsInput, useConfirm, useFormGuard, useMemberOptions, useToast } from '@/components/ui';
 import { useLeaderAccountEvent } from '@/components/LeaderAccountEvent';
 import { can } from '@/lib/perms';
 import { exportMatrix } from '@/lib/export';
@@ -83,7 +83,18 @@ export default function GroupDetailPage() {
 
   return (
     <>
-      <BackButton fallbackHref="/groups" />
+      {/* Back on the left, this group's own 活动记录 in the right corner — the
+          shared `BackBar` (rule G4), the same row the 幸福小组 page uses. The
+          roll call below answers who came on which Sunday; the activities page
+          is the other half, what the group actually did. */}
+      <BackBar
+        fallbackHref="/groups"
+        actions={
+          <button className="btn ghost" onClick={() => router.push(`/groups/${id}/activities`)}>
+            {t('act.open')}
+          </button>
+        }
+      />
 
       <GroupPanel
         group={detail.data}
