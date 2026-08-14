@@ -339,7 +339,7 @@ export const ms: Messages = {
   'groups.toast.created': 'Kumpulan ditambah',
   'groups.viewDetail': 'Lihat butiran',
   'groups.memberLine': '{n} ahli (baharu {newCount}){schedule}',
-  'groups.leaderInline': '· ketua {name}',
+  'groups.leaderInline': 'Ketua {name}',
   'groups.namePlaceholder': 'cth. Kumpulan Kanaan',
   'groups.descPlaceholder': 'cth. keluarga baharu',
   'groups.locationPlaceholder': 'cth. rumah Emily',

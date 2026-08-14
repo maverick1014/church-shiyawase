@@ -2204,8 +2204,14 @@ async function main() {
       check('…and it starts with no photos rather than a null the page has to guard',
         Array.isArray(actRow?.photo_urls) && actRow.photo_urls.length === 0,
         JSON.stringify(actRow?.photo_urls));
-      check('the record is drawn on the page it was created from',
-        (await page.locator('.card', { hasText: actTitle }).count()) === 1);
+      // The API agreeing and the PAGE having re-rendered are two different
+      // events — the list reloads on its own fetch after the save. Waiting on
+      // the card rather than reading the DOM the instant the API agrees; the
+      // same race, and the same fix, as both roll-call sheets.
+      const actCard = page.locator('.card', { hasText: actTitle });
+      const actDrawn = await actCard.first().waitFor({ timeout: 10000 })
+        .then(() => true).catch(() => false);
+      check('the record is drawn on the page it was created from', actDrawn);
       if (actRow?.id) {
         await apiDelete(`/happiness/groups/${happyGroupId}/activities/${actRow.id}`);
         check('deleting an activity removes it', true);

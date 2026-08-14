@@ -358,7 +358,7 @@ export const en = {
   'groups.toast.created': 'Group added',
   'groups.viewDetail': 'View details',
   'groups.memberLine': '{n} members (new {newCount}){schedule}',
-  'groups.leaderInline': '· leader {name}',
+  'groups.leaderInline': 'Leader {name}',
   'groups.namePlaceholder': 'e.g. Canaan group',
   'groups.descPlaceholder': 'e.g. new families',
   'groups.locationPlaceholder': 'e.g. Emily\u2019s home',

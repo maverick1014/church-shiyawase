@@ -335,7 +335,7 @@ export const zh: Messages = {
   'groups.toast.created': '小组已新增',
   'groups.viewDetail': '查看详情',
   'groups.memberLine': '{n} 位组员（新成员 {newCount}）{schedule}',
-  'groups.leaderInline': '· 组长 {name}',
+  'groups.leaderInline': '组长 {name}',
   'groups.namePlaceholder': '例如：迦南小组',
   'groups.descPlaceholder': '例如：新家庭小组',
   'groups.locationPlaceholder': '例如：Emily 家',

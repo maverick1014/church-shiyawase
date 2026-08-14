@@ -100,10 +100,10 @@ function SundayPulseCard({
 }) {
   const t = useT();
   const { latest, delta } = pulse;
-  // The average is computed over every Sunday BEFORE the latest, so the label
-  // says how many that was rather than hardcoding a number that could drift
-  // from what `sundayPulse` actually did.
-  const comparedTo = Math.max(points.length - 1, 0);
+  // What the average was ACTUALLY taken over — `sundayPulse` drops the leading
+  // run of Sundays from before the church ever marked one, so counting the
+  // window here would overstate it (and did, on the church's real data).
+  const comparedTo = pulse.sampled;
 
   return (
     <div className="card">

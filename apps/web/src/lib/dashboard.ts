@@ -134,6 +134,13 @@ export interface SundayPulse {
   average: number | null;
   /** `latest.service - average`, rounded; null whenever `average` is. */
   delta: number | null;
+  /**
+   * How many Sundays the average was actually taken over — which is NOT
+   * `points.length - 1` once the leading unmarked run is dropped. The card
+   * says "vs the {n}-Sunday average", so it has to be told the real n rather
+   * than counting the window itself and overstating it.
+   */
+  sampled: number;
 }
 
 /**
@@ -149,12 +156,30 @@ export interface SundayPulse {
  * than have it quietly smoothed away.
  */
 export function sundayPulse(points: readonly SundayPoint[]): SundayPulse {
-  if (points.length === 0) return { latest: null, average: null, delta: null };
+  if (points.length === 0) return { latest: null, average: null, delta: null, sampled: 0 };
   const latest = points[points.length - 1];
-  const before = points.slice(0, -1);
-  if (before.length === 0) return { latest, average: null, delta: null };
-  const mean = before.reduce((sum, p) => sum + p.service, 0) / before.length;
-  return { latest, average: mean, delta: Math.round(latest.service - mean) };
+
+  /*
+   * LEADING zeroes are dropped before averaging; zeroes in the middle are not.
+   *
+   * The two are different facts wearing the same 0. Once a church has started
+   * taking the roll call, a Sunday with no rows means nobody marked it, and
+   * that belongs in the average — it is exactly the "we forgot" this card
+   * should surface. But a run of zeroes BEFORE the first Sunday anyone ever
+   * marked is not a run of empty services, it is the app not yet being used,
+   * and averaging against it produces a number that is arithmetically true and
+   * completely misleading: a church two weeks into using this would be told
+   * last Sunday was "+9 on the 7-Sunday average" when the comparison had six
+   * weeks of pre-history in it.
+   *
+   * Found by reading the live payload rather than by reasoning about it — the
+   * church's own first two marked Sundays sat behind exactly this run.
+   */
+  const firstMarked = points.findIndex((p) => p.service > 0 || p.preService > 0);
+  const history = firstMarked === -1 ? [] : points.slice(firstMarked, -1);
+  if (history.length === 0) return { latest, average: null, delta: null, sampled: 0 };
+  const mean = history.reduce((sum, p) => sum + p.service, 0) / history.length;
+  return { latest, average: mean, delta: Math.round(latest.service - mean), sampled: history.length };
 }
 
 /**

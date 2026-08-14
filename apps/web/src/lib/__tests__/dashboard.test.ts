@@ -161,7 +161,7 @@ describe('sundayPulse', () => {
   });
 
   it('answers empty for no Sundays at all', () => {
-    expect(sundayPulse([])).toEqual({ latest: null, average: null, delta: null });
+    expect(sundayPulse([])).toEqual({ latest: null, average: null, delta: null, sampled: 0 });
   });
 });
 
@@ -182,5 +182,45 @@ describe('groupHealthRollup', () => {
 
   it('keeps every bucket even when nothing is in it, so the row never reflows', () => {
     expect(groupHealthRollup([]).map((b) => b.count)).toEqual([0, 0, 0]);
+  });
+});
+
+describe('sundayPulse · before the church started taking the roll call', () => {
+  const pt = (date: string, service: number) => ({ date, preService: service, service });
+
+  it('does not average against Sundays from before the first one ever marked', () => {
+    // The live shape when this was written: six untouched Sundays, then two
+    // real ones. Averaging across all seven earlier ones says "+9", which is
+    // arithmetically true and tells the church nothing.
+    const out = sundayPulse([
+      pt('2026-06-21', 0), pt('2026-06-28', 0), pt('2026-07-05', 0), pt('2026-07-12', 0),
+      pt('2026-07-19', 0), pt('2026-07-26', 0), pt('2026-08-02', 8), pt('2026-08-09', 10),
+    ]);
+    expect(out.average).toBe(8);
+    expect(out.delta).toBe(2);
+  });
+
+  it('still counts a MISSED Sunday in the middle — that one is a real zero', () => {
+    // Once the roll call is in use, an unmarked Sunday means nobody marked it,
+    // which is exactly what this card should surface rather than hide.
+    const out = sundayPulse([pt('2026-07-19', 10), pt('2026-07-26', 0), pt('2026-08-02', 20)]);
+    expect(out.average).toBe(5);
+    expect(out.delta).toBe(15);
+  });
+
+  it('has no comparison at all when only one Sunday was ever marked', () => {
+    const out = sundayPulse([pt('2026-08-02', 0), pt('2026-08-09', 10)]);
+    expect(out.latest?.service).toBe(10);
+    expect(out.average).toBeNull();
+    expect(out.delta).toBeNull();
+  });
+
+  it('counts a Sunday where only 会前 was marked as the start of the history', () => {
+    const out = sundayPulse([
+      { date: '2026-07-26', preService: 4, service: 0 },
+      { date: '2026-08-02', preService: 0, service: 6 },
+    ]);
+    expect(out.average).toBe(0);
+    expect(out.delta).toBe(6);
   });
 });

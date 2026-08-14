@@ -692,6 +692,24 @@ tbody tr:last-child td {
   z-index: 2;
   background: var(--surface);
 }
+/* On a phone the name column has to be BOUNDED, not just floored.
+   `nowrap` + `auto` table layout sizes it to the longest name in the roster,
+   so one "Desmond Loh Wen Hai" pushed it to nearly half the screen and left
+   the ticks — the thing the sheet exists for — squeezed into what was left.
+   Capping it and letting it wrap keeps the balance; the cap stays comfortably
+   wider than four CJK glyphs, so a Chinese name still sits on one line and the
+   G7a rule this column exists for (never break a name one glyph per line) is
+   unaffected. Desktop is untouched: there the width is not the scarce thing. */
+@media (max-width: 640px) {
+  .sheet-table thead tr:first-child > th:first-child,
+  .sheet-table tbody td:first-child {
+    min-width: 96px;
+    max-width: 124px;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+}
+
 /* An empty-state row's one `colSpan` cell is also its row's first child, so
    it inherited the name column's nowrap above and clipped instead of
    wrapping its own sentence — this is the one first-child cell that is not
