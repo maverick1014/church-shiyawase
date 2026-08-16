@@ -1,0 +1,19 @@
+-- ===========================================================================
+-- BEST — the person a 幸福小组 exists to reach
+-- ---------------------------------------------------------------------------
+-- MUST BE APPLIED BEFORE THE CODE THAT READS IT IS DEPLOYED, and it must be
+-- applied as its OWN statement: Postgres refuses to use a new enum value in
+-- the same transaction that added it, so the check constraint below is in a
+-- second migration step rather than one block with the `add value`.
+--
+-- A BEST is not a 访客 wearing a different word. A 访客 is somebody who came to
+-- the church and may well be a Christian from somewhere else; a BEST is
+-- somebody who is NOT yet a Christian but is open to knowing Jesus, met
+-- through a 幸福小组. The church's own words. They are followed up differently,
+-- counted differently, and belong to different things — which is exactly why
+-- this is a role of its own rather than a label on the roster.
+--
+-- Placed last in reading order (牧师 → 执事 → 同工 → 成员 → 访客 → BEST): the
+-- list runs from the pulpit to the door, and a BEST is the person furthest
+-- from the pulpit and closest to being met for the first time.
+alter type church_role add value if not exists 'best' after 'visitor';
