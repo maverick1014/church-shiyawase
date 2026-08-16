@@ -52,6 +52,7 @@ import {
   MIN_BRAND_CONTRAST,
   MIN_RAIL_CONTRAST,
   moduleForApiPath,
+  NON_MEMBER_ROLES,
   normalizeHexColor,
   normalizeLanguage,
   OPTIONAL_MODULES,
@@ -193,6 +194,11 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
     (r0 === 'discipleship' && r1 === 'form') ||
     (r0 === 'trainings' && r1 === 'enroll') ||
     (r0 === 'members' && r1 === 'register' && !r2 && (method === 'GET' || method === 'POST')) ||
+    // The FIRST-VISIT form (0031) — the visitor half of `register`, and a path
+    // of its own rather than a flag on that one, because what a form may write
+    // is the whole security question here. Exactly this path and these two
+    // methods, never a prefix, so nothing else under /members opens with it.
+    (r0 === 'members' && r1 === 'welcome' && !r2 && (method === 'GET' || method === 'POST')) ||
     (r0 === 'church' && !r1 && method === 'GET');
 
   // Hall scope for this request. `null` = 全堂权限 (sees and may write every
@@ -413,8 +419,8 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
    * second "before" read rather than adding one.
    */
   const beforeMemberWrite = async (id: string, dto: Record<string, unknown>) => {
-    const row = unwrap<{ group_id: string | null; group_position: string | null }>(
-      await db.from('members').select('group_id,group_position').eq('id', id).single(),
+    const row = unwrap<{ group_id: string | null; group_position: string | null; church_role: string }>(
+      await db.from('members').select('group_id,group_position,church_role').eq('id', id).single(),
     );
     if (groupScope) {
       const current = row.group_id;
@@ -425,6 +431,30 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
         throw new HttpError(403, 'A group leader may only add members into their own group');
     }
     return row;
+  };
+
+  /**
+   * A BEST never carries a life group (migration 0032).
+   *
+   * The DATABASE is the authority \u2014 `members_best_has_no_life_group` refuses
+   * the row whatever wrote it, which is the point of putting it there rather
+   * than in the form. But a check-constraint violation surfaces as a raw
+   * Postgres error, and "new row for relation members violates check
+   * constraint" is not something a church can act on. So the API asks the same
+   * question first and answers in a sentence \u2014 the same split the duplicate
+   * name-pair 409 already uses (rule G2: enforced server-side, and the
+   * message is the user-facing half of that enforcement).
+   *
+   * Asked of the row AS IT WILL BE, never of the payload alone: a PATCH that
+   * sets only `church_role: 'best'` on somebody already in a group is the
+   * ordinary way to reach this, and it names no `group_id` at all.
+   */
+  const assertBestHasNoGroup = (role: unknown, groupId: unknown) => {
+    if (role === ChurchRole.Best && groupId)
+      throw new HttpError(
+        400,
+        'A BEST cannot belong to a life group \u2014 remove them from the group first, or make them a member',
+      );
   };
 
   /**
@@ -596,7 +626,31 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
           members: unwrap(await db.from('members').select('id,full_name,english_name').order('full_name')),
         });
       }
-      if (method === 'POST') return json(await registerMember(db, req));
+      if (method === 'POST') return json(await registerMember(db, req, REGISTER_AS_MEMBER));
+      throw new HttpError(404, `No route for ${method} /api/${p.join('/')}`);
+    }
+    /*
+     * /members/welcome — PUBLIC first-visit form (0031), the visitor half of
+     * /register.
+     *
+     * Everything about it is `registerMember` (rule G4) — the same matching,
+     * the same length caps, the same one-word answer, the same
+     * nothing-reaches-storage-until-the-row-is-accepted rule for the photo.
+     * What differs is exactly the two things that ARE the security question:
+     * a shorter allow-list (no life group, no 服侍岗位 — those are what
+     * somebody gets once they belong) and the role a NEW row is created with.
+     *
+     * The bootstrap it reads is narrower for the same reason: a first-time
+     * visitor picks a congregation and, if they can, the person who brought
+     * them. It has no use for the life-group list, so it is not handed one.
+     */
+    if (r1 === 'welcome' && !r2) {
+      if (method === 'GET')
+        return json({
+          halls: unwrap(await db.from('halls').select('id,name').order('sort_order')),
+          members: unwrap(await db.from('members').select('id,full_name,english_name').order('full_name')),
+        });
+      if (method === 'POST') return json(await registerMember(db, req, REGISTER_AS_VISITOR));
       throw new HttpError(404, `No route for ${method} /api/${p.join('/')}`);
     }
     // /members/import — a spreadsheet of members, matched on the name pair.
@@ -633,6 +687,27 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
           .select(MEMBER_SELECT)
           .order('full_name', { ascending: true });
         if (hallFilter) query = query.eq('hall_id', hallFilter);
+        /*
+         * WHICH KIND of person this read is about — 成员, 访客 or BEST, the
+         * three the app now keeps on three different pages (0031).
+         *
+         * A SET, which is why it is not expressible as `?church_role=`: "a
+         * member" is 牧师/执事/同工/一般成员 together, and naming them one by
+         * one at the call site would be the fourth copy of a list that already
+         * exists (`NON_MEMBER_ROLES`, rule G4).
+         *
+         * Absent means EVERYBODY, deliberately: every member picker in the app
+         * reads this endpoint — the 推荐人 combobox, the 幸福小组 roster's own
+         * picker, the 服侍岗位 autocomplete — and a picker that quietly stopped
+         * offering visitors would be the split leaking out of the two pages it
+         * is meant to be about. Narrowing is the PAGE's decision, made once,
+         * where somebody can read it.
+         */
+        const scope = q.get('scope');
+        if (scope === 'member')
+          query = query.not('church_role', 'in', `(${NON_MEMBER_ROLES.join(',')})`);
+        else if (scope === 'visitor') query = query.eq('church_role', ChurchRole.Visitor);
+        else if (scope === 'best') query = query.eq('church_role', ChurchRole.Best);
         if (q.get('church_role')) query = query.eq('church_role', q.get('church_role'));
         if (q.get('group_position')) query = query.eq('group_position', q.get('group_position'));
         if (groupFilter) query = query.eq('group_id', groupFilter);
@@ -648,12 +723,14 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
         return json(await withReferrers(db, unwrap<Array<{ referred_by: string | null }>>(await query)));
       }
       if (method === 'POST') {
+        const dto = withGroupScope(withHall(await body()));
+        assertBestHasNoGroup(dto.church_role, dto.group_id);
         const created = unwrap<
           Record<string, unknown> & { id: string; group_id: string | null; group_position: string | null }
         >(
           await db
             .from('members')
-            .insert(withGroupScope(withHall(await body())))
+            .insert(dto)
             .select()
             .single(),
         );
@@ -712,6 +789,10 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
         // `before` is then reused as the sync hook's `previousPosition`/
         // `previousGroupId` rather than reading the row a second time.
         const before = await beforeMemberWrite(r1, dto);
+        assertBestHasNoGroup(
+          'church_role' in dto ? dto.church_role : before.church_role,
+          'group_id' in dto ? dto.group_id : before.group_id,
+        );
         const updated = unwrap<
           Record<string, unknown> & { group_id: string | null; group_position: string | null }
         >(await db.from('members').update(dto).eq('id', r1).select().single());
@@ -1616,6 +1697,24 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
           }
           return json(unwrap(await db.from('happiness_terms').insert(b).select().single()));
         }
+      } else if (r3 === 'best' && !r4) {
+        /*
+         * Every BEST in the TERM, across all of its 幸福小组 — the namelist a
+         * leader wants at the top of the term (church feedback: "they can see
+         * the overall best name list for this session").
+         *
+         * Its own read rather than something the page assembles: a term's
+         * groups already arrive as a list of groups, and stitching their
+         * rosters together in the browser would mean one request per group
+         * and a page that only knows the answer once the slowest of them
+         * lands. It also lets the hall gate run ONCE, here, where it belongs.
+         *
+         * Filed under the term's own path (`/happiness/terms/:id/best`) so
+         * `moduleForApiPath` still gates it — that matches on the FIRST path
+         * segment, which is why a member's own participation is
+         * `/happiness/members/:id` rather than `/members/:id/happiness`.
+         */
+        if (method === 'GET') return json(await termBestList(db, r2, hallFilter));
       } else if (!r3) {
         if (method === 'GET')
           return json(unwrap(await db.from('happiness_terms').select('*').eq('id', r2).single()));
@@ -1860,6 +1959,7 @@ const IMPORT_ISSUE_MESSAGE: Record<ImportIssue, string> = {
   no_hall: 'A congregation is required',
   other_hall: 'That record belongs to another congregation',
   group_other_hall: 'That life group belongs to another congregation',
+  best_in_group: 'A BEST cannot belong to a life group',
 };
 
 /** The message a refused row is reported with — a value, never a stack. */
@@ -1891,7 +1991,7 @@ async function importContext(
   const [hallRes, groupRes, memberRes] = await Promise.all([
     db.from('halls').select('id,name').order('sort_order'),
     db.from('groups').select('id,name,hall_id'),
-    db.from('members').select('id,full_name,english_name,hall_id,group_position,group_id'),
+    db.from('members').select('id,full_name,english_name,hall_id,group_position,group_id,church_role'),
   ]);
   const halls = unwrap<Array<{ id: string; name: string }>>(hallRes);
   const groups = unwrap<Array<{ id: string; name: string; hall_id: string }>>(groupRes);
@@ -2117,6 +2217,65 @@ const REGISTER_FIELDS = [
 ] as const;
 
 /**
+ * What the public FIRST-VISIT form may send — a deliberate subset of the one
+ * above (0031).
+ *
+ * `group_id` and `serving_roles` are the two that are gone, and for the same
+ * reason as each other: a life group and a ministry are things somebody takes
+ * on once they belong, and asking about them at the door asks a stranger to
+ * answer a question they have no way to answer. `church_role` and
+ * `group_position` are absent here exactly as they are there — this form
+ * makes a 访客 because of which HANDLER it is, never because of anything in
+ * the body.
+ */
+const WELCOME_FIELDS = [
+  'full_name',
+  'english_name',
+  'phone',
+  'email',
+  'address',
+  'gender',
+  'date_of_birth',
+  'referred_by',
+  'notes',
+] as const;
+
+/**
+ * The two shapes the one public registration handler runs in.
+ *
+ * A form is defined by what it may WRITE and who it makes — so those are the
+ * two things that differ, and nothing else does. Written as data rather than
+ * as a second copy of `registerMember`, because every rule that matters on an
+ * unauthenticated path (the length caps, the matching, the photo-last
+ * ordering, the one-word answer) has to be the same rule in both, and the
+ * only way to guarantee that is for there to be one of it (rule G4).
+ */
+interface PublicRegisterForm {
+  /** The allow-list. Anything else in the body is not read at all. */
+  fields: readonly string[];
+  /** What a BRAND-NEW row is created as. An UPDATE never touches the role —
+   *  somebody already on the roll keeps whatever the church made them, so a
+   *  member who fills in the first-visit form is not demoted by it. */
+  role: ChurchRole;
+  /** Stamp today as 来访日期 on a brand-new row. True for the first-visit form,
+   *  where when somebody first came is the whole point and the person filling
+   *  it in is, by definition, visiting today. */
+  stampVisitDate: boolean;
+}
+
+const REGISTER_AS_MEMBER: PublicRegisterForm = {
+  fields: REGISTER_FIELDS,
+  role: ChurchRole.Member,
+  stampVisitDate: false,
+};
+
+const REGISTER_AS_VISITOR: PublicRegisterForm = {
+  fields: WELCOME_FIELDS,
+  role: ChurchRole.Visitor,
+  stampVisitDate: true,
+};
+
+/**
  * How long each of those may be.
  *
  * This used to come free from `planImport`, which checked every row against
@@ -2166,6 +2325,7 @@ const REGISTER_MAX_LENGTH = new Map<string, number>([
 async function registerMember(
   db: ReturnType<typeof getDb>,
   req: Request,
+  shape: PublicRegisterForm,
 ): Promise<{ status: 'created' | 'updated' }> {
   const contentType = req.headers.get('content-type') ?? '';
   const sent: Record<string, string> = {};
@@ -2173,13 +2333,13 @@ async function registerMember(
   let photo: File | null = null;
   if (contentType.includes('multipart/form-data')) {
     const form = await req.formData();
-    for (const field of REGISTER_FIELDS) sent[field] = String(form.get(field) ?? '');
+    for (const field of shape.fields) sent[field] = String(form.get(field) ?? '');
     hallId = String(form.get('hall_id') ?? '');
     const file = form.get('photo');
     photo = file instanceof File && file.size > 0 ? file : null;
   } else {
     const dto = (await req.json().catch(() => ({}))) as Record<string, unknown>;
-    for (const field of REGISTER_FIELDS) sent[field] = String(dto[field] ?? '');
+    for (const field of shape.fields) sent[field] = String(dto[field] ?? '');
     hallId = String(dto.hall_id ?? '');
   }
 
@@ -2194,7 +2354,7 @@ async function registerMember(
   // Before anything is looked up or written: nothing absurdly long gets in.
   // This is an unauthenticated path, so the cap is a real limit rather than a
   // nicety — see REGISTER_MAX_LENGTH above.
-  for (const field of REGISTER_FIELDS) {
+  for (const field of shape.fields) {
     const cap = REGISTER_MAX_LENGTH.get(field);
     if (cap !== undefined && tidy(sent[field]).length > cap)
       throw new HttpError(400, `That ${field.replace(/_/g, ' ')} is too long`);
@@ -2217,6 +2377,12 @@ async function registerMember(
     const englishName = tidy(sent.english_name);
     if (englishName) values.english_name = englishName;
     values.hall_id = hall.id;
+    // 来访日期, stamped by the SERVER rather than asked for: the person filling
+    // in a first-visit form is visiting today, and a date field on that form
+    // would be one more thing for a stranger at the door to get wrong. Only on
+    // a brand-new row — somebody who has been before keeps the date the church
+    // already has for them, which is what "when they FIRST came" means.
+    if (shape.stampVisitDate) values.joined_at = churchDateKey(new Date());
   }
 
   const phone = tidy(sent.phone);
@@ -2305,11 +2471,12 @@ async function registerMember(
       .from('members')
       .insert({
         ...values,
-        // Everyone who registers themselves is an ordinary member. A church
-        // role is something the church confers, never something a form
-        // visitor claims — the same reason `church_role` is not in
-        // REGISTER_FIELDS at all.
-        church_role: ChurchRole.Member,
+        // Decided by WHICH FORM this is (/register makes members, /welcome
+        // makes 访客), never by anything in the body — the same reason
+        // `church_role` is on neither allow-list at all. A church role is
+        // something the church confers, and the two public links are the
+        // church conferring it by choosing which one to hand out.
+        church_role: shape.role,
       })
       .select('id')
       .single(),
@@ -2652,7 +2819,12 @@ async function dashboard(
       .from('members')
       .select('id,full_name,english_name,hall_id,group_id,group_position,church_role,status')
       .eq('status', MemberStatus.Active)
-      .neq('church_role', ChurchRole.Visitor);
+      // Every NON-member role, not just 访客: 需要关怀 is the church chasing its
+      // own people, and a BEST (0031) is followed up by their 幸福小组 leader
+      // instead — putting them on this list would hand the office a name it has
+      // no business ringing and bury the members who are actually missing.
+      // `NON_MEMBER_ROLES` is the one list that decides this (rule G4).
+      .not('church_role', 'in', `(${NON_MEMBER_ROLES.join(',')})`);
     if (hallFilter) query = query.eq('hall_id', hallFilter);
     if (groupFilter) query = query.eq('group_id', groupFilter);
     return query;
@@ -2907,6 +3079,14 @@ async function rollCallSheet(
   if (groupId) memberQuery = memberQuery.eq('group_id', groupId);
   else memberQuery = memberQuery.eq('status', 'active');
   if (hallFilter) memberQuery = memberQuery.eq('hall_id', hallFilter);
+  // 访客 stay on this sheet — a visitor coming to the service is precisely
+  // what the church wants recorded, and the page draws them in a section of
+  // their own (0031). A BEST does not: they are met and rolled weekly in
+  // their 幸福小组, which is a roll call of its own, and a third kind of row
+  // here would sit under a heading that describes neither of the other two.
+  // Somebody who starts coming to the service is converted, which is what
+  // that button is for.
+  memberQuery = memberQuery.neq('church_role', ChurchRole.Best);
 
   const readMeetings = async () => {
     // A group's card carries the group's own occasions beside these Sundays,
@@ -3060,6 +3240,68 @@ async function withRosterCounts(
   const counts = new Map<string, number>();
   for (const r of rosterRows) counts.set(r.group_id, (counts.get(r.group_id) ?? 0) + 1);
   return groups.map((g) => ({ ...g, roster_count: counts.get(g.id as string) ?? 0 }));
+}
+
+/**
+ * Every BEST on any roster in one 期, with the group each of them belongs to.
+ *
+ * Two reads rather than one embedded query, deliberately: PostgREST cannot
+ * filter a parent by a grandchild's column, so "roster rows whose member is a
+ * BEST, in groups of this term" has to be asked as "which groups" and then
+ * "which of their roster members". Both are small (a term runs a handful of
+ * groups) and they cannot go in parallel — the second needs the first's ids.
+ *
+ * The hall gate runs on the GROUPS, which is where a 幸福小组's congregation
+ * actually lives (`happiness_groups.hall_id` is a direct column, migration
+ * 0022): a hall-scoped account sees the BESTs of its own congregation's groups
+ * and no others, and it is one filter rather than one per row.
+ *
+ * Somebody on two rosters appears twice, once under each group — that IS the
+ * answer to "which group is following this person up", and collapsing it would
+ * hide a real thing rather than tidy a duplicate.
+ */
+async function termBestList(
+  db: ReturnType<typeof getDb>,
+  termId: string,
+  hallFilter: string | null,
+) {
+  let groupQuery = db
+    .from('happiness_groups')
+    .select('id,name,hall_id')
+    .eq('term_id', termId)
+    .order('name');
+  if (hallFilter) groupQuery = groupQuery.eq('hall_id', hallFilter);
+  const groups = unwrap<Array<{ id: string; name: string; hall_id: string }>>(await groupQuery);
+  if (groups.length === 0) return [];
+
+  // The embed's cardinality (one member per roster row) is a runtime fact
+  // PostgREST gets right and the untyped client's select-string parser cannot
+  // know — force-cast after `unwrap`, exactly as `happinessGroupDetail` does
+  // for the same embed (rule G4).
+  const roster = unwrap(
+    await db
+      .from('happiness_group_members')
+      .select(`group_id, member:members(${MEMBER_BRIEF},phone,status)`)
+      .in(
+        'group_id',
+        groups.map((g) => g.id),
+      ),
+  ) as unknown as Array<{ group_id: string; member: Record<string, unknown> | null }>;
+
+  const byId = new Map(groups.map((g) => [g.id, g]));
+  return (
+    roster
+      // An embedded select can come back null (rule G6), and a roster row whose
+      // member is anything but a BEST is simply not what this list is about.
+      .filter((r) => r.member && r.member.church_role === ChurchRole.Best)
+      .map((r) => ({
+        member: r.member,
+        group: { id: r.group_id, name: byId.get(r.group_id)?.name ?? null },
+      }))
+      .sort((a, b) =>
+        String(a.member?.full_name ?? '').localeCompare(String(b.member?.full_name ?? ''), 'zh'),
+      )
+  );
 }
 
 /** One 幸福小组's detail: its own record plus its roster, both names included

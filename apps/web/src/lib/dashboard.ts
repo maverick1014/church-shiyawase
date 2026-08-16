@@ -13,7 +13,7 @@
  * its `YYYY-MM` prefix against another month's needs no further zone handling.
  */
 
-import { ChurchRole, MemberStatus } from '@tog/shared';
+import { MemberStatus, isMemberRole } from '@tog/shared';
 import type { MemberRow } from './types';
 import { addChurchDays, churchDateKey, churchDayOfWeek, churchParts } from './time';
 import type { GroupHealthStatus } from './labels';
@@ -71,7 +71,10 @@ export function monthlyVisitAndActiveTrend(
       if (
         joinMonth <= key &&
         m.status === MemberStatus.Active &&
-        m.church_role !== ChurchRole.Visitor
+        // `isMemberRole`, not `!== visitor`: a BEST (0031) is no more one of
+        // today's active MEMBERS than a 访客 is, and naming the question once
+        // means the next non-member role is excluded here for free.
+        isMemberRole(m.church_role)
       ) {
         active++;
       }

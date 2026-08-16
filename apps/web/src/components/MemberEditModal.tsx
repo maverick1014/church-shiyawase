@@ -4,10 +4,10 @@ import { useMemo, useState } from 'react';
 import { useFetch } from '@/lib/hooks';
 import { api } from '@/lib/api';
 import { GroupDetail, GroupRow, LeaderAccountEvent, MemberRow } from '@/lib/types';
-import { ChurchRole, Gender, GroupPosition, LEADERSHIP_POSITIONS, MemberStatus } from '@tog/shared';
+import { ChurchRole, Gender, GroupPosition, isMemberRole, LEADERSHIP_POSITIONS, MemberStatus } from '@tog/shared';
 import {
-  CHURCH_ROLE_OPTIONS,
   churchRoleKey,
+  churchRoleOptionsFor,
   genderKey,
   GENDER_OPTIONS,
   GROUP_POSITION_OPTIONS,
@@ -72,6 +72,12 @@ export function MemberEditModal({
   });
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // Which of the three kinds of person this row is — read off the ROW's own
+  // stored role rather than the page that opened this modal, so a 访客 is
+  // edited as a 访客 wherever it is opened from, and off `member` rather than
+  // `form` so the shape cannot change under a half-finished edit.
+  const isMember = isMemberRole(member.church_role);
+  const isBest = member.church_role === ChurchRole.Best;
   // Asks before ✕ or Cancel throws an edit away, and arms the browser's own
   // prompt for a refresh (rule G4 — every form in the app guards the same way).
   const { close } = useFormGuard({ form, serving }, onClose);
@@ -234,28 +240,44 @@ export function MemberEditModal({
           />
         </Field>
       </div>
+      {/* A BEST belongs to a 幸福小组, never to a life group — the database
+          refuses the pairing outright (`members_best_has_no_life_group`,
+          0032), so the fields are absent rather than shown and rejected. A
+          访客 keeps them: a visitor sitting in on a life group is a case this
+          church actually has. */}
+      {!isBest && (
+        <div className="form-row">
+          <Field label={t('members.field.group')}>
+            <select value={form.group_id} onChange={(e) => changeGroup(e.target.value)}>
+              <option value="">{t('members.filter.ungrouped')}</option>
+              {(allGroups.data ?? []).map((g) => (
+                <option key={g.id} value={g.id}>{g.name}</option>
+              ))}
+            </select>
+          </Field>
+          <Field label={t('member.field.groupJoinedAt')}>
+            <input
+              type="date"
+              className={form.group_joined_at ? undefined : 'date-empty'}
+              value={form.group_joined_at}
+              onChange={(e) => setForm({ ...form, group_joined_at: e.target.value })}
+            />
+          </Field>
+        </div>
+      )}
       <div className="form-row">
-        <Field label={t('members.field.group')}>
-          <select value={form.group_id} onChange={(e) => changeGroup(e.target.value)}>
-            <option value="">{t('members.filter.ungrouped')}</option>
-            {(allGroups.data ?? []).map((g) => (
-              <option key={g.id} value={g.id}>{g.name}</option>
-            ))}
-          </select>
-        </Field>
-        <Field label={t('member.field.groupJoinedAt')}>
-          <input
-            type="date"
-            className={form.group_joined_at ? undefined : 'date-empty'}
-            value={form.group_joined_at}
-            onChange={(e) => setForm({ ...form, group_joined_at: e.target.value })}
-          />
-        </Field>
-      </div>
-      <div className="form-row">
-        <Field label={t('member.field.joined')}>
-          <input type="date" className={form.joined_at ? undefined : 'date-empty'} value={form.joined_at} onChange={(e) => setForm({ ...form, joined_at: e.target.value })} />
-        </Field>
+        {/* 来访日期 is a VISITOR's field now (0031). When somebody first came is
+            the one date that matters about a person the church is still
+            getting to know — and the one nobody fills in about a member they
+            have known for years, which is why it left the member form rather
+            than sitting there empty on every row. The COLUMN is untouched:
+            what a member already had is still stored, still imported, still
+            exported; it simply stopped being asked for here. */}
+        {!isMember && (
+          <Field label={t('member.field.joined')}>
+            <input type="date" className={form.joined_at ? undefined : 'date-empty'} value={form.joined_at} onChange={(e) => setForm({ ...form, joined_at: e.target.value })} />
+          </Field>
+        )}
         <Field label={t('members.col.status')}>
           <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value as MemberStatus })}>
             {MEMBER_STATUS_OPTIONS.map((st) => (
@@ -267,7 +289,12 @@ export function MemberEditModal({
       <div className="form-row">
         <Field label={t('members.field.churchRole')}>
           <select value={form.church_role} onChange={(e) => setForm({ ...form, church_role: e.target.value as ChurchRole })}>
-            {CHURCH_ROLE_OPTIONS.map((cr) => (
+            {/* The list follows the ROW's own stored role, not the page that
+                opened this modal: a 访客 is edited as a 访客 wherever the modal
+                is opened from, and crossing to 成员 is the 转为成员 button's
+                job. Read off `member`, never `form`, so the options cannot
+                shift under a half-finished edit. */}
+            {churchRoleOptionsFor(member.church_role).map((cr) => (
               <option key={cr} value={cr}>{t(churchRoleKey(cr))}</option>
             ))}
           </select>

@@ -15,7 +15,7 @@ import { useLeaderAccountEvent } from '@/components/LeaderAccountEvent';
 import { can } from '@/lib/perms';
 import { useModuleEnabled } from '@/lib/church';
 import { EnrollmentRow, HappinessParticipationRow, MemberRow, PairRow } from '@/lib/types';
-import { MODULE_DISCIPLESHIP, MODULE_HAPPINESS } from '@tog/shared';
+import { ChurchRole, isMemberRole, MODULE_DISCIPLESHIP, MODULE_HAPPINESS } from '@tog/shared';
 import {
   enrollmentStatusClass,
   enrollmentStatusKey,
@@ -48,6 +48,7 @@ export default function MemberDetailPage() {
   const fileRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
+  const [converting, setConverting] = useState(false);
   const { handleLeaderAccountEvent, leaderAccountModal } = useLeaderAccountEvent();
   const [popupPair, setPopupPair] = useState<string | null>(null);
 
@@ -141,6 +142,34 @@ export default function MemberDetailPage() {
   // Two per row, in the order the church actually thinks about them: where
   // (hall) and what they do (serving), which group and when they joined it,
   // then when they first visited and whether they're still active.
+  const isMember = isMemberRole(m.church_role);
+  const isBest = m.church_role === ChurchRole.Best;
+
+  // 转为成员 — one column, one PATCH. Everything else about the row (their
+  // ticks, their trainings, who referred them, their 来访日期) is deliberately
+  // left exactly as it is: the point of keeping visitors in `members` is that
+  // becoming a member changes what somebody IS to the church, not what the
+  // church has recorded about them. `一般成员` and no group: which life group
+  // and which seat are the next conversation, made on the edit form that this
+  // conversion is precisely what unlocks.
+  const convertToMember = async () => {
+    const ok = await confirm({
+      title: tr('visitors.convert.title'),
+      message: tr('visitors.convert.message', { name: m.full_name }),
+      confirmText: tr('visitors.convert'),
+    });
+    if (!ok) return;
+    setConverting(true);
+    try {
+      await api.patch(`/members/${m.id}`, { church_role: ChurchRole.Member });
+      toast(tr('visitors.toast.converted', { name: m.full_name }));
+      member.reload();
+    } catch (e) {
+      toast((e as Error).message, 'error');
+    } finally {
+      setConverting(false);
+    }
+  };
   const churchFacts = [
     { label: tr('hall.label'), value: m.hall?.name ?? '—' },
     {
@@ -158,16 +187,30 @@ export default function MemberDetailPage() {
           )
         : '',
     },
-    { label: tr('members.col.group'), value: m.group?.name ?? tr('members.filter.ungrouped') },
-    { label: tr('member.field.groupJoinedAt'), value: formatDate(m.group_joined_at) },
-    { label: tr('member.field.joined'), value: formatDate(m.joined_at) },
+    // A BEST has no life group and cannot have one (0032), so the two group
+    // facts are absent rather than drawn as 未分组 — which would read as a gap
+    // the church should close instead of a rule.
+    ...(isBest
+      ? []
+      : [
+          { label: tr('members.col.group'), value: m.group?.name ?? tr('members.filter.ungrouped') },
+          { label: tr('member.field.groupJoinedAt'), value: formatDate(m.group_joined_at) },
+        ]),
+    // 来访日期 reads only for somebody the church is still getting to know —
+    // the same rule the edit form follows (0031). A member's own stored value
+    // is untouched; it simply stopped being one of the facts about them worth
+    // a row of the grid.
+    ...(isMember ? [] : [{ label: tr('member.field.joined'), value: formatDate(m.joined_at) }]),
     { label: tr('members.col.status'), value: tr(memberStatusKey(m.status)) },
   ];
   const notesFacts = [{ label: tr('member.field.notes'), value: m.notes ?? '—' }];
 
   return (
     <>
-      <BackButton fallbackHref="/members" />
+      {/* Only the FALLBACK — a normal arrival goes back where it came from.
+          A 访客 opened straight from a bookmark belongs on `/visitors`, which
+          is the list they are actually on now (0031). */}
+      <BackButton fallbackHref={m.church_role === ChurchRole.Visitor ? '/visitors' : '/members'} />
 
       <div className="card">
         {/* The header is the one place a member IS the page, so it carries the
@@ -205,6 +248,22 @@ export default function MemberDetailPage() {
           }
           actions={
             <>
+            {/* 转为成员 — the ONE way across the 成员/访客 split (0031), and the
+                reason it is a button rather than a value in the 教会身份
+                dropdown: it is a decision the church makes about a person, not
+                a field somebody corrects. One PATCH of one column, because a
+                visitor and a member are the same row — so every roll-call
+                tick, every training and every referral they already carry
+                survives it untouched, which is the whole argument for one
+                table. Confirmed rather than instant: the person moves off the
+                list the office is working through, and un-doing it needs
+                somebody who knows the role select on their page now offers
+                only 访客. */}
+            {perms.write && !isMember && (
+              <button className="btn accent" onClick={convertToMember} disabled={converting}>
+                {converting ? tr('common.saving') : tr('visitors.convert')}
+              </button>
+            )}
             {perms.write && <button className="btn" onClick={() => setEditOpen(true)}>{tr('member.editProfile')}</button>}
             {perms.delete && (
               <button

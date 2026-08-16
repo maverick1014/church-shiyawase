@@ -34,9 +34,9 @@ import { can, Perms } from '@/lib/perms';
 import { exportMatrix } from '@/lib/export';
 import { HappinessAttendanceResponse, HappinessGroupDetail, MemberRow } from '@/lib/types';
 import { columnTickState } from '@/lib/sheet';
-import { weekdayKey, WEEKDAY_OPTIONS } from '@/lib/labels';
+import { churchDisplayRole, weekdayKey, WEEKDAY_OPTIONS } from '@/lib/labels';
 import { useT } from '@/lib/i18n';
-import { AccountRole, ChurchRole, DisplayRole, Weekday } from '@tog/shared';
+import { AccountRole, ChurchRole, isMemberRole, Weekday } from '@tog/shared';
 
 export default function HappinessGroupDetailPage() {
   const { groupId } = useParams<{ groupId: string }>();
@@ -143,7 +143,7 @@ function GroupPanel({
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [addSel, setAddSel] = useState('');
-  const [visitorOpen, setVisitorOpen] = useState(false);
+  const [bestOpen, setBestOpen] = useState(false);
   const [vName, setVName] = useState('');
   const [vEnglishName, setVEnglishName] = useState('');
   const [vPhone, setVPhone] = useState('');
@@ -258,11 +258,21 @@ function GroupPanel({
     }
   };
 
-  // The actual point of 幸福小组: somebody a leader just met has no member
-  // record yet. Rather than sending them off to /members first, this creates
-  // one on the spot — as a 访客 (0021, an ordinary church role, not a status)
-  // in the GROUP's own hall — and lands them straight on this roster.
-  const createVisitor = async () => {
+  // The actual point of 幸福小组: somebody a leader just met has no record yet.
+  // Rather than sending them off to /members first, this creates one on the
+  // spot — as a **BEST** (0031, the church's own word for somebody who is not
+  // a Christian yet but is open to knowing Jesus) in the GROUP's own hall —
+  // and lands them straight on this roster.
+  //
+  // BEST and not 访客: a 访客 came to the CHURCH and may well be a Christian
+  // from elsewhere, and lives on /visitors where the office follows them up.
+  // The person met here is neither, and is followed up by this group's own
+  // leader instead. This is the ONLY form in the app that creates one
+  // (`BEST_ROLE_OPTIONS`) — there is no page whose job is making one in the
+  // abstract, because a BEST is somebody you met. No `group_id` is sent and
+  // none can be: the database refuses a BEST in a life group
+  // (`members_best_has_no_life_group`, 0032).
+  const createBest = async () => {
     if (!vName.trim()) {
       toast(t('members.err.name'), 'error');
       return;
@@ -273,15 +283,15 @@ function GroupPanel({
         full_name: vName.trim(),
         english_name: vEnglishName.trim() || null,
         phone: vPhone.trim() || null,
-        church_role: ChurchRole.Visitor,
+        church_role: ChurchRole.Best,
         hall_id: group.hall_id,
       });
       await api.post(`/happiness/groups/${group.id}/members`, { member_id: created.id });
       setVName('');
       setVEnglishName('');
       setVPhone('');
-      setVisitorOpen(false);
-      toast(t('happy.group.toast.visitorCreated'));
+      setBestOpen(false);
+      toast(t('happy.group.toast.bestCreated'));
       onChanged();
     } catch (e) {
       toast((e as Error).message, 'error');
@@ -504,14 +514,14 @@ function GroupPanel({
               <button className="btn accent" onClick={addMember} disabled={!addSel}>{t('happy.group.addMember')}</button>
             </div>
           )}
-          {perms.write && !visitorOpen && (
-            <button className="btn ghost sm mb-14" onClick={() => setVisitorOpen(true)}>
-              {t('happy.group.newVisitor')}
+          {perms.write && !bestOpen && (
+            <button className="btn ghost sm mb-14" onClick={() => setBestOpen(true)}>
+              {t('happy.group.newBest')}
             </button>
           )}
-          {perms.write && visitorOpen && (
+          {perms.write && bestOpen && (
             <div className="card" style={{ background: 'var(--surface-2)', marginBottom: 14 }}>
-              <div className="faint mb-14" style={{ fontSize: 12 }}>{t('happy.group.newVisitor.hint')}</div>
+              <div className="faint mb-14" style={{ fontSize: 12 }}>{t('happy.group.newBest.hint')}</div>
               <div className="form-row">
                 <Field label={t('members.field.name')}>
                   <input value={vName} onChange={(e) => setVName(e.target.value)} />
@@ -524,10 +534,10 @@ function GroupPanel({
                 <input value={vPhone} onChange={(e) => setVPhone(e.target.value)} />
               </Field>
               <div className="flex gap-8">
-                <button className="btn accent" onClick={createVisitor} disabled={vSaving}>
-                  {vSaving ? t('common.saving') : t('happy.group.newVisitor')}
+                <button className="btn accent" onClick={createBest} disabled={vSaving}>
+                  {vSaving ? t('common.saving') : t('happy.group.newBest')}
                 </button>
-                <button className="btn ghost" onClick={() => setVisitorOpen(false)}>{t('common.cancel')}</button>
+                <button className="btn ghost" onClick={() => setBestOpen(false)}>{t('common.cancel')}</button>
               </div>
             </div>
           )}
@@ -544,15 +554,21 @@ function GroupPanel({
                 {sortedRoster.map((m) => (
                   <tr key={m.id}>
                     <td><MemberName member={m} /></td>
-                    {/* A 福友 is simply a member whose church role is 访客
-                        (0021), and that is the ONE thing worth saying about a
-                        roster row: who here is the visitor this group exists
-                        to reach. Everybody else carries no tag at all — a
-                        column of 组员 badges says nothing the roster does not
-                        already say by listing them. */}
+                    {/* Who on this roster is NOT one of the church's own
+                        members — which is the ONE thing worth saying about a
+                        roster row: who here is the person this group exists to
+                        reach. Everybody else carries no tag at all — a column
+                        of 组员 badges says nothing the roster does not already
+                        say by listing them.
+
+                        `isMemberRole` rather than a test against BEST alone,
+                        and the badge reads the row's OWN role: a roster filled
+                        in before 0031 has 访客 on it, and relabelling those
+                        people BEST would be the app claiming something about
+                        them the church never said. */}
                     <td>
-                      {m.church_role === ChurchRole.Visitor && (
-                        <RoleBadge role={DisplayRole.Visitor} />
+                      {!isMemberRole(m.church_role) && (
+                        <RoleBadge role={churchDisplayRole(m.church_role)} />
                       )}
                     </td>
                     <td style={{ textAlign: 'right' }}>

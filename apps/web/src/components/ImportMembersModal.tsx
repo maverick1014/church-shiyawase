@@ -58,6 +58,10 @@ type ImportMember = {
   english_name: string | null;
   hall_id: string;
   group_position: string | null;
+  // So the PREVIEW refuses a BEST being put into a life group for the same
+  // reason the server will (0032) — a preview that promises a row will apply
+  // and then watches the server skip it is worse than no preview.
+  church_role: string;
 };
 
 /**

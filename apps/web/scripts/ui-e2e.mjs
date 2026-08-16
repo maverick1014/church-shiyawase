@@ -2772,7 +2772,7 @@ async function main() {
     const halls = await (await ctx.request.get(`${BASE}/api/halls`)).json();
     const expectSwitcher = Array.isArray(halls) && halls.length > 1;
 
-    const LIST_PAGES = ['/members', '/groups', '/events', '/trainings', '/discipleship', '/happiness', '/settings'];
+    const LIST_PAGES = ['/members', '/visitors', '/groups', '/events', '/trainings', '/discipleship', '/happiness', '/settings'];
     const strays = [];
     const missingDrawerHall = [];
     const noBar = [];
@@ -3024,6 +3024,91 @@ async function main() {
     await w(600);
     check('choosing “Discard” closes the form', (await page.locator('.modal').count()) === 0);
 
+    /* -- 成员 / 访客, split into two pages (0031) --------------------------- */
+    /*
+     * The whole point of the split: /members lists the church's own members
+     * and /visitors lists 访客, so a visitor who came once and vanished stops
+     * sitting in the middle of the roll. Both are the SAME table narrowed
+     * server-side (`?scope=`), which is why the fixture below can be created
+     * as a 访客 through the API and then found on one page and not the other.
+     */
+    mod('成员 / 访客 · two pages, one table, one way across');
+    const fxVisitor = await makeMember('VISITOR', { church_role: 'visitor', joined_at: '2026-08-02' });
+    try {
+      await page.goto(`${BASE}/visitors`, { waitUntil: 'domcontentloaded' });
+      await page.locator('.page-bar').first().waitFor({ timeout: 20000 });
+      await page.fill('input[placeholder*="Search"]', fxVisitor.name);
+      await w(700);
+      check('a 访客 is listed on /visitors',
+        (await page.locator(`.mtile:has-text("${fxVisitor.name}")`).count()) === 1);
+      // 来访日期 is the fact this page is built around — it left the member
+      // list and the member form, and lives here instead.
+      check('…with the visit date the member list no longer carries',
+        (await page.locator(`.mtile:has-text("${fxVisitor.name}")`).first().innerText()).includes('2026-08-02'));
+      check('the visitors page hands out a first-visit link of its own',
+        (await page.locator('button:visible:has-text("First-visit link")').count()) === 1);
+      check('…and its add button makes a VISITOR, not a member',
+        (await page.locator('button:visible:has-text("Add visitor")').count()) === 1);
+
+      // The same person must NOT be on the members list — that is the split.
+      await page.goto(`${BASE}/members`, { waitUntil: 'domcontentloaded' });
+      await page.locator('.page-bar').first().waitFor({ timeout: 20000 });
+      await page.fill('input[placeholder*="Search"]', fxVisitor.name);
+      await w(700);
+      check('…and is NOT on the members list',
+        (await page.locator(`.mtile:has-text("${fxVisitor.name}")`).count()) === 0);
+      const roleOpts = await page.locator('.page-bar-filters select option').allTextContents();
+      check('the members-list role filter drops 访客 and BEST — it can only ever empty the table',
+        !roleOpts.some((o) => /Visitor|BEST/i.test(o)),
+        roleOpts.join(' | ').slice(0, 160));
+
+      // 转为成员 — the one way across, on the person's own page, confirmed.
+      await page.goto(`${BASE}/members/${fxVisitor.id}`, { waitUntil: 'domcontentloaded' });
+      await page.locator('.fact').first().waitFor({ timeout: 20000 });
+      check('a visitor’s own page offers 转为成员',
+        (await page.locator('button:visible:has-text("Make a member")').count()) === 1);
+      check('…and shows the visit date, which a member’s page does not',
+        (await page.locator('.content').innerText()).includes('2026-08-02'));
+      await page.locator('button:visible:has-text("Make a member")').first().click();
+      await page.locator('.modal-backdrop').waitFor({ timeout: 8000 });
+      check('…asking first, and saying what survives the change',
+        /stays exactly as it is/i.test(await page.locator('.modal-backdrop').innerText()));
+      await page.locator('.modal-backdrop button:has-text("Make a member")').first().click();
+      // The page re-reads itself after the PATCH; poll rather than sleep on it.
+      const converted = await pollUntil(
+        async () => (await page.locator('button:visible:has-text("Make a member")').count()) === 0,
+        (gone) => gone === true,
+        8000,
+      );
+      check('confirming makes them a member, and the button goes with it', converted);
+      if (converted) {
+        check('…and the visit date stops being drawn about them',
+          !(await page.locator('.content').innerText()).includes('2026-08-02'));
+      }
+
+      // The public first-visit form: no session, no shell, a page of its own.
+      const anonWelcome = await browser.newContext({ viewport: { width: 402, height: 874 } });
+      try {
+        const wp = await anonWelcome.newPage();
+        await wp.goto(`${BASE}/welcome`, { waitUntil: 'domcontentloaded' });
+        await wp.locator('input').first().waitFor({ timeout: 20000 });
+        const welcomeBody = await wp.locator('body').innerText();
+        check('the first-visit link opens with no session at all',
+          (await wp.locator('.sidebar').count()) === 0 &&
+            (/Nice to meet you/i.test(welcomeBody) || welcomeBody.includes('很高兴认识你')),
+          welcomeBody.replace(/\s+/g, ' ').slice(0, 140));
+        check('…and asks a stranger nothing about a life group or a ministry',
+          !/Life group|小组/i.test(welcomeBody) && !/Ministry|服侍/i.test(welcomeBody),
+          welcomeBody.replace(/\s+/g, ' ').slice(0, 200));
+      } finally {
+        await anonWelcome.close();
+      }
+    } catch (e) {
+      check('the run aborted', false, e.message.split('\n')[0]);
+    } finally {
+      await fxVisitor.remove();
+    }
+
     mod('write cycle · create / delete a member');
     const testName = 'ZZ_UITEST_' + String(Date.now()).slice(-7);
     await page.goto(`${BASE}/members`, { waitUntil: 'domcontentloaded' });
@@ -3037,12 +3122,19 @@ async function main() {
     const hallSel = page.locator('.modal select').first();
     const hallOpt = await hallSel.locator('option').nth(1).getAttribute('value');
     if (hallOpt) await hallSel.selectOption(hallOpt);
-    /* 访客 + 领路人 (migration 0021, renamed from 推荐人) — the fifth church
-       role has to be on offer in the form that writes one, and the guide is
-       a Combobox (never a `<select>`, rule G4) whose default is an explicit
-       无领路人 rather than an empty field. */
-    check('the member form offers 访客 as a church role',
-      (await page.locator('.modal select option[value="visitor"]').count()) === 1);
+    /* The 成员/访客 split (0031): this form makes MEMBERS, so 访客 and BEST
+       are not among its 教会身份 options at all — the visitor form on
+       /visitors makes one of those, and 转为成员 is the only way across.
+       (This check used to assert the opposite; the split is what changed.) */
+    check('the member form no longer offers 访客 or BEST as a church role',
+      (await page.locator('.modal select option[value="visitor"]').count()) === 0 &&
+        (await page.locator('.modal select option[value="best"]').count()) === 0);
+    check('…while still offering the ranks a member holds',
+      (await page.locator('.modal select option[value="member"]').count()) === 1 &&
+        (await page.locator('.modal select option[value="pastor"]').count()) === 1);
+    /* 领路人 (migration 0021, renamed from 推荐人) — a Combobox, never a
+       `<select>` (rule G4), whose default is an explicit 无领路人 rather than
+       an empty field. */
     const referrerBox = page.locator('.modal input[role="combobox"]');
     check('…and a 领路人 picker that is a searchable member combobox',
       (await referrerBox.count()) === 1);

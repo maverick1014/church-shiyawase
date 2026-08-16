@@ -61,7 +61,14 @@ export default function MembersPage() {
   const perms = can(me.role);
   // Only worth a column when the account can actually see more than one hall.
   const { locked: hallLocked } = useHallScope();
-  const { data, initialLoading, error, reload } = useFetch<MemberRow[]>('/members');
+  // `scope=member` — the church's OWN members, never a 访客 or a BEST (0031).
+  // Those two are what this page was drowning in: somebody who came once and
+  // never again sat in the same table as the people the church actually
+  // shepherds, so neither list could be read. They have pages of their own now
+  // (`/visitors`, and a 幸福小组's roster), and the narrowing is the SERVER's
+  // (rule G2) rather than a filter applied after the fact, so a congregation
+  // with 400 visitors does not ship all 400 down to hide them.
+  const { data, initialLoading, error, reload } = useFetch<MemberRow[]>('/members?scope=member');
   const [q, setQ] = useState('');
   const [roleFilter, setRoleFilter] = useState<string>('all');
   const [groupFilter, setGroupFilter] = useState<string>('all');
@@ -386,7 +393,6 @@ export default function MembersPage() {
 
       {addOpen && (
         <AddMemberModal
-          members={members}
           servingSuggestions={allServing}
           onClose={() => setAddOpen(false)}
           onSaved={(leaderEvent, name) => {
@@ -407,13 +413,10 @@ export default function MembersPage() {
 }
 
 function AddMemberModal({
-  members,
   servingSuggestions,
   onClose,
   onSaved,
 }: {
-  /** The roll this page already fetched — the 推荐人 picker's options (G5). */
-  members: MemberRow[];
   /** The 服侍岗位 the church already uses — the list is free text, so the only
    *  thing standing between 敬拜 and 敬拜团 is what somebody typed last time. */
   servingSuggestions: string[];
@@ -468,16 +471,24 @@ function AddMemberModal({
   // only one option, use it without making the user pick.
   const effectiveHallId = form.hall_id ?? (halls.length === 1 ? halls[0].id : null);
 
+  // The WHOLE roll, not the members-only list this page draws: who invited
+  // somebody is very often the 访客 who came the week before and brought a
+  // friend, and a picker that could not name them would quietly turn "who
+  // brought you" into "which member brought you". Its own fetch, exactly like
+  // `MemberEditModal`'s (rule G4) — the page's own list answers a narrower
+  // question now and can no longer stand in for this one.
+  //
   // Nobody to exclude: the person does not exist yet, so they cannot be their
   // own referrer.
+  const allMembers = useFetch<MemberRow[]>('/members');
   const memberOptions = useMemberOptions();
   const referrerOpts = useMemo(
     () =>
-      memberOptions(members, {
+      memberOptions(allMembers.data ?? [], {
         lead: { value: '', label: t('members.noReferrer') },
         hint: (m) => t(roleKey(memberRole(m as MemberRow))),
       }),
-    [members, memberOptions, t],
+    [allMembers.data, memberOptions, t],
   );
 
   const save = async () => {

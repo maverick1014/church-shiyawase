@@ -710,6 +710,41 @@ tbody tr:last-child td {
   }
 }
 
+/* The heading that opens a section of a roll-call sheet — 成员, then 访客
+   (0031). A quiet band across the whole width: it has to separate two groups
+   of rows without competing with the sticky header above or the totals rule
+   below, both of which are louder on purpose.
+
+   The cell itself spans every column, so it is the one first-child cell in a
+   `<tbody>` that is NOT a name — the name column's `min-width`/`nowrap`/
+   `max-width` have to be undone here exactly as they are for the empty-state
+   row below.
+
+   Sticky is on the inner SPAN, not on the cell. A cell wider than the viewport
+   pinned at `left: 0` does not move, but its left-aligned text scrolls out of
+   sight with everything else — and this sheet scrolls sideways by design, with
+   the name column pinned, so the moment a month has more occasions than fit
+   you would be reading pinned names under a heading that had scrolled away.
+   Pinning the label instead keeps it beside them. */
+.sheet-table tbody tr.sheet-section > th {
+  min-width: 0;
+  max-width: none;
+  white-space: nowrap;
+  text-align: left;
+  background: var(--surface-2);
+  padding: 6px 10px;
+}
+.sheet-table tbody tr.sheet-section > th > span {
+  position: sticky;
+  left: 10px;
+  display: inline-block;
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
 /* An empty-state row's one `colSpan` cell is also its row's first child, so
    it inherited the name column's nowrap above and clipped instead of
    wrapping its own sentence — this is the one first-child cell that is not
