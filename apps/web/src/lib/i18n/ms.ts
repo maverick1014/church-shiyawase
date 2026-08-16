@@ -46,6 +46,7 @@ export const ms: Messages = {
   'nav.section.system': 'Sistem',
   'nav.dashboard': 'Papan Pemuka',
   'nav.members': 'Ahli',
+  'nav.visitors': 'Pelawat',
   'nav.groups': 'Kumpulan Sel',
   'nav.events': 'Kebaktian & Doa',
   'nav.trainings': 'Latihan & Aktiviti',
@@ -179,6 +180,22 @@ export const ms: Messages = {
   'members.registerLinkTitle': 'Salin pautan awam untuk orang mendaftarkan diri sendiri',
   'members.toast.linkCopied': 'Pautan pendaftaran disalin',
 
+  /* ---- Pelawat (/visitors) ---------------------------------------------- */
+  'visitors.title': 'Pelawat',
+  'visitors.col.visitor': 'Pelawat',
+  'visitors.add': '＋ Tambah pelawat',
+  'visitors.new.title': 'Tambah pelawat',
+  'visitors.empty': 'Tiada pelawat yang sepadan dengan penapis ini.',
+  'visitors.hint': '💡 Ketik seorang pelawat untuk melihat rekod penuh mereka — dan untuk menjadikan mereka ahli apabila tiba masanya.',
+  'visitors.referredBy': 'Dibawa oleh',
+  'visitors.toast.created': 'Pelawat ditambah',
+  'visitors.registerLink': 'Pautan lawatan pertama',
+  'visitors.registerLinkTitle': 'Salin pautan awam yang diisi sendiri oleh pelawat kali pertama',
+  'visitors.convert': 'Jadikan ahli',
+  'visitors.convert.title': 'Jadikan orang ini seorang ahli?',
+  'visitors.convert.message': '{name} akan masuk ke senarai ahli. Semua yang telah direkodkan tentang mereka — kehadiran, latihan, siapa yang membawa mereka — kekal seperti sedia ada.',
+  'visitors.toast.converted': '{name} kini seorang ahli',
+
   /* ---- import senarai ahli ----------------------------------------------
    * Fail ini akan dibetulkan dan dimuat naik semula oleh seseorang, jadi
    * setiap penolakan menyebut nombor baris dan nilai yang bermasalah. Label
@@ -257,6 +274,7 @@ export const ms: Messages = {
   'import.issue.no_hall': 'Gereja ini mempunyai lebih daripada satu kongregasi, jadi setiap baris memerlukan satu.',
   'import.issue.other_hall': 'Orang ini milik kongregasi lain, yang tidak boleh diubah oleh akaun ini.',
   'import.issue.group_other_hall': '“{value}” ialah kumpulan sel kongregasi lain.',
+  'import.issue.best_in_group': 'BEST tergolong dalam 幸福小组, bukan kumpulan sel — buang “{value}”.',
 
   /* ---- pemilih gambar yang dikongsi ------------------------------------- */
   'photo.choose': 'Tambah gambar',
@@ -395,6 +413,8 @@ export const ms: Messages = {
   'events.sheet': 'Ambil kehadiran',
   'events.sheetSub': 'Setiap hari Ahad bulan ini, serta perjumpaan yang ditambah untuknya — ikut tarikh',
   'events.sheetEmpty': 'Belum ada ahli aktif.',
+  'events.section.members': 'Ahli',
+  'events.section.visitors': 'Pelawat',
   'events.col.preService': 'Pra-kebaktian',
   'events.col.service': 'Kebaktian',
   'events.col.attended': 'Hadir',
@@ -855,6 +875,18 @@ export const ms: Messages = {
   // {church} ialah nama gereja itu sendiri, daripada rekodnya — bukan terjemahan.
   'join.privacy': '🔒 Butiran anda disimpan oleh pejabat gereja sahaja · {church}',
 
+  /* ---- /welcome — borang lawatan pertama (0031) -------------------------- */
+  'welcome.header': 'Selamat datang',
+  'welcome.title': 'Gembira bertemu anda',
+  'welcome.intro': 'Beberapa maklumat sahaja supaya kami dapat menyapa anda — hanya nama yang diperlukan.',
+  'welcome.field.broughtBy': 'Siapa yang membawa anda?',
+  'welcome.hint': '💡 Biarkan kosong apa-apa yang anda tidak mahu kongsi.',
+  'welcome.submit': 'Sapa kami',
+  'welcome.createdTitle': 'Selamat datang!',
+  'welcome.created': 'Terima kasih, {name} — kami gembira anda datang. Seseorang akan menghubungi anda.',
+  'welcome.updatedTitle': 'Gembira berjumpa lagi',
+  'welcome.updated': 'Terima kasih, {name} — maklumat anda telah dikemas kini.',
+
   /* ---- enum labels ----------------------------------------------------- */
   'role.pastor': 'Pastor',
   'role.deacon': 'Diakon',
@@ -866,6 +898,7 @@ export const ms: Messages = {
   'role.regular_member': 'Ahli biasa',
   'role.new_member': 'Ahli baharu',
   'role.visitor': 'Pelawat',
+  'role.best': 'BEST',
   'role.ungrouped': 'Tiada kumpulan',
 
   'churchRole.pastor': 'Pastor',
@@ -873,6 +906,7 @@ export const ms: Messages = {
   'churchRole.co_worker': 'Rakan sekerja',
   'churchRole.member': 'Ahli biasa',
   'churchRole.visitor': 'Pelawat',
+  'churchRole.best': 'BEST',
 
   'weekday.sunday': 'Ahad',
   'weekday.monday': 'Isnin',
@@ -1033,7 +1067,7 @@ export const ms: Messages = {
   'happy.group.notFound': 'Kumpulan tidak dijumpai',
   'happy.group.addMemberPlaceholder': 'Pilih ahli untuk ditambah…',
   'happy.group.addMember': '＋ Tambah ahli',
-  'happy.group.newVisitor': '＋ Pelawat baharu',
+  'happy.group.newBest': '＋ BEST baharu',
 
   /* 活动记录 (0029/0030) — dated records with photos and a note, kept by a
      幸福小组 AND by a life group, which is why the keys are not happiness-scoped. */
@@ -1063,8 +1097,8 @@ export const ms: Messages = {
   'act.toast.deleted': 'Aktiviti dipadam',
   'act.toast.photoAdded': 'Foto ditambah',
   'act.toast.photoRemoved': 'Foto dibuang',
-  'happy.group.newVisitor.hint': 'Seseorang yang belum menjadi ahli — terus ditambah ke senarai ini sebagai pelawat.',
-  'happy.group.toast.visitorCreated': 'Pelawat ditambah ke senarai',
+  'happy.group.newBest.hint': 'Seseorang yang baru anda kenali, belum Kristian tetapi terbuka untuk mengenal Yesus — terus ditambah ke senarai ini.',
+  'happy.group.toast.bestCreated': 'BEST ditambah ke senarai',
   'happy.group.removeMember.title': 'Keluarkan daripada senarai',
   'happy.group.removeMember.message': 'Keluarkan {name} daripada senarai ini? Kehadiran mereka yang telah direkod kekal disimpan.',
   'happy.group.toast.joined': 'Ditambah ke senarai',
@@ -1080,4 +1114,6 @@ export const ms: Messages = {
   'happy.attendance.present': 'Hadir',
   'happy.attendance.notPresent': 'Tidak hadir',
   'happy.attendance.empty': 'Belum ada sesiapa dalam senarai.',
+  'happy.best.title': 'Senarai BEST',
+  'happy.best.col.group': 'Kumpulan Kebahagiaan',
 };

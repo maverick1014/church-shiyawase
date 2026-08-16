@@ -79,7 +79,9 @@ export default function MyProfilePage() {
     { label: t('member.field.gender'), value: m?.gender ? t(genderKey(m.gender)) : '—' },
     { label: t('member.field.birthday'), value: formatDate(m?.date_of_birth) },
     { label: t('members.col.group'), value: m?.group?.name ?? t('members.filter.ungrouped') },
-    { label: t('member.field.joined'), value: formatDate(m?.joined_at) },
+    // No 来访日期: an account holder is one of the church's own members by
+    // definition, and when they FIRST visited stopped being a fact the app
+    // draws about a member (0031). The column is untouched.
     { label: t('settings.language'), value: t(`language.${p.language}` as MessageKey) },
     {
       label: t('profile.field.lastLogin'),

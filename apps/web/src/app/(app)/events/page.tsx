@@ -37,7 +37,8 @@ import { sheetColumnStates, sheetColumnWrites } from '@/lib/sheet';
 import { sheetTickKey } from '@/lib/labels';
 import { churchParts, fromChurchInput, toChurchInput } from '@/lib/time';
 import { useT } from '@/lib/i18n';
-import { AccountRole, EventType } from '@tog/shared';
+import type { MessageKey } from '@/lib/i18n';
+import { AccountRole, EventType, isMemberRole } from '@tog/shared';
 
 /**
  * 崇拜与祷告会 — ONE roll-call sheet for the month.
@@ -82,6 +83,33 @@ export default function EventsPage() {
   // 全员到齐 and the totals row covering everybody, which read as a
   // contradiction; simpler to list the whole congregation, always.
   const rows = sheet.data?.rows ?? [];
+
+  /**
+   * The same rows, in two SECTIONS — the church's own members, then the 访客
+   * (0031, church feedback).
+   *
+   * A presentation split and nothing more: it is still ONE sheet, one set of
+   * columns, one check-all per column, one totals row and one PUT path. What
+   * changed is that a roll call is read down the page looking for a name, and
+   * a congregation's visitors interleaved alphabetically through its members
+   * made both halves harder to find — while the two are followed up by
+   * different people for different reasons.
+   *
+   * `isMemberRole`, not a test against 访客, so the day a third non-member
+   * role appears it lands in the second section rather than silently in the
+   * first. (A BEST is not here at all — the server leaves them off this sheet;
+   * they are rolled weekly in their own 幸福小组.) Order inside each section
+   * is the server's own, untouched.
+   */
+  const sections = useMemo(() => {
+    const members: RollCallSheetRow[] = [];
+    const visitors: RollCallSheetRow[] = [];
+    for (const r of rows) (isMemberRole(r.member.church_role) ? members : visitors).push(r);
+    return [
+      { key: 'members' as const, label: 'events.section.members' as MessageKey, rows: members },
+      { key: 'visitors' as const, label: 'events.section.visitors' as MessageKey, rows: visitors },
+    ].filter((s) => s.rows.length > 0);
+  }, [rows]);
 
   const toggle = async (row: RollCallSheetRow, column: SheetColumn, tick: SheetTickName) => {
     const current = row.cells[column.key] ?? {};
@@ -187,10 +215,19 @@ export default function EventsPage() {
     ];
     // The exported sheet reads like the screen: ticks, then ONE totals row at
     // the bottom — the headcount per occasion, not a per-person tally.
-    const matrix: (string | number)[][] = rows.map((r) => [
-      r.member.full_name,
-      ...columns.flatMap((c) => c.ticks.map((tick) => (r.cells[c.key]?.[tick] ? '✓' : ''))),
-    ]);
+    // Sectioned exactly like the screen (0031): a heading row, then that
+    // section's people. A spreadsheet the church prints and reads down is the
+    // same reading task the page is, so it should not be a differently
+    // ordered list.
+    const matrix: (string | number)[][] = [];
+    for (const section of sections) {
+      if (sections.length > 1) matrix.push([t(section.label)]);
+      for (const r of section.rows)
+        matrix.push([
+          r.member.full_name,
+          ...columns.flatMap((c) => c.ticks.map((tick) => (r.cells[c.key]?.[tick] ? '✓' : ''))),
+        ]);
+    }
     matrix.push([t('sheet.totalPeople'), ...totals.map((x) => x.value)]);
     exportMatrix(
       t('events.exportFile', { year, month: String(month).padStart(2, '0') }),
@@ -339,27 +376,47 @@ export default function EventsPage() {
                   ))}
                 </tr>
               </thead>
-              <tbody>
-                {rows.map((r) => (
-                  <tr key={r.member.id}>
-                    <td><MemberName member={r.member} /></td>
-                    {columns.map((c) => (
-                      <Fragment key={c.key}>
-                        {c.ticks.map((tick) => (
-                          <td key={tick} style={{ textAlign: 'center' }}>
-                            <SheetTick
-                              checked={!!r.cells[c.key]?.[tick]}
-                              onToggle={() => toggle(r, c, tick)}
-                              disabled={!perms.write}
-                              title={`${columnLabel(c)} · ${t(sheetTickKey(tick))}`}
-                            />
-                          </td>
-                        ))}
-                      </Fragment>
-                    ))}
+              {/* One `<tbody>` per section, each opened by a heading row. Two
+                  bodies rather than one with heading rows inside it: that is
+                  what a section IS in a table, and it keeps the sticky name
+                  column and the totals `<tfoot>` below working unchanged.
+                  A section with nobody in it is not rendered at all — a
+                  congregation with no visitors this month should not be shown
+                  an empty heading (`sections` already drops it). */}
+              {sections.map((section) => (
+                <tbody key={section.key}>
+                  <tr className="sheet-section">
+                    {/* Spans the name column and every sub-column of every
+                        occasion — computed, never hard-typed, so a month with
+                        more meetings cannot leave the heading short. */}
+                    <th colSpan={1 + columns.reduce((n, c) => n + c.ticks.length, 0)}>
+                      {/* The label is what stays pinned when the sheet scrolls
+                          sideways, not the cell — see `.sheet-section` in
+                          globals.css. */}
+                      <span>{t(section.label)} ({section.rows.length})</span>
+                    </th>
                   </tr>
-                ))}
-              </tbody>
+                  {section.rows.map((r) => (
+                    <tr key={r.member.id}>
+                      <td><MemberName member={r.member} /></td>
+                      {columns.map((c) => (
+                        <Fragment key={c.key}>
+                          {c.ticks.map((tick) => (
+                            <td key={tick} style={{ textAlign: 'center' }}>
+                              <SheetTick
+                                checked={!!r.cells[c.key]?.[tick]}
+                                onToggle={() => toggle(r, c, tick)}
+                                disabled={!perms.write}
+                                title={`${columnLabel(c)} · ${t(sheetTickKey(tick))}`}
+                              />
+                            </td>
+                          ))}
+                        </Fragment>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              ))}
               {/* How many people each occasion drew, under its own column —
                   the shared footer all three sheets use (rule G4). */}
               <SheetTotals counts={totals} />

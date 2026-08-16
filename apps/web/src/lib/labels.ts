@@ -68,25 +68,75 @@ const CHURCH_DISPLAY_ROLE: Record<ChurchRole, DisplayRole> = {
   [ChurchRole.CoWorker]: DisplayRole.CoWorker,
   [ChurchRole.Member]: DisplayRole.RegularMember,
   [ChurchRole.Visitor]: DisplayRole.Visitor,
+  [ChurchRole.Best]: DisplayRole.Best,
 };
 
 export function churchDisplayRole(role: ChurchRole | string): DisplayRole {
   return CHURCH_DISPLAY_ROLE[role as ChurchRole] ?? DisplayRole.Ungrouped;
 }
 
+/*
+ * 教会身份 is offered by THREE forms now, and they own DISJOINT halves of the
+ * enum — that split is the whole point of separating 成员 from 访客 (0031).
+ * A form that offered the lot would let the 成员 page create a 访客 it then
+ * refuses to list, which is exactly the mess the two pages exist to end.
+ *
+ * The three lists together must still cover every `ChurchRole`, and must not
+ * overlap — `labels.test.ts` asserts both, so a role added to the enum and to
+ * none of them fails at the point it is cheap to fix.
+ */
+
+/** What the MEMBER form may create — the ranks a member of the church holds. */
 export const CHURCH_ROLE_OPTIONS: ChurchRole[] = [
   ChurchRole.Pastor,
   ChurchRole.Deacon,
   ChurchRole.CoWorker,
   ChurchRole.Member,
-  ChurchRole.Visitor,
 ];
+
+/** What the VISITOR page's own form may create — 访客 only. */
+export const VISITOR_ROLE_OPTIONS: ChurchRole[] = [ChurchRole.Visitor];
+
+/**
+ * What a 幸福小组 roster may create — BEST only. There is no page whose job is
+ * making one in the abstract: a BEST is somebody you MET, in a 幸福小组, so the
+ * only form that offers the role is the roster's own quick-add.
+ */
+export const BEST_ROLE_OPTIONS: ChurchRole[] = [ChurchRole.Best];
+
+/**
+ * Which of the three a form may offer for somebody who currently holds `role`.
+ *
+ * A form never lets a person CROSS the split — a 访客 does not become a member
+ * by someone reopening a dropdown, they become one through the 转为成员 button,
+ * which is a deliberate act with a page of its own. But the `<select>` still
+ * has to contain the value it is currently showing, or it renders blank and
+ * saving it silently rewrites the role (the same trap `ACCOUNT_ROLE_OPTIONS`
+ * documents). So the list follows the row rather than the page.
+ */
+export function churchRoleOptionsFor(role: ChurchRole | string | null | undefined): ChurchRole[] {
+  if (role === ChurchRole.Best) return BEST_ROLE_OPTIONS;
+  if (role === ChurchRole.Visitor) return VISITOR_ROLE_OPTIONS;
+  return CHURCH_ROLE_OPTIONS;
+}
 
 /** Full display order for the ranks, for filter dropdowns + charts. */
 export const ROLE_ORDER = DISPLAY_ROLE_ORDER;
 
-/** Member-directory filters: the ranks plus 未分组 (unassigned). */
-export const MEMBER_ROLE_FILTERS: DisplayRole[] = [...ROLE_ORDER, DisplayRole.Ungrouped];
+/**
+ * The display roles somebody who is NOT one of the church's own members reads
+ * as — the `DisplayRole` half of `NON_MEMBER_ROLES`. Each has a page of its
+ * own now (0031), which is why neither appears in the members-list filter:
+ * a dropdown offering 访客 on a list that by definition contains none is a
+ * filter that can only ever empty the table.
+ */
+export const NON_MEMBER_DISPLAY_ROLES: DisplayRole[] = [DisplayRole.Visitor, DisplayRole.Best];
+
+/** Member-directory filters: the ranks a MEMBER can read as, plus 未分组. */
+export const MEMBER_ROLE_FILTERS: DisplayRole[] = [
+  ...ROLE_ORDER.filter((r) => !NON_MEMBER_DISPLAY_ROLES.includes(r)),
+  DisplayRole.Ungrouped,
+];
 
 /**
  * The six in-group ranks, in promotion order — shared by 小组管理's position
@@ -197,6 +247,11 @@ export const ROLE_TAG: Record<string, { bg: string; fg: string; dot: string }> =
   // to be told apart at a glance from 普通成员's cool grey and from 未分组's
   // warm grey, without competing with the colours leadership is painted in.
   [DisplayRole.Visitor]: { bg: '#f0e6db', fg: '#8a5a33', dot: '#b57a49' },
+  // BEST — the person a 幸福小组 exists to reach (0031). A teal-leaning green
+  // that no rank uses: it has to read as its own kind of person beside 访客's
+  // warm sand, not as a shade of it, because the two are followed up by
+  // different people for different reasons.
+  [DisplayRole.Best]: { bg: '#d9f2ea', fg: '#136b5a', dot: '#1c9b81' },
   [DisplayRole.Ungrouped]: { bg: '#f0eeec', fg: '#9a938f', dot: '#c3bbb6' },
 };
 

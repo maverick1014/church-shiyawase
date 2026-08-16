@@ -49,6 +49,7 @@ export const en = {
   'nav.section.system': 'System',
   'nav.dashboard': 'Dashboard',
   'nav.members': 'Members',
+  'nav.visitors': 'Visitors',
   'nav.groups': 'Life Groups',
   'nav.events': 'Services',
   'nav.trainings': 'Trainings & Activities',
@@ -188,6 +189,29 @@ export const en = {
   'members.registerLinkTitle': 'Copy the public link people fill in to register themselves',
   'members.toast.linkCopied': 'Registration link copied',
 
+  /* ---- 访客 (/visitors) --------------------------------------------------
+   * The same `members` table, narrowed to `church_role: visitor` (0031). Its
+   * own page because the two lists answer different questions: who the church
+   * shepherds, and who has turned up. Keys are `visitors.*` and never
+   * `members.visitor.*` — a key must not lie about the surface it belongs to
+   * (rule G8).
+   */
+  'visitors.title': 'Visitors',
+  'visitors.col.visitor': 'Visitor',
+  'visitors.add': '＋ Add visitor',
+  'visitors.new.title': 'Add visitor',
+  'visitors.empty': 'No visitors match these filters.',
+  'visitors.hint': '💡 Tap a visitor to see their full record — and to make them a member once they belong.',
+  'visitors.referredBy': 'Brought by',
+  'visitors.toast.created': 'Visitor added',
+  'visitors.registerLink': 'First-visit link',
+  'visitors.registerLinkTitle': 'Copy the public link a first-time visitor fills in themselves',
+  // 转为成员 — the one way across the member/visitor split.
+  'visitors.convert': 'Make a member',
+  'visitors.convert.title': 'Make this person a member?',
+  'visitors.convert.message': '{name} joins the members list. Everything already recorded about them — attendance, trainings, who brought them — stays exactly as it is.',
+  'visitors.toast.converted': '{name} is now a member',
+
   /* ---- importing a spreadsheet of members -------------------------------
    * A file a person will fix and upload again, so every refusal names the row
    * and the value it choked on. The field labels double as the template's
@@ -268,6 +292,7 @@ export const en = {
   'import.issue.no_hall': 'This church has more than one congregation, so every row needs one.',
   'import.issue.other_hall': 'This person belongs to another congregation, which this account may not change.',
   'import.issue.group_other_hall': '“{value}” is another congregation’s life group.',
+  'import.issue.best_in_group': 'A BEST belongs to a 幸福小组, not to a life group — remove “{value}”.',
 
   /* ---- the shared photo picker ------------------------------------------ */
   'photo.choose': 'Add a photo',
@@ -417,6 +442,11 @@ export const en = {
   'events.sheet': 'Roll call',
   'events.sheetSub': 'Every Sunday of the month, plus any meeting added for it — in date order',
   'events.sheetEmpty': 'No members on roll yet.',
+  // The roll call reads in two sections — the church's own members, then the
+  // 访客 (0031). One sheet, one set of columns, one totals row; only the
+  // reading order changed.
+  'events.section.members': 'Members',
+  'events.section.visitors': 'Visitors',
   'events.col.preService': 'Pre-service',
   'events.col.service': 'Service',
   'events.col.attended': 'Attended',
@@ -886,6 +916,24 @@ export const en = {
   // {church} is the church's own name, from its record — never a translation.
   'join.privacy': '🔒 Your details are kept by the church office only · {church}',
 
+  /* ---- /welcome — the public FIRST-VISIT form (0031) ---------------------
+   * The visitor half of /join. Its own keys rather than reused `join.*` ones
+   * wherever the wording differs, because the two forms are addressed to two
+   * different people: one to somebody joining, one to somebody who has just
+   * walked in. Where the wording is genuinely identical (a name field, a
+   * phone field) it reuses `join.*` rather than duplicating it (rule G4).
+   */
+  'welcome.header': 'Welcome',
+  'welcome.title': 'Nice to meet you',
+  'welcome.intro': 'Just a few details so we can say hello properly — nothing here is required except your name.',
+  'welcome.field.broughtBy': 'Who brought you?',
+  'welcome.hint': '💡 Leave anything blank you would rather not share.',
+  'welcome.submit': 'Say hello',
+  'welcome.createdTitle': 'Welcome!',
+  'welcome.created': 'Thank you, {name} — we are glad you came. Someone will be in touch.',
+  'welcome.updatedTitle': 'Good to see you again',
+  'welcome.updated': 'Thank you, {name} — we have updated your details.',
+
   /* ---- enum labels ------------------------------------------------------
    * Keyed by the stored code, never by a translated string, so the palette
    * and sort order in labels.ts stay language-independent.
@@ -900,6 +948,7 @@ export const en = {
   'role.regular_member': 'Regular',
   'role.new_member': 'New',
   'role.visitor': 'Visitor',
+  'role.best': 'BEST',
   'role.ungrouped': 'Ungrouped',
 
   'churchRole.pastor': 'Pastor',
@@ -907,6 +956,7 @@ export const en = {
   'churchRole.co_worker': 'Co-worker',
   'churchRole.member': 'Regular member',
   'churchRole.visitor': 'Visitor',
+  'churchRole.best': 'BEST',
 
   'weekday.sunday': 'Sunday',
   'weekday.monday': 'Monday',
@@ -1069,7 +1119,7 @@ export const en = {
   'happy.group.notFound': 'Group not found',
   'happy.group.addMemberPlaceholder': 'Choose a member to add…',
   'happy.group.addMember': '＋ Add member',
-  'happy.group.newVisitor': '＋ New visitor',
+  'happy.group.newBest': '＋ New BEST',
 
   /* 活动记录 (0029/0030) — dated records with photos and a note, kept by a
      幸福小组 AND by a life group, which is why the keys are not happiness-scoped. */
@@ -1099,8 +1149,8 @@ export const en = {
   'act.toast.deleted': 'Activity deleted',
   'act.toast.photoAdded': 'Photo added',
   'act.toast.photoRemoved': 'Photo removed',
-  'happy.group.newVisitor.hint': 'Somebody who isn’t a member yet — added straight onto this roster as a visitor.',
-  'happy.group.toast.visitorCreated': 'Visitor added to the roster',
+  'happy.group.newBest.hint': 'Somebody you’ve just met who isn’t a Christian yet but is open to knowing Jesus — added straight onto this roster.',
+  'happy.group.toast.bestCreated': 'BEST added to the roster',
   'happy.group.removeMember.title': 'Remove from roster',
   'happy.group.removeMember.message': 'Remove {name} from this roster? Their recorded attendance stays on the record.',
   'happy.group.toast.joined': 'Added to roster',
@@ -1116,6 +1166,10 @@ export const en = {
   'happy.attendance.present': 'Present',
   'happy.attendance.notPresent': 'Not present',
   'happy.attendance.empty': 'Nobody is on the roster yet.',
+  // The term-wide BEST namelist (0031) — every BEST on any roster in this 期,
+  // read at the top of the term because a term is run as one thing.
+  'happy.best.title': 'BEST namelist',
+  'happy.best.col.group': 'Happiness group',
 } as const;
 
 export type MessageKey = keyof typeof en;

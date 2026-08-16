@@ -1,7 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import {
+  BEST_ROLE_OPTIONS,
   CHURCH_ROLE_OPTIONS,
+  VISITOR_ROLE_OPTIONS,
   churchDisplayRole,
+  churchRoleOptionsFor,
   churchRoleKey,
   isActivity,
   trainingKindClass,
@@ -20,6 +23,7 @@ import {
   groupHealthClass,
   groupHealthKey,
   MEMBER_ROLE_FILTERS,
+  NON_MEMBER_DISPLAY_ROLES,
   memberRole,
   ROLE_TAG,
   roleKey,
@@ -34,7 +38,9 @@ import {
   ChurchRole,
   DisplayRole,
   GroupPosition,
+  isMemberRole,
   isTrainingKind,
+  NON_MEMBER_ROLES,
   TRAINING_KINDS,
   TrainingKind,
 } from '@tog/shared';
@@ -82,8 +88,31 @@ describe('roles: every enum value is named, coloured and offered', () => {
         });
   });
 
-  it('offers every church role in the member form', () => {
-    expect([...CHURCH_ROLE_OPTIONS].sort()).toEqual(Object.values(ChurchRole).sort());
+  it('offers every church role on exactly one of the three forms', () => {
+    // 成员 / 访客 / BEST are made on three different pages now (0031), so the
+    // guard is no longer "one list covers the enum" — it is that the three
+    // lists TOGETHER cover it and do not overlap. A role added to the enum and
+    // to none of them still fails here; a role offered on two forms fails too,
+    // because that would let one page create what the other page owns.
+    const offered = [...CHURCH_ROLE_OPTIONS, ...VISITOR_ROLE_OPTIONS, ...BEST_ROLE_OPTIONS];
+    expect([...offered].sort()).toEqual(Object.values(ChurchRole).sort());
+    expect(new Set(offered).size).toBe(offered.length);
+  });
+
+  it('offers a row the list its own role lives in, so a select is never blank', () => {
+    expect(churchRoleOptionsFor(ChurchRole.Visitor)).toContain(ChurchRole.Visitor);
+    expect(churchRoleOptionsFor(ChurchRole.Best)).toContain(ChurchRole.Best);
+    expect(churchRoleOptionsFor(ChurchRole.Pastor)).toContain(ChurchRole.Pastor);
+    // A brand-new row with no role yet is a MEMBER form's row.
+    expect(churchRoleOptionsFor(null)).toEqual(CHURCH_ROLE_OPTIONS);
+  });
+
+  it('never lets a form cross the 成员/访客/BEST split', () => {
+    // The 转为成员 button is the only way across, and it is a deliberate act.
+    expect(churchRoleOptionsFor(ChurchRole.Visitor)).not.toContain(ChurchRole.Member);
+    expect(churchRoleOptionsFor(ChurchRole.Best)).not.toContain(ChurchRole.Member);
+    expect(churchRoleOptionsFor(ChurchRole.Member)).not.toContain(ChurchRole.Visitor);
+    expect(churchRoleOptionsFor(ChurchRole.Member)).not.toContain(ChurchRole.Best);
   });
 
   it('maps every church role onto a display role of its own', () => {
@@ -109,10 +138,44 @@ describe('roles: every enum value is named, coloured and offered', () => {
     expect(new Set(dots).size).toBe(dots.length);
   });
 
-  it('offers every display role as a members-list filter', () => {
-    // ROLE_ORDER is the ranks; 未分组 is added beside them for the filter, so
-    // the filter list is the one that has to cover the whole enum.
-    expect([...MEMBER_ROLE_FILTERS].sort()).toEqual(Object.values(DisplayRole).sort());
+  it('offers every display role as a filter, on the page that lists it', () => {
+    // Same split the three role-option lists have (0031): /members filters by
+    // the ranks a member reads as, and 访客/BEST are not among them because
+    // that list contains none — they live on their own pages instead. The two
+    // halves together still have to cover the enum, so a display role added to
+    // it and to neither fails here.
+    const offered = [...MEMBER_ROLE_FILTERS, ...NON_MEMBER_DISPLAY_ROLES];
+    expect([...offered].sort()).toEqual(Object.values(DisplayRole).sort());
+    expect(new Set(offered).size).toBe(offered.length);
+  });
+
+  it('keeps a filter the members list can never satisfy off the members list', () => {
+    for (const role of NON_MEMBER_DISPLAY_ROLES) expect(MEMBER_ROLE_FILTERS).not.toContain(role);
+    // 未分组 stays, and stays LAST: it is where a member with no life group
+    // lands, which is an ordinary thing for a member to be.
+    expect(MEMBER_ROLE_FILTERS[MEMBER_ROLE_FILTERS.length - 1]).toBe(DisplayRole.Ungrouped);
+  });
+
+  /*
+   * `isMemberRole` is not cosmetic — it decides who the dashboard counts as an
+   * active member and who 需要关怀 rings up. Getting it wrong in either
+   * direction is a real outcome: a BEST on the follow-up list is the office
+   * chasing somebody who isn't theirs to chase, and a 执事 off it is a real
+   * member nobody notices has stopped coming.
+   */
+  it('splits the enum into the church’s own members and everybody else', () => {
+    expect(NON_MEMBER_ROLES.map(String).sort()).toEqual([ChurchRole.Best, ChurchRole.Visitor].sort());
+    for (const role of [ChurchRole.Pastor, ChurchRole.Deacon, ChurchRole.CoWorker, ChurchRole.Member])
+      expect({ role, member: isMemberRole(role) }).toMatchObject({ member: true });
+    for (const role of NON_MEMBER_ROLES)
+      expect({ role, member: isMemberRole(role) }).toMatchObject({ member: false });
+  });
+
+  it('treats every role it has never heard of as a member', () => {
+    // The safe direction: a row written by a future migration lands ON the
+    // roll and on the follow-up list, where somebody will see it — never
+    // silently outside both.
+    expect(isMemberRole('some_future_role')).toBe(true);
   });
 
   it('reads a church-wide role ahead of any group position', () => {

@@ -439,6 +439,18 @@ export interface HappinessTermRow {
   group_count: number;
 }
 
+/**
+ * One line of a term's overall BEST namelist (`GET /happiness/terms/:id/best`,
+ * 0031) — a BEST, and which 幸福小组 in this term is following them up.
+ *
+ * Somebody on two rosters is two rows, one per group: which group has them is
+ * exactly what this list answers, so it is not a duplicate to collapse.
+ */
+export interface TermBestRow {
+  member: MemberBrief & { phone: string | null; status: MemberStatus };
+  group: { id: string; name: string | null };
+}
+
 export interface HappinessGroupRow {
   id: string;
   term_id: string;

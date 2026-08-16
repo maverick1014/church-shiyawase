@@ -12,6 +12,7 @@ import {
   tidy,
   type ImportContext,
 } from '../members-import';
+import { ChurchRole } from '@tog/shared';
 import { en } from '../i18n/en';
 import { ms } from '../i18n/ms';
 import { zh } from '../i18n/zh';
@@ -307,6 +308,88 @@ describe('planImport', () => {
  * be resolved back to a member the way the pair index compares one, and a name
  * that answers to nobody or to two people is refused rather than guessed at.
  */
+/*
+ * 教会身份 and the one pairing the database refuses (0031/0032).
+ *
+ * The role table used to name FOUR of the five roles the enum shipped, which
+ * made 访客 silently unimportable for as long as that role existed — a
+ * spreadsheet saying 访客 was refused as "not a church role". Both halves of
+ * that are guarded here: every role the app ships imports, and the one
+ * combination the check constraint refuses is caught by the planner instead,
+ * naming its row rather than failing the file.
+ */
+describe('planImport · 教会身份 and BEST', () => {
+  it('imports every church role the app ships, in any of the three languages', () => {
+    const rows = [
+      { row: 2, full_name: '甲', church_role: '牧师' },
+      { row: 3, full_name: '乙', church_role: 'Deacon' },
+      { row: 4, full_name: '丙', church_role: '同工' },
+      { row: 5, full_name: '丁', church_role: 'Member' },
+      { row: 6, full_name: '戊', church_role: '访客' },
+      { row: 7, full_name: '己', church_role: 'BEST' },
+    ];
+    const plan = planImport(rows, ctx());
+    expect(plan.rows.map((r) => r.issue)).toEqual(new Array(rows.length).fill(undefined));
+    expect(plan.rows.map((r) => r.values.church_role)).toEqual([
+      ChurchRole.Pastor,
+      ChurchRole.Deacon,
+      ChurchRole.CoWorker,
+      ChurchRole.Member,
+      ChurchRole.Visitor,
+      ChurchRole.Best,
+    ]);
+  });
+
+  it('refuses a BEST the same file puts into a life group', () => {
+    const plan = planImport(
+      [{ row: 2, full_name: '甲', church_role: 'BEST', group: '晨曦小组' }],
+      ctx(),
+    );
+    // Names its own row and the value it choked on, like every other refusal.
+    expect(plan.rows[0]).toMatchObject({
+      action: 'skip',
+      row: 2,
+      issue: 'best_in_group',
+      detail: '晨曦小组',
+    });
+  });
+
+  it('refuses a life group added to somebody who is ALREADY a BEST', () => {
+    // The row names no 教会身份 at all, so the refusal can only come from what
+    // the church already has on file — which is why `existing` carries the
+    // role at all.
+    const plan = planImport(
+      [{ row: 2, full_name: '陈约翰', english_name: 'John Tan', group: '晨曦小组' }],
+      ctx({ existing: [member({ church_role: ChurchRole.Best })] }),
+    );
+    expect(plan.rows[0]).toMatchObject({ action: 'skip', issue: 'best_in_group' });
+  });
+
+  it('lets a BEST who is being MADE a member join a group in the same row', () => {
+    // The role this row ends up with is 一般成员, so the pairing the database
+    // refuses never exists — reading the payload's own role rather than only
+    // the stored one is what makes this work.
+    const plan = planImport(
+      [{ row: 2, full_name: '陈约翰', english_name: 'John Tan', church_role: '一般成员', group: '晨曦小组' }],
+      ctx({ existing: [member({ church_role: ChurchRole.Best })] }),
+    );
+    expect(plan.rows[0].issue).toBeUndefined();
+    expect(plan.rows[0].action).toBe('update');
+    expect(plan.rows[0].values).toMatchObject({ church_role: ChurchRole.Member, group_id: 'g1' });
+  });
+
+  it('does not refuse a 访客 in a life group — only a BEST', () => {
+    // A visitor sitting in on a life group is a case this church actually has.
+    const plan = planImport(
+      [{ row: 2, full_name: '甲', church_role: '访客', group: '晨曦小组' }],
+      ctx(),
+    );
+    expect(plan.rows[0].issue).toBeUndefined();
+    expect(plan.rows[0].action).toBe('create');
+    expect(plan.rows[0].values.group_id).toBe('g1');
+  });
+});
+
 describe('planImport · address & 推荐人', () => {
   const DAVID = member({ id: 'm-david', full_name: '张伟', english_name: 'David' });
   const DANIEL = member({ id: 'm-daniel', full_name: '张伟', english_name: 'Daniel' });

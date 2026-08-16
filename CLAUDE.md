@@ -111,22 +111,95 @@ cover everybody on screen, and narrowing what is DRAWN while those two still act
 on everybody reads as a contradiction, so both sheets simply list the whole
 roster, always.
 
-**教会身份 is FIVE values, and the fifth is 访客** (migration 0021). `church_role`
-runs 牧师 → 执事 → 同工 → 一般成员 → **访客**, in reading order. A visitor is a
-ROLE rather than a status — "visitor" is what somebody is to the church, not
-whether their record is active, so a visitor who stops coming is an *inactive
-visitor* and both facts survive; and like every other church-wide role it is
-read **ahead of** any group position, because a visitor sitting in on a life
-group is still a visitor. Its badge is a warm sand no rank uses, so it cannot be
-mistaken for 普通成员's cool grey or 未分组's warm grey. The reason this needed a
-migration at all is worth remembering: `deacon` and `co_worker` had been in the
-CODE enum since the day they shipped while the DATABASE type held neither, so
-saving a member as 执事 did not degrade — it failed outright, and nothing
-noticed, because the two lists were never compared. They are now: a unit test
+**教会身份 is SIX values, and the last two are not members** (0021, 0031).
+`church_role` runs 牧师 → 执事 → 同工 → 一般成员 → **访客** → **BEST**, in
+reading order: from the pulpit to the door. A visitor is a ROLE rather than a
+status — "visitor" is what somebody is to the church, not whether their record
+is active, so a visitor who stops coming is an *inactive visitor* and both
+facts survive; and like every other church-wide role it is read **ahead of**
+any group position, because a visitor sitting in on a life group is still a
+visitor. Its badge is a warm sand no rank uses, so it cannot be mistaken for
+普通成员's cool grey or 未分组's warm grey. The reason 0021 needed a migration at
+all is worth remembering: `deacon` and `co_worker` had been in the CODE enum
+since the day they shipped while the DATABASE type held neither, so saving a
+member as 执事 did not degrade — it failed outright, and nothing noticed,
+because the two lists were never compared. They are now: a unit test
 (`labels.test.ts`) asserts every `ChurchRole` / `DisplayRole` value has a label
-in all three dictionaries, an entry in `ROLE_TAG`, a place in the form's options
-and in the members-list filter; and `api-e2e.mjs` creates a member as **each**
-role against the live database, which is the half a unit test cannot reach.
+in all three dictionaries, an entry in `ROLE_TAG`, a place in exactly one
+form's options and a filter on the page that lists it; and `api-e2e.mjs`
+creates a member as **each** role against the live database, which is the half
+a unit test cannot reach.
+
+**A BEST is not a 访客 wearing a different word** (migration 0031). The
+church's own term: somebody who is **not a Christian yet but is open to
+knowing Jesus**, met through a 幸福小组. A 访客 came to the CHURCH and may
+perfectly well be a Christian from somewhere else. They are followed up by
+different people for different reasons, so it is a role of its own rather than
+a label on a roster — and a BEST **never carries a life group**, enforced in
+the DATABASE (`members_best_has_no_life_group`, migration 0032) and not only
+in the form, because the form is one of three ways a row is written. The API
+asks the same question first and answers in a sentence, so a check-constraint
+violation is never what a user reads (the same split the duplicate-name 409
+uses). *0031 and 0032 are two migrations on purpose: Postgres refuses to USE
+an enum value in the transaction that added it.*
+
+**成员 and 访客 are TWO PAGES over ONE table** (0031, church feedback: some
+visitors attend once and are never seen again, and they were drowning the
+roll). `/members` lists the church's own members; `/visitors` lists 访客; a
+BEST is on neither — they live on their 幸福小组's roster, which is where they
+were met. It is the SAME `members` table, narrowed **server-side** by
+`GET /members?scope=member|visitor|best` (rule G2), which is what makes
+**转为成员** a single-column PATCH that keeps every roll-call tick, every
+training and every referral the person already carries. Eleven tables point at
+`members.id`; a separate `visitors` table would have meant eleven nullable FK
+pairs and a conversion that copied history between them. `scope` ABSENT means
+everybody, deliberately: every member picker in the app reads this endpoint,
+and a picker that quietly stopped offering visitors would be the split leaking
+out of the two pages it is about.
+
+Which roles a form may offer is `churchRoleOptionsFor` (`lib/labels.ts`),
+and the three lists it chooses between — `CHURCH_ROLE_OPTIONS` (the member
+form), `VISITOR_ROLE_OPTIONS` and `BEST_ROLE_OPTIONS` — **partition** the
+enum: a unit test asserts they cover it and do not overlap, so a role added to
+the enum and to none of them fails at the point it is cheap to fix. The list
+follows the ROW's own stored role rather than the page that opened the modal,
+so a 访客 is edited as a 访客 wherever it is opened from and the `<select>`
+always contains the value it is showing. **转为成员 is the only way across**,
+a confirmed button on the person's own page — a decision the church makes
+about somebody, not a field anyone corrects.
+
+**来访日期 is a VISITOR's field now** (0031). `joined_at` left the member form
+and the member `FactGrid` — nobody fills in when they first came about
+somebody they have known for years, so it sat empty on every member row —
+and is the fact `/visitors` is built around, leading its list and sorting it
+newest-first. The COLUMN is untouched: what a member already had is still
+stored, imported and exported.
+
+`isMemberRole` / `NON_MEMBER_ROLES` (`packages/shared`) is the ONE place that
+decides which side of the line a role is on, and it is not cosmetic — it
+decides who the dashboard counts as active and who 需要关怀 rings up. An
+unknown role reads as a MEMBER, deliberately: a row written by a future
+migration lands on the roll and on the follow-up list, where somebody will
+see it, never silently outside both.
+
+The roll-call sheet reads in two **sections** — 成员, then 访客 (church
+feedback). Presentation only: one sheet, one set of columns, one check-all per
+column, one totals row, one PUT path. A BEST is not on it at all; they are
+rolled weekly in their own 幸福小组. The export is sectioned the same way,
+because a printed sheet is the same reading task the page is.
+
+There are now **two public sign-up links, and which one the church hands out
+is what decides the role**: `/join` + `POST /members/register` makes MEMBERS
+(unchanged), `/welcome` + `POST /members/welcome` makes 访客 and stamps
+来访日期 server-side, since somebody filling in a first-visit form is visiting
+today. One handler runs both (`registerMember` takes a `PublicRegisterForm`:
+an allow-list and a role, and nothing else differs) — every rule that matters
+on an unauthenticated path is the same rule because there is one of it. The
+`/welcome` allow-list is shorter by `group_id` and `serving_roles`: a life
+group and a ministry are what somebody takes on once they belong. An UPDATE
+never touches the role either way, so a member who fills in the first-visit
+form is not demoted by it. Both are exact-path, two-method entries in
+`isPublicForm`, never a prefix. `/welcome` is the **fifth** shell-less page.
 
 **A member also carries an address and who brought them** (0021).
 `members.address` is one free-text column — what you would write on an envelope,
@@ -244,11 +317,22 @@ two different days depending on who reads it. 服侍岗位 is the one column hol
 a LIST in one cell, so it accepts every separator a church might reach for
 (`,` `，` `、` `;` `；` `/` `／` — `LIST_SEPARATORS`, shared with the form's own
 tag field), trims each piece and drops the empties a trailing separator leaves — and an empty cell still supplies nothing, so a sparse
-re-import cannot un-serve the whole church.
+re-import cannot un-serve the whole church. 教会身份 accepts **every** role the
+app ships, 访客 and BEST included (0031) — that cell decides which of the two
+pages a row lands on, which is the whole point of it being a column. Its table
+is read from `Object.values(ChurchRole)` rather than listed by hand, because a
+hand-written list is exactly what left 访客 silently unimportable for as long
+as that role existed. A BEST the file puts into a 小组 is a REFUSED row naming
+its own row and the group, rather than a check constraint tripping mid-file and
+failing everything around it — read off the role the row will END UP with, so
+a file that adds a group to somebody already a BEST is caught as readily as one
+that does both in the same row.
 
 *自助注册* (`/join` + `GET`/`POST /members/register`) is the public link the
-church hands out — the fourth shell-less page, and the only public path under
-`/members`. Its field set now mirrors the staff-facing add-member form
+church hands out for MEMBERS — the fourth shell-less page. (`/welcome` +
+`GET`/`POST /members/welcome`, the first-visit form that makes 访客, is the
+fifth; see the 成员/访客 split above. Those two exact paths are the only public
+ones under `/members`.) Its field set now mirrors the staff-facing add-member form
 (church feedback: "all field is needed") — names, phone, email, address,
 gender, birthday, congregation, 推荐人, a life group, 服侍岗位, notes, photo —
 with exactly two holdouts: `church_role` and `group_position` are read from
@@ -440,10 +524,19 @@ the column's identity, the same identity the services sheet already used.
 **幸福小组 (Happiness Groups) is the one roll call that IS week-numbered** —
 the exception the paragraph above just moved life groups away from (migration
 0022). 期 (term) → 幸福小组 (group, belongs to one term) → roster (教会成员 ＋
-福友) + weekly attendance tracked **by week number, not by calendar date**. A
-福友 needs no special handling anywhere: it is simply a member whose
-`church_role` is 访客 (0021), so the roster picker is the ordinary member
-`Combobox` over every member, unfiltered. `happiness_terms.weeks` (1–52,
+**BEST**) + weekly attendance tracked **by week number, not by calendar date**.
+A BEST needs no special handling anywhere: it is simply a member whose
+`church_role` is `best` (0031 — it was 访客 until the two were told apart),
+so the roster picker is the ordinary member `Combobox` over every member,
+unfiltered, and the roster's own "＋ New BEST" quick-add is the ONE form in
+the app that writes that role. A roster row's tag reads `!isMemberRole` and
+draws the row's OWN role, so a roster filled in before 0031 still says 访客
+about the people the church filed as 访客 rather than relabelling them.
+The TERM page carries the overall **BEST 名单** for the whole 期
+(`GET /happiness/terms/:id/best`) above its group list — a term is run as one
+thing, and no single group's page can answer who the term is reaching; one
+request, walked server-side past the hall gate, and drawn only when it has
+somebody in it. `happiness_terms.weeks` (1–52,
 default 8) lives on the TERM, not the group — every group in a term runs the
 same length, which is what makes "week 5" comparable across the term's groups
 and comparable term to term. Unlike 守望模块, a term is **not** create-once:
@@ -575,10 +668,12 @@ the four questions a church actually asks, in that order:
   average". Zeroes in the MIDDLE still count, because those are a real missed
   roll call. `sundayPulse` reports how many Sundays it actually averaged so the
   label states the real number.
-- **需要关怀** — active, non-visitor members with no 主日 tick across the last
-  **four** Sundays (church's own choice: about a month, long enough that a
-  holiday does not flag somebody). Longest-absent first, capped, each row
-  opening that member. The one section here that is a to-do rather than a
+- **需要关怀** — active MEMBERS (`NON_MEMBER_ROLES` excluded server-side, so
+  neither a 访客 nor a BEST is ever on it: this list is the church chasing its
+  own people, and a BEST is followed up by their 幸福小组 leader instead) with
+  no 主日 tick across the last **four** Sundays (church's own choice: about a
+  month, long enough that a holiday does not flag somebody). Longest-absent
+  first, capped, each row opening that member. The one section here that is a to-do rather than a
   report, and the reason the redesign was worth doing. The window is always the
   last four Sundays and NOT the window the chart draws, so widening the chart
   never widens who gets chased; `last_seen` being null means "not in the window
@@ -652,14 +747,23 @@ Testing layers (in `apps/web`):
   the searched-but-never-drawn `ComboOption.search` beside it, the **role drift
   guard** — every
   `ChurchRole` / `DisplayRole` value named in all three dictionaries, coloured in
-  `ROLE_TAG`, offered by the form and by the members filter — its own analogue
+  `ROLE_TAG`, and offered by **exactly one** of the three role-option lists /
+  filtered on **exactly one** of the pages that lists it (0031: the three lists
+  must cover the enum AND not overlap, so a form can never create what another
+  page owns), that a form offers the list its own row's role lives in so a
+  `<select>` is never blank, and that `isMemberRole` splits the enum the way
+  the dashboard and 需要关怀 rely on (with an unknown role reading as a member,
+  the safe direction) — its own analogue
   for `AccountRole` (every value named in all three dictionaries with both a
   bare label and a dropdown option, offered in `ACCOUNT_ROLE_OPTIONS`, coloured
   by `accountRoleClass`) — and the import
   planner: its name-pair key, its three-language header/enum matching, every row
   it refuses, 推荐人 resolved by name pair (and refused when it names nobody, two
-  people, or the row's own person), and the one column that holds a list —
-  服侍岗位 read out of a single cell whatever the church separated it with).
+  people, or the row's own person), the one column that holds a list —
+  服侍岗位 read out of a single cell whatever the church separated it with —
+  and 教会身份 accepting every role the app ships while refusing the one
+  pairing the database forbids (a BEST in a life group, whether the row says so
+  itself or the church already had them as one)).
 - `npm run test:api-e2e` — API end-to-end against the live Worker (auth, role
   matrix, full CRUD, **a member created under each of the five church roles** —
   the assertion that would have caught the database enum being two values short
@@ -706,14 +810,23 @@ Testing layers (in `apps/web`):
   repainting under it, a create→delete member write-cycle carrying a 服侍岗位
   through the shared `TagsInput` — typed and then saved **without pressing
   Enter**, which is the path that silently lost it — onto the member page's
-  badges and the members page's ministry filter, the member form offering 访客
-  and a 推荐人 combobox defaulting to 无推荐人, a 聚会's 地点 typed into its form and stored on the
+  badges and the members page's ministry filter, the member form NOT offering
+  访客 or BEST (0031 — it makes members) while still offering the ranks it does,
+  and a 推荐人 combobox defaulting to 无推荐人, the whole **成员/访客 split** end
+  to end — a 访客 listed on `/visitors` with the 来访日期 the members list no
+  longer carries and absent from `/members`, that page's role filter offering
+  neither 访客 nor BEST, 转为成员 on the person's own page asking first and
+  saying what survives the change, then the button and the visit date both
+  going away once it is done, and `/welcome` rendering with no session and
+  asking a stranger nothing about a life group or a ministry,
+  a 聚会's 地点 typed into its form and stored on the
   row, a member row showing exactly ONE name — the one that
   congregation reads them by — with no second line under it while a search
   still finds them by the name it does not show, the canonical mobile tile
   (one tag on the first row beside the name, the leader and the member count
   each on a line of their own), a 幸福小组 roster row with no editable role,
-  a 访客 tag on the 福友 and none on anybody else, and View beside Remove,
+  a tag on whoever on it is not one of the church's own members and none on
+  anybody else, and View beside Remove,
   the members page's import modal opening on a file field and a
   template with nothing written yet, `/join` rendering with no session at
   all, its photo field taking camera OR gallery, the dashboard's New
@@ -826,7 +939,7 @@ it touches, including the church's interface language; if it ever reports
 residue it did not clean, that is a FAILED run whatever its assertions said.
 
 ### G1 — CRUD completeness on every management page
-Every entity page (成员、小组、聚会（点名表上的一列）、培训&活动（培训与活动两种形态）、四十天守望模块与配对、幸福小组的期与小组、账户) must offer
+Every entity page (成员、访客、小组、聚会（点名表上的一列）、培训&活动（培训与活动两种形态）、四十天守望模块与配对、幸福小组的期与小组、账户) must offer
 the full set its users need: **Create, Read, Update, Delete**. If the API supports an
 operation, the UI must expose it (or the omission must be a deliberate,
 documented decision). A page that can only create + list is incomplete.
@@ -835,7 +948,12 @@ church row is a seeded singleton (one deployment, one church) and the module
 catalog is code, so neither can be created or deleted from the UI. 成员 has two
 extra CREATE paths beside its form — a spreadsheet import and the public
 self-registration link — and both are create-or-update on the name pair rather
-than a second way to make duplicates.
+than a second way to make duplicates. 访客 is the same table under a second
+page (0031): its own CREATE (the form and the public `/welcome` link), its own
+list, and Update/Delete through the SHARED member detail page and
+`MemberEditModal` — which is why neither is duplicated for it. A BEST has no
+list page of its own on purpose: they are created and read on the 幸福小组
+roster that met them, and on the term's own BEST 名单.
 
 ### G2 — Access control is enforced server-side AND reflected in the UI
 Four independent dimensions, all of them enforced in `route.ts` first and
@@ -958,8 +1076,11 @@ one role — its **group**.
   bug. The public exceptions (no session) are the mentor daily form under
   `/api/discipleship/form/*`, the training self-enrollment form under
   `/api/trainings/enroll/*`, **`GET`/`POST /api/members/register`** (the member
-  self-registration form — that exact path and those two methods only, never a
-  prefix, so nothing else under `/members` is opened by it), **`GET
+  self-registration form) and **`GET`/`POST /api/members/welcome`** (the
+  first-visit form, which makes 访客 — 0031) — those two exact paths and those
+  two methods each, never a prefix, so nothing else under `/members` is opened
+  by them, and which ROLE each creates is a property of the handler rather than
+  anything in the body, **`GET
   /api/church`** (the login card and the public forms render the church's name
   before anyone signs in; writes stay super_admin) (+ `/api/auth/*`) — each a
   narrow, specific handler reading an allow-list of fields.

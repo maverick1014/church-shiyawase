@@ -46,6 +46,7 @@ export const zh: Messages = {
   'nav.section.system': '系统',
   'nav.dashboard': '总览',
   'nav.members': '成员管理',
+  'nav.visitors': '访客管理',
   'nav.groups': '小组管理',
   'nav.events': '崇拜与祷告会',
   'nav.trainings': '培训&活动',
@@ -177,6 +178,22 @@ export const zh: Messages = {
   'members.registerLinkTitle': '复制公开链接，让会众自行填表注册',
   'members.toast.linkCopied': '注册链接已复制',
 
+  /* ---- 访客（/visitors） ------------------------------------------------- */
+  'visitors.title': '访客管理',
+  'visitors.col.visitor': '访客',
+  'visitors.add': '＋ 新增访客',
+  'visitors.new.title': '新增访客',
+  'visitors.empty': '没有符合筛选条件的访客。',
+  'visitors.hint': '💡 点击访客可查看完整记录；当他们开始委身，也在那里转为成员。',
+  'visitors.referredBy': '带领人',
+  'visitors.toast.created': '访客已新增',
+  'visitors.registerLink': '首次来访链接',
+  'visitors.registerLinkTitle': '复制公开链接，让首次来访的朋友自行填写',
+  'visitors.convert': '转为成员',
+  'visitors.convert.title': '将这位朋友转为成员？',
+  'visitors.convert.message': '{name} 将加入成员名单。已记录的一切——出席、培训、带领人——都会原样保留。',
+  'visitors.toast.converted': '{name} 已转为成员',
+
   /* ---- 批量导入成员 -----------------------------------------------------
    * 这是一份会被拿回去修改再上传的表格，所以每一次拒绝都要指明行号和出错的
    * 那一格。下列字段名同时就是模板的表头——lib/members-import.ts 会用三种
@@ -253,6 +270,7 @@ export const zh: Messages = {
   'import.issue.no_hall': '本教会不止一个堂会，因此每一行都要填堂会。',
   'import.issue.other_hall': '此人属于其他堂会，本账号无权更改。',
   'import.issue.group_other_hall': '「{value}」是其他堂会的小组。',
+  'import.issue.best_in_group': 'BEST 属于幸福小组，不属于小组——请删除「{value}」。',
 
   /* ---- 共用的照片选择器 -------------------------------------------------- */
   'photo.choose': '添加照片',
@@ -391,6 +409,8 @@ export const zh: Messages = {
   'events.sheet': '聚会点名',
   'events.sheetSub': '本月每个主日，加上为本月添加的聚会 —— 按日期排列',
   'events.sheetEmpty': '还没有在册成员。',
+  'events.section.members': '成员',
+  'events.section.visitors': '访客',
   'events.col.preService': '会前',
   'events.col.service': '主日',
   'events.col.attended': '到场',
@@ -846,6 +866,18 @@ export const zh: Messages = {
   // {church} 是教会自己的名称，取自教会记录，不是翻译。
   'join.privacy': '🔒 您的资料仅由教会办公室保管 · {church}',
 
+  /* ---- /welcome — 首次来访表单（0031） ----------------------------------- */
+  'welcome.header': '欢迎',
+  'welcome.title': '很高兴认识你',
+  'welcome.intro': '留下几项资料，好让我们跟你打声招呼——除了姓名，其余都可不填。',
+  'welcome.field.broughtBy': '谁带你来的？',
+  'welcome.hint': '💡 不想填的可以留空。',
+  'welcome.submit': '打个招呼',
+  'welcome.createdTitle': '欢迎你！',
+  'welcome.created': '谢谢你，{name}——很高兴你来。我们会再联络你。',
+  'welcome.updatedTitle': '很高兴再见到你',
+  'welcome.updated': '谢谢你，{name}——我们已更新你的资料。',
+
   /* ---- enum labels ----------------------------------------------------- */
   'role.pastor': '牧师',
   'role.deacon': '执事',
@@ -857,6 +889,7 @@ export const zh: Messages = {
   'role.regular_member': '普通成员',
   'role.new_member': '新成员',
   'role.visitor': '访客',
+  'role.best': 'BEST',
   'role.ungrouped': '未分组',
 
   'churchRole.pastor': '牧师',
@@ -864,6 +897,7 @@ export const zh: Messages = {
   'churchRole.co_worker': '同工',
   'churchRole.member': '一般成员',
   'churchRole.visitor': '访客',
+  'churchRole.best': 'BEST',
 
   'weekday.sunday': '周日',
   'weekday.monday': '周一',
@@ -1024,7 +1058,7 @@ export const zh: Messages = {
   'happy.group.notFound': '找不到该小组',
   'happy.group.addMemberPlaceholder': '选择要加入的成员…',
   'happy.group.addMember': '＋ 加入成员',
-  'happy.group.newVisitor': '＋ 新访客',
+  'happy.group.newBest': '＋ 新 BEST',
 
   /* 活动记录 (0029/0030) — dated records with photos and a note, kept by a
      幸福小组 AND by a life group, which is why the keys are not happiness-scoped. */
@@ -1054,8 +1088,8 @@ export const zh: Messages = {
   'act.toast.deleted': '活动已删除',
   'act.toast.photoAdded': '照片已添加',
   'act.toast.photoRemoved': '照片已删除',
-  'happy.group.newVisitor.hint': '还不是教会成员的人——直接以访客身份加入这份名单。',
-  'happy.group.toast.visitorCreated': '已新增访客并加入名单',
+  'happy.group.newBest.hint': '刚认识、还不是基督徒但愿意认识耶稣的人——直接加入这份名单。',
+  'happy.group.toast.bestCreated': '已新增 BEST 并加入名单',
   'happy.group.removeMember.title': '移出名单',
   'happy.group.removeMember.message': '将 {name} 移出这份名单？他们已记录的出席仍会保留。',
   'happy.group.toast.joined': '已加入名单',
@@ -1071,4 +1105,6 @@ export const zh: Messages = {
   'happy.attendance.present': '出席',
   'happy.attendance.notPresent': '未出席',
   'happy.attendance.empty': '名单上还没有人。',
+  'happy.best.title': 'BEST 名单',
+  'happy.best.col.group': '幸福小组',
 };

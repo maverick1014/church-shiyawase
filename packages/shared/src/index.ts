@@ -321,6 +321,25 @@ export enum ChurchRole {
    * inactive visitor and both facts survive.
    */
   Visitor = 'visitor',
+  /**
+   * BEST — somebody NOT yet a Christian but open to knowing Jesus, met through
+   * a 幸福小组 (migration 0031). Deliberately not the same thing as a 访客: a
+   * visitor came to the church and may well be a Christian from somewhere
+   * else, while a BEST is who a 幸福小组 exists to reach. They are followed up
+   * differently and belong to different things — a BEST belongs to a
+   * 幸福小组 and NEVER to a life group, which the database itself enforces
+   * (`members_best_has_no_life_group`, migration 0032).
+   */
+  Best = 'best',
+}
+
+/** Church roles that are NOT members of the church — the two the visitor page
+ *  lists and the members page excludes. */
+export const NON_MEMBER_ROLES: ChurchRole[] = [ChurchRole.Visitor, ChurchRole.Best];
+
+/** Is this somebody the church counts as a member? */
+export function isMemberRole(role: ChurchRole | string): boolean {
+  return !(NON_MEMBER_ROLES as string[]).includes(role);
 }
 
 /**
@@ -360,6 +379,7 @@ export enum DisplayRole {
   RegularMember = 'regular_member',
   NewMember = 'new_member',
   Visitor = 'visitor',
+  Best = 'best',
   Ungrouped = 'ungrouped',
 }
 
@@ -376,8 +396,10 @@ export const DISPLAY_ROLE_ORDER: DisplayRole[] = [
   DisplayRole.NewMember,
   // Last, because it is where somebody starts: a visitor holds no rank in a
   // group, and reading the list top to bottom is reading it from the pulpit
-  // to the door.
+  // to the door. A BEST is further out still — not yet a Christian, and the
+  // person a 幸福小组 is trying to reach.
   DisplayRole.Visitor,
+  DisplayRole.Best,
 ];
 
 /** A group position maps 1:1 onto the display role of the same rank. */
@@ -402,6 +424,9 @@ export function displayRole(m: {
   // sitting in on a life group is still a visitor, which is the whole reason
   // this is a role rather than a status.
   if (m.church_role === ChurchRole.Visitor) return DisplayRole.Visitor;
+  // Same rule, same reason: a BEST has no life group at all (0032), so there
+  // is never a group position to fall through to anyway.
+  if (m.church_role === ChurchRole.Best) return DisplayRole.Best;
   if (m.group_position) return POSITION_DISPLAY_ROLE[m.group_position];
   return DisplayRole.Ungrouped;
 }

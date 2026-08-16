@@ -248,8 +248,16 @@ const STATUSES = enumAliases(
   [MemberStatus.Active, MemberStatus.Inactive],
   (s) => `memberStatus.${s}` as MessageKey,
 );
+// EVERY church role, 访客 and BEST included (0031). A spreadsheet of people
+// the church met is exactly what a file being imported often is, and the two
+// roles that are now kept on pages of their own are still one column's worth
+// of value here — the 教会身份 cell decides which list a row lands on, which is
+// the whole point of it being a column. Read from `Object.values` rather than
+// listed by hand: this table used to name four of the five roles the enum
+// shipped, so 访客 was silently unimportable for as long as it existed, and a
+// hand-written list is what let that happen.
 const CHURCH_ROLES = enumAliases(
-  [ChurchRole.Pastor, ChurchRole.Deacon, ChurchRole.CoWorker, ChurchRole.Member],
+  Object.values(ChurchRole),
   (r) => `churchRole.${r}` as MessageKey,
 );
 
@@ -389,7 +397,8 @@ export type ImportIssue =
   | 'bad_phone'
   | 'no_hall'
   | 'other_hall'
-  | 'group_other_hall';
+  | 'group_other_hall'
+  | 'best_in_group';
 
 /** One row of the file, already reduced to strings by whoever read it. */
 export type ImportRow = { row: number } & Partial<Record<ImportField, string>>;
@@ -435,6 +444,16 @@ export type ImportContext = {
     english_name: string | null;
     hall_id: string;
     group_position: string | null;
+    /**
+     * What the member is to the church TODAY. Read to answer one question a
+     * row cannot answer on its own: a file that adds a life group to somebody
+     * who is already a BEST names no 教会身份 at all, and the pairing the
+     * database refuses (0032) has to be caught before it fails the import.
+     * Optional for the same reason `group_id` is — the browser's own preview
+     * is free to pass the narrower shape, and then simply never refuses on
+     * this ground while the server, which always reads it, still does (G2).
+     */
+    church_role?: string | null;
     /**
      * The member's group BEFORE this import — read only by the server's own
      * `applyImport` (to feed `syncGroupLeaderAccount`'s `previousGroupId`),
@@ -634,6 +653,17 @@ export function planImport(rows: readonly ImportRow[], ctx: ImportContext): Impo
       const group = groupByName.get(matchKey(groupName));
       if (!group) return skip('unknown_group', 'group', groupName);
       if (group.hall_id !== hallId) return skip('group_other_hall', 'group', groupName);
+      // A BEST never carries a life group — the database refuses the pairing
+      // outright (`members_best_has_no_life_group`, 0032), and a check
+      // constraint tripping mid-import would fail the whole file over one row.
+      // Refused HERE instead, naming the spreadsheet row and the value, and
+      // leaving every row around it to apply — the same shape every other
+      // refusal in this planner has. Read off the role this row will END UP
+      // with, so a file that makes somebody a BEST and puts them in a group in
+      // the same row is caught as readily as one that adds a group to
+      // somebody who is already one.
+      const roleAfter = (values.church_role as string | undefined) ?? existing?.church_role;
+      if (roleAfter === ChurchRole.Best) return skip('best_in_group', 'group', groupName);
       supply('group', 'group_id', group.id);
       // A member of a group with no position at all reads as 未分组 everywhere
       // (`displayRole`), so joining one starts them where a new face starts.

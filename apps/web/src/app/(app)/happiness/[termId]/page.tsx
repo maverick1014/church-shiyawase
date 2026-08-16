@@ -32,7 +32,7 @@ import {
 import { can } from '@/lib/perms';
 import { exportRows } from '@/lib/export';
 import { formatDate, weekdayKey, WEEKDAY_OPTIONS } from '@/lib/labels';
-import { HappinessGroupRow, HappinessTermRow, MemberRow } from '@/lib/types';
+import { HappinessGroupRow, HappinessTermRow, MemberRow, TermBestRow } from '@/lib/types';
 import { useT } from '@/lib/i18n';
 import { AccountRole, Weekday } from '@tog/shared';
 
@@ -149,6 +149,18 @@ export default function HappinessTermGroupsPage() {
       <div className="card mb-16">
         <FactGrid facts={facts} />
       </div>
+
+      {/* The term's overall BEST namelist, above the groups (church feedback:
+          "at the top there should have a name list — they can see the overall
+          best name list for this session"). A term is run as one thing, and
+          the question a leader asks at the top of it is who the whole 期 is
+          reaching — which no single group's own page can answer.
+
+          One request rather than one per group (rule G5), and it is only
+          DRAWN when it has somebody in it: an empty namelist card standing
+          above every term's group list is noise, and a term that has not
+          started yet has nothing to say here. */}
+      <TermBestList termId={termId} termName={term.data.name} />
 
       <ErrorBanner message={groups.error || members.error} />
 
@@ -373,5 +385,104 @@ function AddGroupModal({
         <button className="btn" onClick={save} disabled={saving}>{saving ? t('common.saving') : t('common.save')}</button>
       </div>
     </Modal>
+  );
+}
+
+/**
+ * BEST 名单 — every BEST on any roster in this 期, and which group has them.
+ *
+ * Its own component with its own fetch rather than a slice of the page's:
+ * the answer comes from one endpoint (`GET /happiness/terms/:id/best`) that
+ * walks the term's groups server-side past the hall gate, so the page above
+ * neither knows nor has to assemble it. Renders NOTHING at all while loading
+ * or when the term has no BEST yet — a card that flickers in empty above the
+ * group list, on every term, is worse than one that simply is not there.
+ *
+ * The row shows the name, a phone and the GROUP: a namelist read at the top of
+ * a term is read to answer "who is being reached, and who is reaching them".
+ * No role badge — every row here is a BEST by definition, so a column of
+ * identical tags says nothing (the same rule the roster row follows).
+ */
+function TermBestList({ termId, termName }: { termId: string; termName: string | null }) {
+  const t = useT();
+  const router = useRouter();
+  const { data, error } = useFetch<TermBestRow[]>(`/happiness/terms/${termId}/best`);
+  const rows = data ?? [];
+
+  const exportBest = () => {
+    exportRows(
+      termName || t('happy.title'),
+      t('happy.best.title'),
+      rows.map((r) => ({
+        [t('export.name')]: r.member.full_name,
+        [t('members.field.englishName')]: r.member.english_name ?? '',
+        [t('export.phone')]: r.member.phone ?? '',
+        [t('happy.best.col.group')]: r.group.name ?? '',
+      })),
+    );
+  };
+
+  // A failed read is reported; an empty one is simply absent (see above).
+  if (error) return <ErrorBanner message={error} />;
+  if (rows.length === 0) return null;
+
+  return (
+    <div className="card mb-16">
+      <div className="card-head">
+        <strong>{t('happy.best.title')} ({rows.length})</strong>
+        <ExportButton onClick={exportBest} />
+      </div>
+
+      <div className="table-wrap only-desktop">
+        <table>
+          <thead>
+            <tr>
+              <th>{t('members.field.name')}</th>
+              <th>{t('members.col.contact')}</th>
+              <th>{t('happy.best.col.group')}</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={`${r.group.id}:${r.member.id}`}>
+                <td><MemberName member={r.member} /></td>
+                <td className="muted tnum">{r.member.phone ?? '—'}</td>
+                <td className="muted">{r.group.name ?? '—'}</td>
+                <td style={{ textAlign: 'right' }}>
+                  <RowChevron
+                    title={t('members.viewProfile')}
+                    onClick={() => router.push(`/members/${r.member.id}`)}
+                  />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* The canonical tile (rule G7): what the row IS on row 1 with its one
+          identifying tag pinned right — here the GROUP, since every row is a
+          BEST and the group is what tells them apart — and the phone on a
+          line of its own below. */}
+      <div className="only-mobile">
+        {rows.map((r) => (
+          <div
+            key={`${r.group.id}:${r.member.id}`}
+            className="mtile"
+            onClick={() => router.push(`/members/${r.member.id}`)}
+          >
+            <div className="mtile-row1">
+              <MemberName member={r.member} />
+              <div className="flex items-center gap-8" style={{ flexShrink: 0 }}>
+                <span className="muted">{r.group.name ?? '—'}</span>
+                <span className="mtile-cta"><ChevronRightIcon /></span>
+              </div>
+            </div>
+            {r.member.phone && <div className="mtile-line">{r.member.phone}</div>}
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }

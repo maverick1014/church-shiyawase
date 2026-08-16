@@ -84,6 +84,12 @@ const NAV: { section: MessageKey; items: NavItem[] }[] = [
       // roll call) is outside its allowlist entirely (`events` is not one
       // of `GROUP_LEADER_PREFIXES`), so the nav entry goes with it.
       { href: '/members', label: 'nav.members', icon: '👥', hiddenFor: [AccountRole.GroupLeader] },
+      // 访客 gets an entry of its own, right under 成员 (0031). The two lists
+      // answer different questions — who the church shepherds, and who has
+      // turned up — and a visitor who came once and never again used to sit
+      // in the middle of the first one, which is what made neither readable.
+      // Same reach as /members: it is the same table, narrowed server-side.
+      { href: '/visitors', label: 'nav.visitors', icon: '🚪', hiddenFor: [AccountRole.GroupLeader] },
       { href: '/groups', label: 'nav.groups', icon: '🔗' },
       { href: '/events', label: 'nav.events', icon: '📅', hiddenFor: [AccountRole.GroupLeader] },
     ],
