@@ -416,6 +416,7 @@ export const zh: Messages = {
   'events.sheetEmpty': '还没有在册成员。',
   'events.section.members': '成员',
   'events.section.visitors': '访客',
+  'events.section.best': 'BEST',
   'events.col.preService': '会前',
   'events.col.service': '主日',
   'events.col.attended': '到场',

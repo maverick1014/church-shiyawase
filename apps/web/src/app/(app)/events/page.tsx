@@ -38,7 +38,7 @@ import { sheetTickKey } from '@/lib/labels';
 import { churchParts, fromChurchInput, toChurchInput } from '@/lib/time';
 import { useT } from '@/lib/i18n';
 import type { MessageKey } from '@/lib/i18n';
-import { AccountRole, EventType, isMemberRole } from '@tog/shared';
+import { AccountRole, ChurchRole, EventType, isMemberRole } from '@tog/shared';
 
 /**
  * 崇拜与祷告会 — ONE roll-call sheet for the month.
@@ -85,29 +85,40 @@ export default function EventsPage() {
   const rows = sheet.data?.rows ?? [];
 
   /**
-   * The same rows, in two SECTIONS — the church's own members, then the 访客
-   * (0031, church feedback).
+   * The same rows, in SECTIONS — the church's own members, then 访客, then
+   * BEST (0031, church feedback).
    *
    * A presentation split and nothing more: it is still ONE sheet, one set of
    * columns, one check-all per column, one totals row and one PUT path. What
    * changed is that a roll call is read down the page looking for a name, and
    * a congregation's visitors interleaved alphabetically through its members
-   * made both halves harder to find — while the two are followed up by
+   * made every part of it harder to find — while the three are followed up by
    * different people for different reasons.
    *
-   * `isMemberRole`, not a test against 访客, so the day a third non-member
-   * role appears it lands in the second section rather than silently in the
-   * first. (A BEST is not here at all — the server leaves them off this sheet;
-   * they are rolled weekly in their own 幸福小组.) Order inside each section
-   * is the server's own, untouched.
+   * A BEST is on this sheet: they may perfectly well come to a Sunday service,
+   * and their own 幸福小组 roll call answers a different question (who came in
+   * week 5), so being on both is right rather than double-counting.
+   *
+   * Keyed by the ROLE's own section rather than by "member vs not", so the two
+   * non-member roles do not silently share one heading that describes only one
+   * of them — and an unknown future role lands with the members, which is
+   * where `isMemberRole` already puts it and the one place somebody will
+   * notice it. Order inside each section is the server's own, untouched.
    */
   const sections = useMemo(() => {
     const members: RollCallSheetRow[] = [];
     const visitors: RollCallSheetRow[] = [];
-    for (const r of rows) (isMemberRole(r.member.church_role) ? members : visitors).push(r);
+    const bests: RollCallSheetRow[] = [];
+    for (const r of rows) {
+      const role = r.member.church_role;
+      if (role === ChurchRole.Best) bests.push(r);
+      else if (!isMemberRole(role)) visitors.push(r);
+      else members.push(r);
+    }
     return [
       { key: 'members' as const, label: 'events.section.members' as MessageKey, rows: members },
       { key: 'visitors' as const, label: 'events.section.visitors' as MessageKey, rows: visitors },
+      { key: 'best' as const, label: 'events.section.best' as MessageKey, rows: bests },
     ].filter((s) => s.rows.length > 0);
   }, [rows]);
 

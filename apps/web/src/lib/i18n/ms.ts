@@ -420,6 +420,7 @@ export const ms: Messages = {
   'events.sheetEmpty': 'Belum ada ahli aktif.',
   'events.section.members': 'Ahli',
   'events.section.visitors': 'Pelawat',
+  'events.section.best': 'BEST',
   'events.col.preService': 'Pra-kebaktian',
   'events.col.service': 'Kebaktian',
   'events.col.attended': 'Hadir',
