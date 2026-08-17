@@ -78,6 +78,7 @@ export function MemberEditModal({
   // `form` so the shape cannot change under a half-finished edit.
   const isMember = isMemberRole(member.church_role);
   const isBest = member.church_role === ChurchRole.Best;
+  const roleOptions = churchRoleOptionsFor(member.church_role);
   // Asks before ✕ or Cancel throws an edit away, and arms the browser's own
   // prompt for a refresh (rule G4 — every form in the app guards the same way).
   const { close } = useFormGuard({ form, serving }, onClose);
@@ -287,18 +288,24 @@ export function MemberEditModal({
         </Field>
       </div>
       <div className="form-row">
-        <Field label={t('members.field.churchRole')}>
-          <select value={form.church_role} onChange={(e) => setForm({ ...form, church_role: e.target.value as ChurchRole })}>
-            {/* The list follows the ROW's own stored role, not the page that
-                opened this modal: a 访客 is edited as a 访客 wherever the modal
-                is opened from, and crossing to 成员 is the 转为成员 button's
-                job. Read off `member`, never `form`, so the options cannot
-                shift under a half-finished edit. */}
-            {churchRoleOptionsFor(member.church_role).map((cr) => (
-              <option key={cr} value={cr}>{t(churchRoleKey(cr))}</option>
-            ))}
-          </select>
-        </Field>
+        {/* 教会身份 is only a CONTROL when there is something to choose. The
+            list follows the ROW's own stored role, not the page that opened
+            this modal (read off `member`, never `form`, so the options cannot
+            shift under a half-finished edit) — and for a 访客 or a BEST that
+            list has exactly one entry, because crossing the split is the
+            转为成员 / 转为BEST buttons' job and not a field anyone corrects.
+            A one-option `<select>` is a label pretending to be a control: it
+            invites a change it cannot make, so it is not drawn at all. What
+            the person IS is still on screen, as the badge in the header. */}
+        {roleOptions.length > 1 && (
+          <Field label={t('members.field.churchRole')}>
+            <select value={form.church_role} onChange={(e) => setForm({ ...form, church_role: e.target.value as ChurchRole })}>
+              {roleOptions.map((cr) => (
+                <option key={cr} value={cr}>{t(churchRoleKey(cr))}</option>
+              ))}
+            </select>
+          </Field>
+        )}
         {/* Only meaningful once a group is chosen — hidden rather than shown
             disabled, so there's nothing implying a rank that doesn't apply. */}
         {form.group_id && (

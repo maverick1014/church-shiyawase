@@ -195,6 +195,11 @@ export const ms: Messages = {
   'visitors.convert.title': 'Jadikan orang ini seorang ahli?',
   'visitors.convert.message': '{name} akan masuk ke senarai ahli. Semua yang telah direkodkan tentang mereka — kehadiran, latihan, siapa yang membawa mereka — kekal seperti sedia ada.',
   'visitors.toast.converted': '{name} kini seorang ahli',
+  'visitors.toBest': 'Tandakan sebagai BEST',
+  'visitors.toBest.title': 'Tandakan orang ini sebagai BEST?',
+  'visitors.toBest.message': '{name} menjadi BEST — seseorang yang belum Kristian tetapi terbuka untuk mengenal Yesus, disusuli melalui 幸福小组. Semua yang telah direkodkan tentang mereka kekal seperti sedia ada.',
+  'visitors.toBest.message.group': '{name} menjadi BEST — seseorang yang belum Kristian tetapi terbuka untuk mengenal Yesus, disusuli melalui 幸福小组. Mereka juga akan meninggalkan kumpulan sel {group}, kerana BEST tergolong dalam 幸福小组. Selebihnya kekal seperti sedia ada.',
+  'visitors.toast.toBest': '{name} kini seorang BEST',
 
   /* ---- import senarai ahli ----------------------------------------------
    * Fail ini akan dibetulkan dan dimuat naik semula oleh seseorang, jadi

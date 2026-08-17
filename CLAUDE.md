@@ -163,10 +163,30 @@ form), `VISITOR_ROLE_OPTIONS` and `BEST_ROLE_OPTIONS` — **partition** the
 enum: a unit test asserts they cover it and do not overlap, so a role added to
 the enum and to none of them fails at the point it is cheap to fix. The list
 follows the ROW's own stored role rather than the page that opened the modal,
-so a 访客 is edited as a 访客 wherever it is opened from and the `<select>`
-always contains the value it is showing. **转为成员 is the only way across**,
-a confirmed button on the person's own page — a decision the church makes
-about somebody, not a field anyone corrects.
+so a 访客 is edited as a 访客 wherever it is opened from. When that list has
+only ONE entry the field is **not drawn at all** — a one-option `<select>` is a
+label pretending to be a control, inviting a change it cannot make — so a 访客
+and a BEST see no 教会身份 field, while a member, who has ranks to choose
+between, still does. What somebody IS is on screen either way, as the badge in
+the header.
+
+**Crossing is a BUTTON, never a field** — a decision the church makes about
+somebody, not something anyone corrects — and there are exactly two, both
+confirmed, both on the person's own page:
+
+- **转为成员**, offered on any non-member. One column changes; every roll-call
+  tick, training, referral and their 来访日期 stay exactly as they are, which
+  is the whole argument for one table.
+- **转为BEST**, offered on a 访客 only (church feedback: a visitor really does
+  turn out to be a BEST weeks later, once a leader knows them, and before this
+  they had to be deleted and re-created from the roster). It clears the life
+  group in the SAME write, because the database refuses a BEST who has one
+  (0032) — and the confirmation NAMES that group rather than removing it
+  quietly.
+
+Nothing goes the other way: a BEST does not become a 访客 (they would be
+somebody who came to the church, which is a different thing that happened), and
+a member does not go backwards at all.
 
 **来访日期 is a VISITOR's field now** (0031). `joined_at` left the member form
 and the member `FactGrid` — nobody fills in when they first came about

@@ -3095,6 +3095,28 @@ async function main() {
       check('…and shows the visit date, which a member’s page does not',
         visitorPageText.includes('2026-08-02'),
         visitorPageText.replace(/\s+/g, ' ').slice(0, 200));
+      // The edit form draws no 教会身份 control for a 访客: the list has exactly
+      // one entry, and a one-option `<select>` invites a change it cannot make.
+      // What they ARE is still on screen, as the badge in the header.
+      await page.locator('button:visible:has-text("Edit profile")').first().click();
+      await page.locator('.modal').waitFor({ timeout: 8000 });
+      const visitorFormLabels = await page.locator('.modal .field-label').allInnerTexts();
+      check('editing a 访客 offers no 教会身份 field — there is nothing to choose',
+        !visitorFormLabels.some((l) => /identity|church role/i.test(l)),
+        visitorFormLabels.join(' | ').slice(0, 200));
+      check('…while still offering the fields a visitor does have',
+        visitorFormLabels.some((l) => /visit date/i.test(l)),
+        visitorFormLabels.join(' | ').slice(0, 200));
+      await page.locator('.modal button:has-text("Cancel")').first().click();
+      await w(400);
+
+      // 转为BEST — the other crossing, offered on a 访客 only (0031). The one
+      // the church actually walks: somebody is written down as a 访客 on a
+      // Sunday and only later turns out to be somebody a 幸福小组 is reaching.
+      const toBestBtn = page.locator('button:visible:has-text("Mark as a BEST")');
+      check('a visitor’s own page also offers 转为BEST', (await toBestBtn.count()) === 1,
+        `${await toBestBtn.count()} button(s)`);
+
       await convertBtn.first().click();
       await page.locator('.modal-backdrop').waitFor({ timeout: 8000 });
       check('…asking first, and saying what survives the change',
@@ -3128,6 +3150,67 @@ async function main() {
           async () => (await page.locator('.content').first().innerText()).includes('2026-08-02'),
           (still) => still === false,
         ) === false);
+      check('…and 转为BEST goes too — a member does not go backwards',
+        (await page.locator('button:visible:has-text("Mark as a BEST")').count()) === 0);
+      // …and the 教会身份 field comes BACK, because a member has ranks to
+      // choose between. The field is hidden by "no choice", never by "visitor".
+      await page.locator('button:visible:has-text("Edit profile")').first().click();
+      await page.locator('.modal').waitFor({ timeout: 8000 });
+      const memberFormLabels = await page.locator('.modal .field-label').allInnerTexts();
+      check('editing them as a MEMBER offers 教会身份 again — now there is a choice',
+        memberFormLabels.some((l) => /identity|church role/i.test(l)),
+        memberFormLabels.join(' | ').slice(0, 200));
+      await page.locator('.modal button:has-text("Cancel")').first().click();
+      await w(400);
+
+      /*
+       * 转为BEST, driven for real on a SECOND visitor — a button checked only
+       * for existence is not a button anybody has proven works. This one is
+       * put in a life group first, because that is the half that can actually
+       * fail: the database refuses a BEST who has one (0032), so the
+       * conversion has to clear the group in the same write or the PATCH is
+       * rejected outright.
+       */
+      const fxBestGroup = await makeRosteredGroup();
+      const fxToBest = await makeMember('TOBEST', {
+        church_role: 'visitor',
+        joined_at: '2026-08-09',
+        group_id: fxBestGroup.id,
+        group_position: 'new_member',
+      });
+      try {
+        await page.goto(`${BASE}/members/${fxToBest.id}`, { waitUntil: 'domcontentloaded' });
+        await page.locator(`.entity-header h2:has-text("${fxToBest.name}")`).waitFor({ timeout: 20000 });
+        await page.locator('button:visible:has-text("Mark as a BEST")').first().click();
+        await page.locator('.modal-backdrop').waitFor({ timeout: 8000 });
+        const bestConfirm = await page.locator('.modal-backdrop').innerText();
+        check('转为BEST names the life group it is about to remove them from',
+          bestConfirm.includes(fxBestGroup.name),
+          bestConfirm.replace(/\s+/g, ' ').slice(0, 220));
+        await page.locator('.modal-backdrop button:has-text("Mark as a BEST")').first().click();
+
+        const bestRow = await pollUntil(
+          () => apiGet(`/members/${fxToBest.id}`).catch(() => null),
+          (r) => r?.church_role === 'best',
+        );
+        check('confirming makes them a BEST, on the server', bestRow?.church_role === 'best',
+          JSON.stringify(bestRow?.church_role));
+        check('…and takes the life group with it, which the database refuses a BEST',
+          bestRow?.group_id == null && bestRow?.group_position == null,
+          JSON.stringify({ group_id: bestRow?.group_id, group_position: bestRow?.group_position }));
+        check('…while their 来访日期 survives the crossing untouched',
+          bestRow?.joined_at === '2026-08-09', JSON.stringify(bestRow?.joined_at));
+        // A BEST does not go back to 访客 — 转为成员 is the only door left.
+        check('a BEST is offered 转为成员 but not 转为BEST again',
+          await pollUntil(
+            async () => (await page.locator('button:visible:has-text("Mark as a BEST")').count()) === 0,
+            (gone) => gone === true,
+          ) === true &&
+            (await page.locator('button:visible:has-text("Make a member")').count()) === 1);
+      } finally {
+        await fxToBest.remove();
+        await fxBestGroup.remove();
+      }
 
       // The public first-visit form: no session, no shell, a page of its own.
       const anonWelcome = await browser.newContext({ viewport: { width: 402, height: 874 } });
