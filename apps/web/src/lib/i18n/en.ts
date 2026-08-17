@@ -211,6 +211,13 @@ export const en = {
   'visitors.convert.title': 'Make this person a member?',
   'visitors.convert.message': '{name} joins the members list. Everything already recorded about them — attendance, trainings, who brought them — stays exactly as it is.',
   'visitors.toast.converted': '{name} is now a member',
+  // 转为BEST — the other crossing, offered on a 访客 only. A BEST belongs to a
+  // 幸福小组, so a life group goes with the change and is named up front.
+  'visitors.toBest': 'Mark as a BEST',
+  'visitors.toBest.title': 'Mark this person as a BEST?',
+  'visitors.toBest.message': '{name} becomes a BEST — someone not yet a Christian but open to knowing Jesus, followed up through a 幸福小组. Everything already recorded about them stays as it is.',
+  'visitors.toBest.message.group': '{name} becomes a BEST — someone not yet a Christian but open to knowing Jesus, followed up through a 幸福小组. They will also leave the life group {group}, because a BEST belongs to a 幸福小组 instead. Everything else already recorded about them stays as it is.',
+  'visitors.toast.toBest': '{name} is now a BEST',
 
   /* ---- importing a spreadsheet of members -------------------------------
    * A file a person will fix and upload again, so every refusal names the row

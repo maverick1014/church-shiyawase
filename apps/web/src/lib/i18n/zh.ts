@@ -193,6 +193,11 @@ export const zh: Messages = {
   'visitors.convert.title': '将这位朋友转为成员？',
   'visitors.convert.message': '{name} 将加入成员名单。已记录的一切——出席、培训、带领人——都会原样保留。',
   'visitors.toast.converted': '{name} 已转为成员',
+  'visitors.toBest': '转为 BEST',
+  'visitors.toBest.title': '将这位朋友转为 BEST？',
+  'visitors.toBest.message': '{name} 将成为 BEST——还不是基督徒，但愿意认识耶稣，由幸福小组跟进。已记录的一切都会原样保留。',
+  'visitors.toBest.message.group': '{name} 将成为 BEST——还不是基督徒，但愿意认识耶稣，由幸福小组跟进。同时会退出小组「{group}」，因为 BEST 属于幸福小组。其余已记录的一切都会原样保留。',
+  'visitors.toast.toBest': '{name} 已转为 BEST',
 
   /* ---- 批量导入成员 -----------------------------------------------------
    * 这是一份会被拿回去修改再上传的表格，所以每一次拒绝都要指明行号和出错的

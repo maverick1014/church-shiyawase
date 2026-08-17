@@ -170,6 +170,56 @@ export default function MemberDetailPage() {
       setConverting(false);
     }
   };
+
+  /**
+   * 转为BEST — the other crossing, and the one the church actually walks:
+   * somebody comes on a Sunday and is written down as a 访客, and only weeks
+   * later, once a leader knows them, does it turn out they are not a Christian
+   * yet but are open to knowing Jesus. Before this they had to be deleted and
+   * re-created from the 幸福小组 roster, which threw away their 来访日期 and
+   * every roll call they were on.
+   *
+   * Offered on a 访客 only. A BEST does not go the other way (they would be a
+   * 访客 who came to the church, which is a different thing that happened),
+   * and a member does not go backwards at all.
+   *
+   * The life group goes with it, and is NAMED in the confirmation rather than
+   * removed quietly: a BEST belongs to a 幸福小组 and the database refuses the
+   * other pairing outright (0032), so this is not the app being fussy — it is
+   * a real consequence the person pressing the button should see first.
+   * `group_position` goes too, or they would keep a seat in a group they are
+   * no longer in.
+   */
+  const convertToBest = async () => {
+    const group = m.group?.name ?? null;
+    const ok = await confirm({
+      title: tr('visitors.toBest.title'),
+      message: group
+        ? tr('visitors.toBest.message.group', { name: m.full_name, group })
+        : tr('visitors.toBest.message', { name: m.full_name }),
+      confirmText: tr('visitors.toBest'),
+    });
+    if (!ok) return;
+    setConverting(true);
+    try {
+      const updated = await api.patch<MemberRow>(`/members/${m.id}`, {
+        church_role: ChurchRole.Best,
+        group_id: null,
+        group_position: null,
+      });
+      // Leaving a group can disable an auto-provisioned 小组长 login, and that
+      // is worth saying out loud rather than discovering later (rule G2's
+      // client half) — the same hook every other write on this page uses.
+      if (updated.leader_account_event)
+        handleLeaderAccountEvent(updated.leader_account_event, m.full_name);
+      toast(tr('visitors.toast.toBest', { name: m.full_name }));
+      member.reload();
+    } catch (e) {
+      toast((e as Error).message, 'error');
+    } finally {
+      setConverting(false);
+    }
+  };
   const churchFacts = [
     { label: tr('hall.label'), value: m.hall?.name ?? '—' },
     {
@@ -262,6 +312,14 @@ export default function MemberDetailPage() {
             {perms.write && !isMember && (
               <button className="btn accent" onClick={convertToMember} disabled={converting}>
                 {converting ? tr('common.saving') : tr('visitors.convert')}
+              </button>
+            )}
+            {/* Only a 访客 — a BEST is already one, and a member does not go
+                back. Ghost rather than accent: 转为成员 beside it is the
+                happier outcome and keeps the emphasis. */}
+            {perms.write && m.church_role === ChurchRole.Visitor && (
+              <button className="btn ghost" onClick={convertToBest} disabled={converting}>
+                {converting ? tr('common.saving') : tr('visitors.toBest')}
               </button>
             )}
             {perms.write && <button className="btn" onClick={() => setEditOpen(true)}>{tr('member.editProfile')}</button>}
