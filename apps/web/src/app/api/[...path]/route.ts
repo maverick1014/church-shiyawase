@@ -3079,14 +3079,16 @@ async function rollCallSheet(
   if (groupId) memberQuery = memberQuery.eq('group_id', groupId);
   else memberQuery = memberQuery.eq('status', 'active');
   if (hallFilter) memberQuery = memberQuery.eq('hall_id', hallFilter);
-  // 访客 stay on this sheet — a visitor coming to the service is precisely
-  // what the church wants recorded, and the page draws them in a section of
-  // their own (0031). A BEST does not: they are met and rolled weekly in
-  // their 幸福小组, which is a roll call of its own, and a third kind of row
-  // here would sit under a heading that describes neither of the other two.
-  // Somebody who starts coming to the service is converted, which is what
-  // that button is for.
-  memberQuery = memberQuery.neq('church_role', ChurchRole.Best);
+  // EVERYBODY active, whatever they are to the church — 成员, 访客 and BEST
+  // alike, each drawn in a section of its own by the page (0031).
+  //
+  // A BEST was briefly left off here, on the reasoning that they are rolled
+  // weekly in their own 幸福小组. The church's own correction: a BEST may
+  // perfectly well turn up to a Sunday service, and a roll call you cannot
+  // tick them on is a roll call that quietly under-counts the people the
+  // church is trying hardest to reach. The two roll calls answer different
+  // questions — "who came to their 幸福小组 in week 5" and "who was at the
+  // service" — so being on both is right, not double-counting.
 
   const readMeetings = async () => {
     // A group's card carries the group's own occasions beside these Sundays,

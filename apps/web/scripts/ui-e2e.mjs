@@ -3207,6 +3207,23 @@ async function main() {
             (gone) => gone === true,
           ) === true &&
             (await page.locator('button:visible:has-text("Make a member")').count()) === 1);
+
+        /*
+         * …and a BEST is ON the roll-call sheet, in a section of its own
+         * (church feedback: they may perfectly well come to a Sunday service,
+         * and a sheet you cannot tick them on under-counts exactly the people
+         * the church is trying hardest to reach). Their own 幸福小组 roll call
+         * answers a different question, so both is right.
+         */
+        await page.goto(`${BASE}/events`, { waitUntil: 'domcontentloaded' });
+        await page.locator('table.sheet-table').waitFor({ timeout: 20000 });
+        const sheetSections = await page.locator('tr.sheet-section').allInnerTexts();
+        check('the roll-call sheet reads in sections, BEST among them',
+          sheetSections.some((h) => /BEST/i.test(h)) &&
+            sheetSections.some((h) => /Members/i.test(h)),
+          sheetSections.join(' | '));
+        check('…and this BEST is a row on it, tickable like anybody else',
+          (await page.locator(`table.sheet-table tbody tr:has-text("${fxToBest.name}") input[type=checkbox]`).count()) > 0);
       } finally {
         await fxToBest.remove();
         await fxBestGroup.remove();

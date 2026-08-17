@@ -202,11 +202,21 @@ unknown role reads as a MEMBER, deliberately: a row written by a future
 migration lands on the roll and on the follow-up list, where somebody will
 see it, never silently outside both.
 
-The roll-call sheet reads in two **sections** — 成员, then 访客 (church
-feedback). Presentation only: one sheet, one set of columns, one check-all per
-column, one totals row, one PUT path. A BEST is not on it at all; they are
-rolled weekly in their own 幸福小组. The export is sectioned the same way,
-because a printed sheet is the same reading task the page is.
+The roll-call sheet reads in three **sections** — 成员, then 访客, then BEST
+(church feedback). Presentation only: one sheet, one set of columns, one
+check-all per column, one totals row, one PUT path. The export is sectioned the
+same way, because a printed sheet is the same reading task the page is.
+
+A BEST **is** on it. They were briefly left off, on the reasoning that they are
+rolled weekly in their own 幸福小组 — the church's own correction is that a
+BEST may perfectly well come to a Sunday service, and a roll call you cannot
+tick them on quietly under-counts the people the church is trying hardest to
+reach. The two roll calls answer different questions ("who came in week 5" and
+"who was at the service"), so being on both is right rather than
+double-counting. The sections are keyed by the ROLE's own section rather than
+by "member vs not", so the two non-member roles never share a heading that
+describes only one of them; an unknown future role lands with the members,
+where `isMemberRole` already puts it.
 
 There are now **two public sign-up links, and which one the church hands out
 is what decides the role**: `/join` + `POST /members/register` makes MEMBERS

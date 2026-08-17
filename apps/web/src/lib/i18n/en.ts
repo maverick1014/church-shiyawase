@@ -454,6 +454,7 @@ export const en = {
   // reading order changed.
   'events.section.members': 'Members',
   'events.section.visitors': 'Visitors',
+  'events.section.best': 'BEST',
   'events.col.preService': 'Pre-service',
   'events.col.service': 'Service',
   'events.col.attended': 'Attended',
