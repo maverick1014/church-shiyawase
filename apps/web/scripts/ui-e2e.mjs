@@ -1183,6 +1183,12 @@ async function main() {
         memberPageText.replace(/\s+/g, ' ').slice(0, 90));
       await page.goBack({ waitUntil: 'domcontentloaded' });
       await page.locator('.sheet-table').first().waitFor({ timeout: 10000 });
+    } catch (e) {
+      // A module must cost its OWN checks when it breaks, never everybody
+      // else's. Without this the exception escapes past the `finally` and
+      // every module below simply never runs, while the summary still reads
+      // as one failure — which is how a flake here once hid 160 checks.
+      check('the run aborted', false, e.message.split('\n')[0]);
     } finally {
       await fxGroup.remove();
     }
@@ -1255,6 +1261,12 @@ async function main() {
       await credModal.first().locator('button:has-text("Close")').first().click();
       await w(300);
       check('closing the credential modal dismisses it', (await page.locator('.modal').count()) === 0);
+    } catch (e) {
+      // A module must cost its OWN checks when it breaks, never everybody
+      // else's. Without this the exception escapes past the `finally` and
+      // every module below simply never runs, while the summary still reads
+      // as one failure — which is how a flake here once hid 160 checks.
+      check('the run aborted', false, e.message.split('\n')[0]);
     } finally {
       await fxLeaderGroup.remove();
     }
@@ -1530,6 +1542,12 @@ async function main() {
       // Deleted through the UI — take it off the sweep list so the run does not
       // report a leftover it already cleaned up.
       if (goneFromSheet) forget(`/events/${fxMeeting.id}`);
+    } catch (e) {
+      // A module must cost its OWN checks when it breaks, never everybody
+      // else's. Without this the exception escapes past the `finally` and
+      // every module below simply never runs, while the summary still reads
+      // as one failure — which is how a flake here once hid 160 checks.
+      check('the run aborted', false, e.message.split('\n')[0]);
     } finally {
       await fxMeeting.remove();
       await fxSheetMember.remove();
@@ -1653,6 +1671,12 @@ async function main() {
         courseRowTexts.some((t2) => /Restricted to/.test(t2) && /Sign-up fee/.test(t2)),
         JSON.stringify(courseRowTexts));
       await page.locator('.modal button:has-text("Cancel")').click();
+    } catch (e) {
+      // A module must cost its OWN checks when it breaks, never everybody
+      // else's. Without this the exception escapes past the `finally` and
+      // every module below simply never runs, while the summary still reads
+      // as one failure — which is how a flake here once hid 160 checks.
+      check('the run aborted', false, e.message.split('\n')[0]);
     } finally {
       await fxActivity.remove();
       await fxTraining.remove();
@@ -1769,6 +1793,12 @@ async function main() {
         !/Sign-up fee/i.test(freeBody) && !freeBody.includes('报名费') && (await page.locator('input[type=file]').count()) === 0,
         freeBody.replace(/\s+/g, ' ').slice(0, 160));
       await shot('06d-public-paid');
+    } catch (e) {
+      // A module must cost its OWN checks when it breaks, never everybody
+      // else's. Without this the exception escapes past the `finally` and
+      // every module below simply never runs, while the summary still reads
+      // as one failure — which is how a flake here once hid 160 checks.
+      check('the run aborted', false, e.message.split('\n')[0]);
     } finally {
       await fxPaid.remove();
       await fxTrainingFree.remove();
@@ -1954,6 +1984,12 @@ async function main() {
       check('the add-pair form also offers a remark field',
         (await page.locator('.modal .field', { has: page.locator('.field-label', { hasText: 'Remark' }) }).locator('textarea').count()) === 1);
       await page.locator('.modal button:has-text("Cancel")').click();
+    } catch (e) {
+      // A module must cost its OWN checks when it breaks, never everybody
+      // else's. Without this the exception escapes past the `finally` and
+      // every module below simply never runs, while the summary still reads
+      // as one failure — which is how a flake here once hid 160 checks.
+      check('the run aborted', false, e.message.split('\n')[0]);
     } finally {
       await fxPair.remove();
     }
@@ -2017,6 +2053,12 @@ async function main() {
       } finally {
         for (const remove of removeRelayPairs) await remove();
       }
+    } catch (e) {
+      // A module must cost its OWN checks when it breaks, never everybody
+      // else's. Without this the exception escapes past the `finally` and
+      // every module below simply never runs, while the summary still reads
+      // as one failure — which is how a flake here once hid 160 checks.
+      check('the run aborted', false, e.message.split('\n')[0]);
     } finally {
       await cxChild.remove();
       await cxSibling.remove();
@@ -2704,6 +2746,12 @@ async function main() {
             !/not enabled/i.test(await page.locator('.content').innerText()));
       }
       await shot('08a-church');
+    } catch (e) {
+      // A module must cost its OWN checks when it breaks, never everybody
+      // else's. Without this the exception escapes past the `finally` and
+      // every module below simply never runs, while the summary still reads
+      // as one failure — which is how a flake here once hid 160 checks.
+      check('the run aborted', false, e.message.split('\n')[0]);
     } finally {
       // Belt and braces: whatever happened above, the church is left running
       // exactly the modules it was running before this ran — and wearing
@@ -2931,6 +2979,12 @@ async function main() {
       }
       check('no page is wider than the phone viewport',
         overflowing.length === 0, overflowing.join(', ') || `${DETAIL_PAGES.length + 2} pages fit`);
+    } catch (e) {
+      // A module must cost its OWN checks when it breaks, never everybody
+      // else's. Without this the exception escapes past the `finally` and
+      // every module below simply never runs, while the summary still reads
+      // as one failure — which is how a flake here once hid 160 checks.
+      check('the run aborted', false, e.message.split('\n')[0]);
     } finally {
       await fxSample.remove();
     }
