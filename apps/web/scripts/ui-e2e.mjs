@@ -2070,7 +2070,7 @@ async function main() {
     const happyGroupName = fixtureName('GROUP');
     let happyTermId = null;
     let happyTermNo = null;
-    let happyVisitorId = null;
+    let happyBestId = null;
     try {
       /* -- term, created through the UI ----------------------------------- */
       await page.goto(`${BASE}/happiness`, { waitUntil: 'domcontentloaded' });
@@ -2166,7 +2166,7 @@ async function main() {
       await rosterCombo.fill(fxHappyMember.name);
       await w(400);
       await page.locator('.combo-list .combo-option').first().waitFor({ timeout: 8000 });
-      check('the roster combobox offers 教会成员 and 福友 with no role filtering — one option matches',
+      check('the roster combobox offers every member with no role filtering — one option matches',
         (await page.locator('.combo-list .combo-option').count()) === 1);
       await page.locator('.combo-list .combo-option').first().click();
       await w(300);
@@ -2260,30 +2260,39 @@ async function main() {
       await page.goBack({ waitUntil: 'domcontentloaded' });
       await rosterCard.waitFor({ timeout: 15000 });
 
-      // 0122: the actual point of 幸福小组 — a leader meeting someone new can
-      // create them AND land them on the roster without leaving this page.
-      const happyVisitorName = fixtureName('VISITOR');
-      await rosterCard.locator('button:has-text("New visitor")').click();
-      const visitorNameInput = rosterCard.locator('.field', { hasText: /^Name$/ }).locator('input');
-      await visitorNameInput.waitFor({ timeout: 8000 });
-      await visitorNameInput.fill(happyVisitorName);
-      await rosterCard.locator('button:has-text("New visitor")').click();
-      const visitorAdded = await rosterCard.locator(`table td:has-text("${happyVisitorName}")`).first()
+      // 0122/0031: the actual point of 幸福小组 — a leader meeting someone new
+      // can create them AND land them on the roster without leaving this page.
+      // The role it writes is BEST now, not 访客: a 访客 came to the CHURCH and
+      // lives on /visitors, while the person met HERE is somebody not yet a
+      // Christian but open to knowing Jesus. This roster is the ONE form in the
+      // app that creates that role.
+      const happyBestName = fixtureName('BEST');
+      await rosterCard.locator('button:has-text("New BEST")').click();
+      const bestNameInput = rosterCard.locator('.field', { hasText: /^Name$/ }).locator('input');
+      await bestNameInput.waitFor({ timeout: 8000 });
+      await bestNameInput.fill(happyBestName);
+      await rosterCard.locator('button:has-text("New BEST")').click();
+      const bestAdded = await rosterCard.locator(`table td:has-text("${happyBestName}")`).first()
         .waitFor({ timeout: 10000 }).then(() => true).catch(() => false);
-      check('the quick-add-visitor form creates a member and lands them on this roster', visitorAdded);
-      const visitorRow = (await apiGet(`/members?q=${encodeURIComponent(happyVisitorName)}`))?.[0] ?? null;
-      happyVisitorId = visitorRow?.id ?? null;
-      check('…created as an ordinary 访客 (church role visitor), never a claim they get to make about anything else',
-        visitorRow?.church_role === 'visitor', JSON.stringify(visitorRow));
-      // …and THAT is the one thing a roster row labels: the visitor this group
-      // exists to reach carries a 访客 tag, where an ordinary member above
-      // carried none.
-      const visitorRosterRow = rosterCard
-        .locator('table:not(.sheet-table) tbody tr', { hasText: happyVisitorName });
-      check('a 福友 on the roster is tagged as a visitor, and only they are',
-        (await visitorRosterRow.locator('.badge').count()) === 1 &&
-          /visitor/i.test(await visitorRosterRow.locator('.badge').first().innerText()),
-        await visitorRosterRow.innerText().catch(() => '(no row)'));
+      check('the quick-add form creates a BEST and lands them on this roster', bestAdded);
+      const bestRow = (await apiGet(`/members?q=${encodeURIComponent(happyBestName)}`))?.[0] ?? null;
+      happyBestId = bestRow?.id ?? null;
+      check('…created as a BEST, the one role this form writes',
+        bestRow?.church_role === 'best', JSON.stringify(bestRow));
+      // …and a BEST never carries a life group — refused by the database
+      // (`members_best_has_no_life_group`, 0032), so the row cannot arrive
+      // with one however it was written.
+      check('…and with no life group, which the database refuses a BEST',
+        bestRow?.group_id == null, JSON.stringify(bestRow?.group_id));
+      // …and THAT is the one thing a roster row labels: whoever on it is not
+      // one of the church's own members carries a tag, where an ordinary
+      // member above carried none.
+      const bestRosterRow = rosterCard
+        .locator('table:not(.sheet-table) tbody tr', { hasText: happyBestName });
+      check('a BEST on the roster is tagged, and only they are',
+        (await bestRosterRow.locator('.badge').count()) === 1 &&
+          /best/i.test(await bestRosterRow.locator('.badge').first().innerText()),
+        await bestRosterRow.innerText().catch(() => '(no row)'));
 
       // The sheet's columns are WEEK NUMBERS, never dates — the one roll call
       // in the app that isn't date-based.
@@ -2338,10 +2347,18 @@ async function main() {
         .then(() => true)
         .catch(() => false);
       check('a member’s own page shows their 幸福小组 participation history', historyShown);
+    } catch (e) {
+      // Every other module catches; this one did not, so one timed-out click
+      // here aborted the WHOLE remaining suite — user management, church
+      // settings, page chrome, the 成员/访客 split and the write-cycle all
+      // silently never ran, and the summary still looked like a single
+      // failure. A module must cost its own checks when it breaks, never
+      // everybody else's.
+      check('the run aborted', false, e.message.split('\n')[0]);
     } finally {
       // Deleting the term cascades its group, roster and every week of
       // attendance — nothing else here needs its own teardown. The quick-added
-      // visitor (0122) is a real `members` row the cascade never reaches
+      // BEST (0122/0031) is a real `members` row the cascade never reaches
       // (deleting the roster ROW, not the member), so it needs its own delete
       // — belt-and-suspenders against the final ZZ_UITEST_ sweep, which would
       // otherwise be the only thing to catch it.
@@ -2350,9 +2367,9 @@ async function main() {
         console.log(`  ↳ cleanup: ${gone ? 'deleted' : 'COULD NOT DELETE'} happiness term ${happyTermName} (cascades its group)`);
         if (!gone) console.log(`  ↳ purge will retry: /happiness/terms/${happyTermId}`);
       }
-      if (happyVisitorId) {
-        const gone = await apiDelete(`/members/${happyVisitorId}`);
-        console.log(`  ↳ cleanup: ${gone ? 'deleted' : 'COULD NOT DELETE'} quick-added visitor ${happyVisitorId}`);
+      if (happyBestId) {
+        const gone = await apiDelete(`/members/${happyBestId}`);
+        console.log(`  ↳ cleanup: ${gone ? 'deleted' : 'COULD NOT DELETE'} quick-added BEST ${happyBestId}`);
       }
       await fxHappyMember.remove();
     }
@@ -3063,28 +3080,54 @@ async function main() {
         roleOpts.join(' | ').slice(0, 160));
 
       // 转为成员 — the one way across, on the person's own page, confirmed.
+      //
+      // NOTE on the wait: `.fact` is NOT a signal that this page has data —
+      // `SkeletonDetail` renders a whole `FactGrid` of placeholder facts, so
+      // waiting on `.fact` resolves against the LOADING SKELETON and every
+      // assertion after it reads an empty page. Wait on the member's own name
+      // in the header, which only real data can produce.
       await page.goto(`${BASE}/members/${fxVisitor.id}`, { waitUntil: 'domcontentloaded' });
-      await page.locator('.fact').first().waitFor({ timeout: 20000 });
-      check('a visitor’s own page offers 转为成员',
-        (await page.locator('button:visible:has-text("Make a member")').count()) === 1);
+      await page.locator(`.entity-header h2:has-text("${fxVisitor.name}")`).waitFor({ timeout: 20000 });
+      const convertBtn = page.locator('button:visible:has-text("Make a member")');
+      check('a visitor’s own page offers 转为成员', (await convertBtn.count()) === 1,
+        `${await convertBtn.count()} button(s)`);
+      const visitorPageText = await page.locator('.content').first().innerText();
       check('…and shows the visit date, which a member’s page does not',
-        (await page.locator('.content').innerText()).includes('2026-08-02'));
-      await page.locator('button:visible:has-text("Make a member")').first().click();
+        visitorPageText.includes('2026-08-02'),
+        visitorPageText.replace(/\s+/g, ' ').slice(0, 200));
+      await convertBtn.first().click();
       await page.locator('.modal-backdrop').waitFor({ timeout: 8000 });
       check('…asking first, and saying what survives the change',
         /stays exactly as it is/i.test(await page.locator('.modal-backdrop').innerText()));
       await page.locator('.modal-backdrop button:has-text("Make a member")').first().click();
-      // The page re-reads itself after the PATCH; poll rather than sleep on it.
-      const converted = await pollUntil(
-        async () => (await page.locator('button:visible:has-text("Make a member")').count()) === 0,
-        (gone) => gone === true,
-        8000,
+
+      // Ground truth is the SERVER, not the DOM: this is the one assertion
+      // that proves the conversion actually happened, independent of whatever
+      // the page has re-rendered yet.
+      const convertedRow = await pollUntil(
+        () => apiGet(`/members/${fxVisitor.id}`).catch(() => null),
+        (r) => r?.church_role === 'member',
       );
-      check('confirming makes them a member, and the button goes with it', converted);
-      if (converted) {
-        check('…and the visit date stops being drawn about them',
-          !(await page.locator('.content').innerText()).includes('2026-08-02'));
-      }
+      check('confirming makes them a member — one column, on the server',
+        convertedRow?.church_role === 'member', JSON.stringify(convertedRow?.church_role));
+      // …and everything else about the row is deliberately untouched: that is
+      // the whole argument for one table rather than two.
+      check('…while their 来访日期 and who brought them are kept, not discarded',
+        convertedRow?.joined_at === '2026-08-02', JSON.stringify(convertedRow?.joined_at));
+
+      // Only then the DOM, polled — the page re-reads itself after the PATCH,
+      // and reading once the instant the button vanishes lands mid-re-render
+      // (the same optimistic-render race the sheets already poll around).
+      check('…and the button goes with it, since there is nowhere left to convert to',
+        await pollUntil(
+          () => convertBtn.count(),
+          (n) => n === 0,
+        ) === 0);
+      check('…and the visit date stops being drawn about them',
+        await pollUntil(
+          async () => (await page.locator('.content').first().innerText()).includes('2026-08-02'),
+          (still) => still === false,
+        ) === false);
 
       // The public first-visit form: no session, no shell, a page of its own.
       const anonWelcome = await browser.newContext({ viewport: { width: 402, height: 874 } });
