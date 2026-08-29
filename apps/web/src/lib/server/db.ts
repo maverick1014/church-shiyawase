@@ -16,10 +16,11 @@ export function getDb(): SupabaseClient {
   const key =
     process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.SUPABASE_ANON_KEY;
   if (!url || !key) {
-    throw new HttpError(
-      500,
-      'Missing Supabase configuration (SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY).',
-    );
+    // Names no vendor and no environment variable: the person reading this
+    // is a church secretary, and neither is theirs to fix. The detail a
+    // developer needs is logged instead (rule G6 — never the key itself).
+    console.error('[config] SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY is not set');
+    throw new HttpError(500, SERVICE_UNAVAILABLE);
   }
   client = createClient(url, key, {
     auth: { persistSession: false, autoRefreshToken: false },
@@ -37,6 +38,22 @@ export class HttpError extends Error {
   }
 }
 
+/**
+ * The ONE sentence a user reads when something broke on our side.
+ *
+ * A 500 is never something the person at the keyboard did, and never
+ * something they can fix — so it says what happened in their terms and what
+ * to do next, and nothing else. Raw upstream text must never take its place:
+ * a database driver, PostgREST and the CDN in front of them all write for a
+ * developer, and one of them ("error code: 1016") is what the church actually
+ * saw when they tried to sign in.
+ */
+export const SERVICE_UNAVAILABLE =
+  'The app cannot reach its records right now. Please try again in a few minutes — if it keeps happening, tell your church administrator.';
+
+/** The same idea for a row that is not there. "Resource" is not a word a church uses. */
+export const NOT_FOUND = 'That record could not be found. It may have been deleted.';
+
 /** Throw a clean HTTP error when a Supabase query fails (mirrors the API). */
 export function unwrap<T = Record<string, unknown>>(result: {
   data: T | null;
@@ -45,7 +62,7 @@ export function unwrap<T = Record<string, unknown>>(result: {
   if (result.error) {
     // PGRST116 = no rows returned for a `.single()` query.
     if (result.error.code === 'PGRST116') {
-      throw new HttpError(404, 'Resource not found');
+      throw new HttpError(404, NOT_FOUND);
     }
     // 23505 = unique_violation. Everything else Postgres reports is a bug or an
     // outage and stays a 500, but this one is a real user-facing OUTCOME since
@@ -56,10 +73,18 @@ export function unwrap<T = Record<string, unknown>>(result: {
     if (result.error.code === '23505') {
       throw new HttpError(409, uniqueViolationMessage(result.error.message));
     }
-    throw new HttpError(500, result.error.message);
+    // EVERYTHING else is an outage or a bug, and its text is written for a
+    // developer: a Postgres constraint name, a PostgREST code, or — the way
+    // this rule came to be written — Cloudflare's own "error code: 1016" from
+    // in front of an unreachable database, which is what the church read on
+    // the login screen. None of it is the reader's to act on, and some of it
+    // names internal columns, so it is LOGGED and a plain sentence is what
+    // leaves the building.
+    console.error('[db]', result.error.code ?? '', result.error.message);
+    throw new HttpError(500, SERVICE_UNAVAILABLE);
   }
   if (result.data === null) {
-    throw new HttpError(404, 'Resource not found');
+    throw new HttpError(404, NOT_FOUND);
   }
   return result.data;
 }

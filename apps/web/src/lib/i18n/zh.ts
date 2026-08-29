@@ -133,7 +133,8 @@ export const zh: Messages = {
   'login.submit': '登录',
   'login.submitting': '登录中…',
   'login.hint': '请使用管理员分配的账户登录。',
-  'login.failed': '登录失败',
+  'login.failed': '无法登录，请检查邮箱和密码。',
+  'login.unreachable': '目前无法连接应用。请检查网络后重试——若持续出现，请告知教会管理员。',
 
   /* ---- members --------------------------------------------------------- */
   'members.title': '成员管理',
@@ -235,7 +236,7 @@ export const zh: Messages = {
   'import.confirm.ok': '导入',
   'import.done': '导入完成',
   'import.done.summary': '新增 {created} · 更新 {updated} · 跳过 {skipped}',
-  'import.done.failures': '以下行被服务器拒绝：',
+  'import.done.failures': '以下行无法添加：',
   'import.hint': '💡 留空表示「这一栏没有要说的」，绝不会清掉教会已有的资料。日期请填 YYYY-MM-DD。',
   'import.leaderAccounts.title': '已开通的登录账户',
   'import.leaderAccounts.hint': '仅显示一次——请在关闭前复制，之后将无法再次查看。',
@@ -269,7 +270,7 @@ export const zh: Messages = {
   'import.issue.self_referrer': '推荐人不能是本人（「{value}」）。',
   'import.issue.unknown_gender': '「{value}」不是性别。',
   'import.issue.unknown_status': '「{value}」不是成员状态。',
-  'import.issue.bad_date': '「{value}」不是日期——请写成 YYYY-MM-DD。',
+  'import.issue.bad_date': '「{value}」不是日期——请按年月日顺序填写，例如 2026-03-04。',
   'import.issue.bad_email': '「{value}」不是邮箱地址。',
   'import.issue.bad_phone': '「{value}」不是电话号码。',
   'import.issue.no_hall': '本教会不止一个堂会，因此每一行都要填堂会。',

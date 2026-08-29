@@ -40,7 +40,15 @@ export default function LoginPage() {
       router.push('/');
       router.refresh();
     } catch (e) {
-      setErr((e as Error).message);
+      // Two different failures used to land here and both printed whatever
+      // string they carried. One is the server's own answer, written for the
+      // person reading it. The other is `fetch` itself rejecting because the
+      // request never got out — the browser's wording for that is "Failed to
+      // fetch" (Chrome) or "Load failed" (Safari), which is what a church
+      // secretary would have been left staring at. Only a message we wrote
+      // is shown; anything else becomes the sentence for "we cannot reach it".
+      const known = e instanceof Error && e.message && !(e instanceof TypeError);
+      setErr(known ? (e as Error).message : t('login.unreachable'));
     } finally {
       setBusy(false);
     }
