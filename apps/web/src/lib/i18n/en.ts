@@ -143,7 +143,11 @@ export const en = {
   'login.submit': 'Sign in',
   'login.submitting': 'Signing in…',
   'login.hint': 'Sign in with the account your administrator issued you.',
-  'login.failed': 'Sign-in failed',
+  'login.failed': 'Could not sign in. Please check your email and password.',
+  // Shown when the request never got an answer at all — no connection, or
+  // the app cannot reach its records. The browser's own wording for this
+  // ('Failed to fetch') used to be printed on the sign-in card verbatim.
+  'login.unreachable': 'Cannot reach the app right now. Please check your internet connection and try again — if it keeps happening, tell your church administrator.',
 
   /* ---- members --------------------------------------------------------- */
   'members.title': 'Members',
@@ -215,8 +219,8 @@ export const en = {
   // 幸福小组, so a life group goes with the change and is named up front.
   'visitors.toBest': 'Mark as a BEST',
   'visitors.toBest.title': 'Mark this person as a BEST?',
-  'visitors.toBest.message': '{name} becomes a BEST — someone not yet a Christian but open to knowing Jesus, followed up through a 幸福小组. Everything already recorded about them stays as it is.',
-  'visitors.toBest.message.group': '{name} becomes a BEST — someone not yet a Christian but open to knowing Jesus, followed up through a 幸福小组. They will also leave the life group {group}, because a BEST belongs to a 幸福小组 instead. Everything else already recorded about them stays as it is.',
+  'visitors.toBest.message': '{name} becomes a BEST — someone not yet a Christian but open to knowing Jesus, followed up through a Happiness Group. Everything already recorded about them stays as it is.',
+  'visitors.toBest.message.group': '{name} becomes a BEST — someone not yet a Christian but open to knowing Jesus, followed up through a Happiness Group. They will also leave the life group {group}, because a BEST belongs to a Happiness Group instead. Everything else already recorded about them stays as it is.',
   'visitors.toast.toBest': '{name} is now a BEST',
 
   /* ---- importing a spreadsheet of members -------------------------------
@@ -257,7 +261,7 @@ export const en = {
   'import.confirm.ok': 'Import',
   'import.done': 'Import finished',
   'import.done.summary': 'Added {created} · updated {updated} · skipped {skipped}',
-  'import.done.failures': 'These rows were refused by the server:',
+  'import.done.failures': 'These rows could not be added:',
   'import.hint': '💡 A blank cell means “nothing to say” and never clears what the church already has. Dates go in as YYYY-MM-DD.',
   // A generated 小组长 login this import created — shown once, the same rule
   // a single promotion's own credential modal follows (rule G6).
@@ -293,13 +297,13 @@ export const en = {
   'import.issue.self_referrer': 'Somebody cannot have referred themselves (“{value}”).',
   'import.issue.unknown_gender': '“{value}” is not a gender.',
   'import.issue.unknown_status': '“{value}” is not a member status.',
-  'import.issue.bad_date': '“{value}” is not a date — write it as YYYY-MM-DD.',
+  'import.issue.bad_date': '“{value}” is not a date — write it year first, like 2026-03-04.',
   'import.issue.bad_email': '“{value}” is not an email address.',
   'import.issue.bad_phone': '“{value}” is not a phone number.',
   'import.issue.no_hall': 'This church has more than one congregation, so every row needs one.',
   'import.issue.other_hall': 'This person belongs to another congregation, which this account may not change.',
   'import.issue.group_other_hall': '“{value}” is another congregation’s life group.',
-  'import.issue.best_in_group': 'A BEST belongs to a 幸福小组, not to a life group — remove “{value}”.',
+  'import.issue.best_in_group': 'A BEST belongs to a Happiness Group, not to a life group — remove “{value}”.',
 
   /* ---- the shared photo picker ------------------------------------------ */
   'photo.choose': 'Add a photo',
@@ -343,15 +347,15 @@ export const en = {
   // A modal, never a toast: a toast disappears before anyone could copy a
   // password off it (rule G6 — this is the ONE place this plaintext exists).
   'leaderAccount.modal.title': 'Login created',
-  'leaderAccount.modal.body': 'Becoming 小组长 automatically opened a login for this person. It is shown here once and cannot be retrieved again — share it with them directly.',
+  'leaderAccount.modal.body': 'Becoming a group leader automatically opened a login for this person. It is shown here once and cannot be retrieved again — share it with them directly.',
   'leaderAccount.modal.email': 'Email',
   'leaderAccount.modal.password': 'Password',
-  'leaderAccount.modal.warning': 'This password will not be shown again. Copy it now, or reset it later from 用户管理 if it is lost.',
+  'leaderAccount.modal.warning': 'This password will not be shown again. Copy it now, or reset it later from the Users page if it is lost.',
   'leaderAccount.modal.copy': 'Copy email & password',
   'leaderAccount.modal.copied': 'Copied — paste it somewhere safe',
   // Demotion/no-email — a toast is enough, nothing to copy.
-  'leaderAccount.toast.disabled': '{name}’s login was disabled since they are no longer 小组长',
-  'leaderAccount.toast.noEmail': '{name} was made 小组长, but has no email on file — no login could be created',
+  'leaderAccount.toast.disabled': '{name}’s login was disabled since they are no longer a group leader',
+  'leaderAccount.toast.noEmail': '{name} was made a group leader, but has no email on file — no login could be created',
   'member.delete.message': 'Delete {name}\u2019s member profile? Their training, pairing and attendance records go with it and cannot be recovered.',
   'member.noPairs': 'Not taking part in the Forty Days yet.',
   'member.noHappiness': 'Not in a Happiness Group yet.',

@@ -19,12 +19,27 @@ async function request<T>(
     cache: 'no-store',
   });
   if (!res.ok) {
-    let message = `Request failed (${res.status})`;
+    // The fallback used to be `Request failed (500)`, which is the shape of
+    // message this app is trying not to show anyone: a status code is a fact
+    // about HTTP, not about what the person just tried to do. It is reached
+    // whenever the response carries no JSON body of its own — a gateway page,
+    // a dropped connection, the CDN answering instead of us — which is exactly
+    // when the reader is least able to do anything with a number.
+    let message =
+      res.status === 401
+        ? 'You have been signed out. Please sign in again.'
+        : res.status === 403
+          ? 'Your account does not have permission to do that.'
+          : res.status === 404
+            ? 'That record could not be found. It may have been deleted.'
+            : 'Something went wrong and the app could not finish that. Please try again in a few minutes — if it keeps happening, tell your church administrator.';
     try {
       const body = await res.json();
-      message = body.message ?? message;
+      // The server writes its own sentence for anything a person can act on;
+      // only fall back when it did not.
+      if (body.message) message = body.message;
     } catch {
-      /* ignore */
+      /* no JSON body — keep the sentence above */
     }
     throw new Error(Array.isArray(message) ? message.join(', ') : message);
   }

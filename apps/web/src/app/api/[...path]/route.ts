@@ -1,4 +1,4 @@
-import { getDb, HttpError, json, unwrap, unwrapWrite } from '@/lib/server/db';
+import { getDb, HttpError, json, unwrap, unwrapWrite, SERVICE_UNAVAILABLE } from '@/lib/server/db';
 import {
   clearCookie,
   generateRandomPassword,
@@ -261,7 +261,7 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
     // its own existing role check, unaffected by this allowlist.
     const GROUP_LEADER_PREFIXES = ['members', 'groups', 'attendance', 'auth', 'church'];
     if (!GROUP_LEADER_PREFIXES.includes(r0 ?? ''))
-      throw new HttpError(403, 'A group leader account may not reach this part of the app');
+      throw new HttpError(403, 'A group leader account cannot open this part of the app');
     // `app_users.group_id` is `on delete set null` — a group leader whose
     // group was deleted has nothing left to be scoped to. Refused outright
     // rather than silently falling through to "no narrowing", which is what a
@@ -572,7 +572,7 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
         // this build does not ship.
         if (!isOptionalModule(r2)) throw new HttpError(400, `Unknown module: ${r2}`);
         const enabled = (await body()).enabled;
-        if (typeof enabled !== 'boolean') throw new HttpError(400, 'enabled must be true or false');
+        if (typeof enabled !== 'boolean') throw new HttpError(400, 'Please say whether this should be switched on or off');
         const c = await churchRow(db);
         const row = unwrap<{ module: string; enabled: boolean }>(
           await db
@@ -667,7 +667,7 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
       const dto = await body();
       const rows = Array.isArray(dto.rows) ? dto.rows : null;
       if (!rows || rows.length === 0)
-        throw new HttpError(400, 'rows must be a non-empty list of member rows');
+        throw new HttpError(400, 'That file has no rows in it');
       if (rows.length > MAX_IMPORT_ROWS)
         throw new HttpError(
           400,
@@ -845,12 +845,12 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
         const dto = await body();
         const list = Array.isArray(dto.records) ? (dto.records as Array<Record<string, unknown>>) : null;
         if (!list || list.length === 0)
-          throw new HttpError(400, 'records must be a non-empty list of { member_id, status }');
+          throw new HttpError(400, 'Please choose at least one person to mark');
         if (list.length > 1000)
-          throw new HttpError(400, 'Too many records in one write — 1000 at most');
+          throw new HttpError(400, 'Too many people at once — 1000 at most. Please do it in smaller batches.');
         const records = list.map((r) => {
           const memberId = String(r.member_id ?? '');
-          if (!memberId) throw new HttpError(400, 'every record needs a member_id');
+          if (!memberId) throw new HttpError(400, 'One of the people to mark is missing — please try again');
           return { meeting_id: r2, member_id: memberId, status: r.status ?? 'present' };
         });
         // `assertGroupMeetingWritable` above only confirms the MEETING
@@ -987,9 +987,9 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
       const year = Number(q.get('year')) || nowParts.year;
       const month = Number(q.get('month')) || nowParts.month;
       if (!Number.isInteger(year) || year < 1970 || year > 9999)
-        throw new HttpError(400, 'year must be a four-digit year');
+        throw new HttpError(400, 'Please choose a year, written in full — for example 2026');
       if (!Number.isInteger(month) || month < 1 || month > 12)
-        throw new HttpError(400, 'month must be a number from 1 to 12');
+        throw new HttpError(400, 'Please choose a month');
       // `hallFilter` may be null — 全部堂会 lists every congregation's members
       // in one sheet. A tick still records WHICH congregation the person was
       // counted in; it is read off the member's own hall when it is written.
@@ -1041,11 +1041,11 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
           : [];
       const memberIds = [...new Set(asked.map((v) => String(v ?? '')).filter(Boolean))];
       if (memberIds.length === 0)
-        throw new HttpError(400, 'member_id (or a non-empty member_ids) is required');
+        throw new HttpError(400, 'Please choose at least one person to mark');
       // A sheet is one congregation's active members; anything an order of
       // magnitude past that is a malformed request, not a roll call.
       if (memberIds.length > 1000)
-        throw new HttpError(400, 'Too many members in one write — 1000 at most');
+        throw new HttpError(400, 'Too many people at once — 1000 at most. Please do it in smaller batches.');
 
       // Whose cells — and, for a Sunday, which congregation each tick is filed
       // under. The member's OWN hall decides that (never a client-sent
@@ -1769,7 +1769,7 @@ async function dispatch(method: string, req: Request, ctx: Ctx): Promise<Respons
               : [];
           const memberIds = [...new Set(asked.map((v) => String(v ?? '')).filter(Boolean))];
           if (memberIds.length === 0)
-            throw new HttpError(400, 'member_id (or a non-empty member_ids) is required');
+            throw new HttpError(400, 'Please choose at least one person to mark');
           unwrap(
             await db
               .from('happiness_group_members')
@@ -1953,7 +1953,7 @@ const IMPORT_ISSUE_MESSAGE: Record<ImportIssue, string> = {
   self_referrer: 'Somebody cannot have referred themselves',
   unknown_gender: 'That is not a gender this app knows',
   unknown_status: 'That is not a member status this app knows',
-  bad_date: 'That is not a date — write it as YYYY-MM-DD',
+  bad_date: 'That is not a date — write it year first, like 2026-03-04',
   bad_email: 'That is not an email address',
   bad_phone: 'That is not a phone number',
   no_hall: 'A congregation is required',
@@ -1962,9 +1962,18 @@ const IMPORT_ISSUE_MESSAGE: Record<ImportIssue, string> = {
   best_in_group: 'A BEST cannot belong to a life group',
 };
 
-/** The message a refused row is reported with — a value, never a stack. */
+/**
+ * The message a refused row is reported with — a value, never a stack.
+ *
+ * An HttpError here is one of the sentences above, written for the person
+ * holding the spreadsheet. Anything else is a driver message or a bug, and
+ * naming it beside a row number would put database text in the middle of an
+ * otherwise readable list of refusals, so it is logged and reported plainly.
+ */
 function rowFailure(e: unknown): string {
-  return e instanceof HttpError ? e.message : ((e as Error)?.message ?? 'Could not be saved');
+  if (e instanceof HttpError) return e.message;
+  console.error('[import row]', (e as Error)?.stack ?? e);
+  return 'This row could not be saved';
 }
 
 /**
@@ -2003,7 +2012,7 @@ async function importContext(
   // hall needs neither.
   const asked = wantedHallId == null ? '' : String(wantedHallId);
   if (asked && !halls.some((h) => h.id === asked))
-    throw new HttpError(400, 'No congregation with that id');
+    throw new HttpError(400, 'That congregation could not be found');
   const defaultHallId = hallScope ?? (asked || (halls.length === 1 ? halls[0].id : null));
   return { halls, groups, existing, hallScope, defaultHallId };
 }
@@ -2401,7 +2410,7 @@ async function registerMember(
   const gender = tidy(sent.gender);
   if (gender) {
     if (!(Object.values(Gender) as string[]).includes(gender))
-      throw new HttpError(400, 'Unknown gender');
+      throw new HttpError(400, 'Please choose a gender from the list');
     values.gender = gender;
   }
   const dob = tidy(sent.date_of_birth);
@@ -2418,7 +2427,7 @@ async function registerMember(
   const referredBy = tidy(sent.referred_by);
   if (referredBy && referredBy !== matched?.id) {
     if (!existing.some((m) => m.id === referredBy))
-      throw new HttpError(400, 'Unknown referrer');
+      throw new HttpError(400, 'That person could not be found in the member records');
     values.referred_by = referredBy;
   }
   // 小组 — same shape: an id from a `<select>`, not a name to resolve. Must
@@ -2524,7 +2533,7 @@ async function churchRow(db: ReturnType<typeof getDb>): Promise<ChurchRow> {
     await db.from('church').select(CHURCH_SELECT).order('created_at').limit(1),
   );
   if (rows.length === 0)
-    throw new HttpError(500, 'No church record yet — apply migration 0012_church_and_modules');
+    throw new HttpError(500, 'This church has not been set up yet. Please tell your church administrator.');
   return rows[0];
 }
 
@@ -2705,7 +2714,7 @@ async function activityRoutes(
     if (method === 'POST') {
       await o.assertOwnsRow(ownerTable, ownerId);
       const dto = await o.body();
-      if (!tidy(String(dto.happened_on ?? ''))) throw new HttpError(400, 'happened_on is required');
+      if (!tidy(String(dto.happened_on ?? ''))) throw new HttpError(400, 'Please choose the date this happened');
       // `group_id` comes from the PATH, never the payload: the gate above just
       // checked THAT group, so letting the body name a different one would
       // file the record past its own permission check.
@@ -3380,7 +3389,7 @@ async function putHappinessAttendance(
 ) {
   const weekNumber = Math.trunc(Number(dto.week_number));
   if (!Number.isInteger(weekNumber) || weekNumber < 1)
-    throw new HttpError(400, 'week_number must be a positive integer');
+    throw new HttpError(400, 'Please choose a week');
 
   const group = unwrap<{ term: { weeks: number } | null }>(
     await db
@@ -3400,9 +3409,9 @@ async function putHappinessAttendance(
       : [];
   const memberIds = [...new Set(asked.map((v) => String(v ?? '')).filter(Boolean))];
   if (memberIds.length === 0)
-    throw new HttpError(400, 'member_id (or a non-empty member_ids) is required');
+    throw new HttpError(400, 'Please choose at least one person to mark');
   if (memberIds.length > 1000)
-    throw new HttpError(400, 'Too many members in one write — 1000 at most');
+    throw new HttpError(400, 'Too many people at once — 1000 at most. Please do it in smaller batches.');
 
   const present = dto.present !== false;
   if (present) {
@@ -3664,7 +3673,11 @@ async function storeFile(
   const up = await db.storage
     .from(bucket)
     .upload(path, bytes, { contentType: file.type || 'application/octet-stream', upsert: true });
-  if (up.error) throw new HttpError(500, up.error.message);
+  if (up.error) {
+    // Storage/driver text is written for a developer — log it, answer plainly.
+    console.error('[upload]', up.error.message);
+    throw new HttpError(500, SERVICE_UNAVAILABLE);
+  }
   return db.storage.from(bucket).getPublicUrl(path).data.publicUrl;
 }
 
@@ -3726,7 +3739,11 @@ async function authRoute(
       .select('id, email, account_role, status, hall_id, group_id, password_hash, member:members(id,full_name)')
       .eq('email', (dto.email ?? '').toLowerCase().trim())
       .maybeSingle();
-    if (res.error) throw new HttpError(500, res.error.message);
+    if (res.error) {
+      // Driver text is written for a developer — log it, answer plainly.
+      console.error('[auth]', res.error.message);
+      throw new HttpError(500, SERVICE_UNAVAILABLE);
+    }
     const user = res.data as {
       id: string;
       email: string;
@@ -4034,7 +4051,11 @@ async function syncGroupLeaderAccount(
     .select('id,account_role,status')
     .eq('member_id', memberId)
     .maybeSingle();
-  if (accountRes.error) throw new HttpError(500, accountRes.error.message);
+  if (accountRes.error) {
+    // Driver text is written for a developer — log it, answer plainly.
+    console.error('[account]', accountRes.error.message);
+    throw new HttpError(500, SERVICE_UNAVAILABLE);
+  }
   const existingAccount = accountRes.data as { id: string; account_role: string; status: string } | null;
 
   // ---- Becoming 小组长 -------------------------------------------------------
@@ -4163,8 +4184,14 @@ async function run(method: string, req: Request, ctx: Ctx): Promise<Response> {
   try {
     return await dispatch(method, req, ctx);
   } catch (e) {
+    // An HttpError is a message somebody WROTE for the person reading it, so
+    // it is answered as-is. Anything else is an exception whose text was
+    // written for a developer — a driver's message, a TypeError, a stack —
+    // and echoing it is how "error code: 1016" ended up on the login screen.
+    // It is logged for whoever has to fix it and answered with one sentence.
     if (e instanceof HttpError) return json({ message: e.message }, e.status);
-    return json({ message: (e as Error).message ?? 'Internal error' }, 500);
+    console.error('[api]', method, (e as Error)?.stack ?? e);
+    return json({ message: SERVICE_UNAVAILABLE }, 500);
   }
 }
 

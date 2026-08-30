@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { HttpError, unwrap, unwrapWrite } from '@/lib/server/db';
+import { HttpError, unwrap, unwrapWrite, SERVICE_UNAVAILABLE } from '@/lib/server/db';
 
 /**
  * The two ways a Supabase result is read.
@@ -40,6 +40,37 @@ describe('unwrap', () => {
 
   it('turns any other database error into a 500', () => {
     expect(status(() => unwrap({ data: null, error: { code: '23503', message: 'fk violation' } }))).toBe(500);
+  });
+
+  /* The regression this file exists for as much as any.
+     A 500 is never something the person at the keyboard did, and the text that
+     comes back from below is written for a developer: a Postgres constraint,
+     a PostgREST code — or, the day the church could not sign in, Cloudflare's
+     own "error code: 1016" from in front of an unreachable database. That
+     string was thrown as the HttpError's message, answered as the body of the
+     500, and printed on the sign-in card. Nothing upstream may reach a reader. */
+  it('never lets the raw database text reach the reader', () => {
+    const cases = [
+      { code: undefined, message: 'error code: 1016' },
+      { code: '23503', message: 'insert or update on table "members" violates foreign key constraint "members_hall_id_fkey"' },
+      { code: 'PGRST200', message: "Could not find a relationship between 'members' and 'referred_by'" },
+      { code: '42P01', message: 'relation "public.happiness_terms" does not exist' },
+    ];
+    for (const error of cases) {
+      expect(status(() => unwrap({ data: null, error }))).toBe(500);
+      expect(message(() => unwrap({ data: null, error }))).toBe(SERVICE_UNAVAILABLE);
+    }
+  });
+
+  /* And the sentence that replaces it has to be worth reading: it says what
+     happened in the church's terms and what to do next, and names no table,
+     no vendor, no status code and no error number. */
+  it('answers a 500 with a sentence a non-technical reader can act on', () => {
+    expect(SERVICE_UNAVAILABLE).toMatch(/try again/i);
+    expect(SERVICE_UNAVAILABLE).toMatch(/administrator/i);
+    expect(SERVICE_UNAVAILABLE).not.toMatch(
+      /supabase|postgres|cloudflare|worker|database|SQL|HTTP|\b5\d\d\b|error code|\bnull\b|_id\b/i,
+    );
   });
 
   /* A unique violation is the one Postgres code that is a real user-facing
