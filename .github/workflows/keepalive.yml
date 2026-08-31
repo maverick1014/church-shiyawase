@@ -1,0 +1,78 @@
+name: Keep the database awake
+
+# WHY THIS EXISTS
+#
+# The church's Supabase project is on a plan that pauses a project after about
+# a week with no database activity. When it pauses, its hostname stops
+# resolving, every database-backed route fails, and nobody can sign in — which
+# is exactly what happened on 2026-08-29 and took the app down until somebody
+# noticed and restored the project by hand.
+#
+# So once a day this asks the LIVE site for the church record. That is a real
+# read of a real table through the deployed Worker, which is what counts as
+# activity — and it needs no secret of its own, because `GET /api/church` is
+# one of the handful of endpoints that is public by design (the login card and
+# the public forms render the church's name before anyone signs in).
+#
+# It doubles as the app's only uptime check: if the site is down or the
+# database is unreachable, this job goes red and GitHub emails whoever owns
+# the repo, rather than the church finding out on a Sunday morning.
+#
+# THIS IS A MITIGATION, NOT A FIX. Supabase decides what counts as activity
+# and may change it. The real fix is a paid plan that does not pause.
+
+on:
+  schedule:
+    # 04:00 UTC = 12:00 noon in Malaysia (UTC+8), every third day of the month
+    # (the 1st, 4th, 7th ... 31st — the roll into the next month is never more
+    # than three days either, so the gap is at most 3 days all year).
+    #
+    # Chosen against a pause window of about 7 days, which leaves room for one
+    # missed run but not two: GitHub runs scheduled jobs on a best-effort basis
+    # and may delay or SKIP one entirely when the platform is busy. If this
+    # ever lapses in practice, move it to '0 4 * * *' (daily) — this repository
+    # is public, so Actions minutes are free and a daily run costs nothing.
+    - cron: '0 4 */3 * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: keepalive
+  cancel-in-progress: false
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      TARGET: https://tog.tabernacleofgrace-cn.workers.dev
+    steps:
+      - name: Read the church record from the live site
+        run: |
+          set -uo pipefail
+
+          # A paused project answers through Cloudflare rather than the
+          # database, and a project still waking answers 521 for a minute or
+          # two, so one failed attempt is not yet news: try a few times,
+          # spaced out, and only call it down if none of them succeed.
+          for attempt in 1 2 3 4 5; do
+            code=$(curl -sS -o body.json -w '%{http_code}' \
+              --max-time 30 "$TARGET/api/church" || echo 000)
+
+            if [ "$code" = "200" ] && grep -q '"name"' body.json; then
+              echo "OK — the database answered (attempt $attempt)."
+              exit 0
+            fi
+
+            echo "Attempt $attempt: HTTP $code"
+            [ -s body.json ] && head -c 300 body.json && echo
+            [ "$attempt" -lt 5 ] && sleep 30
+          done
+
+          echo
+          echo "The database did not answer after 5 attempts over ~2 minutes."
+          echo "Check whether the Supabase project has been paused, and"
+          echo "restore it from the Supabase dashboard if so."
+          exit 1
