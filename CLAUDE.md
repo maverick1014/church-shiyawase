@@ -769,6 +769,25 @@ trade is that the shared URL tracks `main`, so a change cannot be looked at
 live before it merges; deploy a branch on purpose with `workflow_dispatch` when
 that is what you want.
 
+**`keepalive.yml` keeps the DATABASE from being paused, and is the reason the
+app was once down for a day.** The Supabase project pauses after about a week
+with no database activity; when it does, its hostname stops resolving, every
+database-backed route fails, and nobody can sign in — which is exactly what
+happened on 2026-08-29 (the church read Cloudflare's own `error code: 1016` on
+the sign-in card, because the app forwarded it verbatim; that half is fixed
+too, see `SERVICE_UNAVAILABLE` in `lib/server/db.ts`). So every third day at
+noon Malaysia time this asks the LIVE site for `GET /api/church` — a real read
+of a real table through the deployed Worker, needing no secret of its own
+because that endpoint is public by design. It retries five times before
+failing, so a project still waking (Cloudflare answers 521 for a minute or two)
+is not reported as down. It doubles as the app's only uptime check: a red run
+emails whoever owns the repo, rather than the church finding out on a Sunday
+morning. **It is a mitigation, not a fix** — Supabase decides what counts as
+activity and may change it, and GitHub may delay or skip a scheduled run under
+load, which every-third-day survives once but not twice. The real fix is a plan
+that does not pause; failing that, move the cron to daily (this repository is
+public, so Actions minutes are free).
+
 Testing layers (in `apps/web`):
 - `npm test` — Vitest unit tests (labels, rules, perms, i18n dictionaries, the
   theme catalogue + its colour validation, **which of a member's two names is
